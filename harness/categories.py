@@ -29,7 +29,10 @@ vulnerability_class strings.
 
 CANONICAL_CATEGORIES: tuple[str, ...] = (
     "sqli", "xss", "idor", "ssrf", "auth", "business_logic",
-    "misconfig", "ai_llm", "supply_chain", "rate_limit",
+    "business_logic_enhanced", "misconfig", "ai_llm", "supply_chain", "rate_limit",
+    "jwt", "xxe", "csrf", "file_upload", "nosql",
+    "command_injection", "ssti", "open_redirect", "info_disclosure",
+    "anomaly",
 )
 
 # Deliberately generous but not promiscuous: each entry is a phrase an
@@ -59,6 +62,30 @@ _SYNONYMS: dict[str, str] = {
     "outdated dependency": "supply_chain", "known vulnerable component": "supply_chain",
     "rate_limit": "rate_limit", "rate limiting": "rate_limit",
     "missing rate limiting": "rate_limit", "brute force": "rate_limit",
+    "jwt": "jwt", "json web token": "jwt", "json-web-token": "jwt",
+    "jws": "jwt", "jwe": "jwt", "jwt token": "jwt",
+    "xxe": "xxe", "xml external entity": "xxe", "xml-external-entity": "xxe",
+    "xee": "xxe", "xml injection": "xxe",
+    "csrf": "csrf", "cross-site request forgery": "csrf",
+    "cross site request forgery": "csrf", "xsrf": "csrf",
+    "file_upload": "file_upload", "file upload": "file_upload",
+    "arbitrary file upload": "file_upload", "file upload vulnerability": "file_upload",
+    "nosql": "nosql", "nosql injection": "nosql", "no-sql": "nosql",
+    "no sql": "nosql", "mongodb injection": "nosql", "mongo injection": "nosql",
+    "command_injection": "command_injection", "command injection": "command_injection",
+    "rce": "command_injection", "remote code execution": "command_injection",
+    "code injection": "command_injection", "shell injection": "command_injection",
+    "ssti": "ssti", "template injection": "ssti", "server-side template injection": "ssti",
+    "server side template injection": "ssti",
+    "open_redirect": "open_redirect", "open redirect": "open_redirect",
+    "redirect": "open_redirect", "url redirect": "open_redirect",
+    "info_disclosure": "info_disclosure", "information disclosure": "info_disclosure",
+    "info disclosure": "info_disclosure", "information leak": "info_disclosure",
+    "data leak": "info_disclosure", "sensitive data exposure": "info_disclosure",
+    "business_logic_enhanced": "business_logic_enhanced", "business logic enhanced": "business_logic_enhanced",
+    "workflow abuse": "business_logic_enhanced", "state manipulation": "business_logic_enhanced",
+    "anomaly": "anomaly", "anomaly detection": "anomaly", "unknown vulnerability": "anomaly",
+    "behavioral anomaly": "anomaly", "suspicious behavior": "anomaly",
 }
 
 

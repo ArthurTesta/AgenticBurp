@@ -8,10 +8,20 @@ import hashlib
 _CAPABILITIES = {
     "idor": ("cross_identity_compare", True),
     "business_logic": ("workflow_replay_compare", True),
+    "business_logic_enhanced": ("workflow_replay_compare", True),
     "rate_limit": ("bounded_rate_limit_probe", True),
     "ssrf": ("controlled_callback_probe", True),
     "auth": ("authorization_boundary_compare", True),
     "xss": ("reflection_context_validation", True),
+    "jwt": ("jwt_validation", True),
+    "xxe": ("xxe_validation", True),
+    "csrf": ("csrf_validation", True),
+    "file_upload": ("file_upload_validation", True),
+    "nosql": ("nosql_validation", True),
+    "command_injection": ("command_injection_validation", True),
+    "ssti": ("ssti_validation", True),
+    "open_redirect": ("open_redirect_validation", True),
+    "info_disclosure": ("info_disclosure_scan", False),  # Passive, no active validation
 }
 
 def exchange_fingerprint(exchange: HttpExchange) -> str:
@@ -49,13 +59,31 @@ def plans_for_findings(exchange: HttpExchange, findings: list[Finding]) -> list[
             candidates.append(category)
         if category == "sqli" or "sqlmap" in candidates:
             candidates.append("sql_injection_validation")
+        if category == "jwt":
+            candidates.append("jwt_validation")
+        if category == "xxe":
+            candidates.append("xxe_validation")
+        if category == "csrf":
+            candidates.append("csrf_validation")
+        if category == "file_upload":
+            candidates.append("file_upload_validation")
+        if category == "nosql":
+            candidates.append("nosql_validation")
+        if category == "command_injection":
+            candidates.append("command_injection_validation")
+        if category == "ssti":
+            candidates.append("ssti_validation")
+        if category == "open_redirect":
+            candidates.append("open_redirect_validation")
+        if category == "business_logic_enhanced":
+            candidates.append("workflow_replay_compare")
         for hint in candidates:
             if hint == "sqlmap":
                 cap, requires, plane = "sql_injection_validation", True, "local_tool"
             elif hint in _CAPABILITIES:
                 cap, requires = _CAPABILITIES[hint]
                 plane = "burp"
-            elif hint == "sql_injection_validation":
+            elif hint in ("sql_injection_validation", "jwt_validation", "xxe_validation", "csrf_validation", "file_upload_validation", "nosql_validation", "command_injection_validation", "ssti_validation", "open_redirect_validation"):
                 cap, requires, plane = hint, True, "local_tool"
             else:
                 continue

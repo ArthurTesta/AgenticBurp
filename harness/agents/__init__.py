@@ -87,10 +87,23 @@ def _load_builtin_agents() -> dict[str, Type[BaseAgent]]:
         ('ssrf', 'SsrfAgent'),
         ('auth', 'AuthAgent'),
         ('business_logic', 'BusinessLogicAgent'),
+        ('business_logic_enhanced', 'BusinessLogicEnhancedAgent'),
         ('misconfig', 'MisconfigAgent'),
         ('ai_llm', 'AiLlmAgent'),
+        ('ai_security', 'AiSecurityAgent'),
         ('supply_chain', 'SupplyChainAgent'),
         ('rate_limit', 'RateLimitAgent'),
+        ('graphql', 'GraphqlAgent'),
+        ('jwt', 'JwtAgent'),
+        ('xxe', 'XxeAgent'),
+        ('csrf', 'CsrfAgent'),
+        ('file_upload', 'FileUploadAgent'),
+        ('nosql', 'NosqlAgent'),
+        ('command_injection', 'CommandInjectionAgent'),
+        ('ssti', 'SstiAgent'),
+        ('open_redirect', 'OpenRedirectAgent'),
+        ('info_disclosure', 'InfoDisclosureAgent'),
+        ('anomaly', 'AnomalyAgent'),
     ]
     
     for name, class_name in builtin_agents:
