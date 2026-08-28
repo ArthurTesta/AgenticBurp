@@ -56,7 +56,7 @@ def _require_auth(authorization: str | None) -> None:
 @app.get("/health")
 async def health():
     return {"status": "ok", "coordinator_model": orchestrator.coordinator_model,
-             "agents": list(orchestrator.agents.keys())}
+             "agents": list(orchestrator.agent_manager.get_enabled_agents())}
 
 
 @app.get("/test-plans/{plan_id}")

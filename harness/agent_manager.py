@@ -410,3 +410,53 @@ class AgentManager:
         
         # Run the agent
         return await agent.run(exchange, max_body_chars, prior_context, effort_budget)
+
+    async def run_multiple_agents(self, agent_names: list[str], exchange, 
+                                  max_body_chars: int = 6000, prior_context: str = "",
+                                  effort_budget=None) -> list:
+        """
+        Run multiple agents on an exchange concurrently.
+        
+        Args:
+            agent_names: List of agent names to run
+            exchange: The HTTP exchange to analyze
+            max_body_chars: Maximum number of characters to include from request/response bodies
+            prior_context: Prior findings context
+            effort_budget: Optional effort budget to track token usage
+            
+        Returns:
+            List of AgentReport objects
+        """
+        import asyncio
+        
+        reports = []
+        tasks = []
+        
+        for name in agent_names:
+            if name in self.agents:
+                task = asyncio.create_task(
+                    self.run_agent_async(name, exchange, max_body_chars, prior_context)
+                )
+                tasks.append(task)
+            else:
+                log.warning(f"Agent {name} not found, skipping")
+        
+        # Wait for all agents to complete
+        if tasks:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for result in results:
+                if isinstance(result, Exception):
+                    log.error(f"Agent failed with exception: {result}")
+                    # Create error report
+                    from models import AgentReport
+                    reports.append(AgentReport(
+                        agent="unknown",
+                        model="unknown",
+                        findings=[],
+                        raw_error=str(result)
+                    ))
+                else:
+                    reports.append(result)
+        
+        return reports
+
