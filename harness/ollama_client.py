@@ -3,6 +3,10 @@ import json
 import httpx
 from dataclasses import dataclass
 
+import prompt_validator
+import circuit_breaker
+import rate_limiter
+import audit_logger
 
 class OllamaError(RuntimeError):
     pass
@@ -29,6 +33,18 @@ class OllamaClient:
     def __init__(self, base_url: str, timeout_seconds: float = 120.0):
         self.base_url = base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
+        
+        # Initialize circuit breaker
+        self.circuit_breaker = circuit_breaker.OllamaCircuitBreaker("ollama")
+        
+        # Initialize rate limiter
+        self.rate_limiter = rate_limiter.get_token_limiter("ollama")
+        
+        # Initialize prompt validator
+        self.prompt_validator = prompt_validator.PromptValidator()
+        
+        # Initialize audit logger
+        self.audit_logger = audit_logger.get_audit_logger()
 
     async def _chat(
         self,
@@ -38,44 +54,109 @@ class OllamaClient:
         temperature: float = 0.1,
     ) -> tuple[dict, dict]:
         """Shared implementation. Returns (parsed_json_body, raw_response_dict)
-        so callers needing usage fields don't have to make a second call."""
+        so callers needing usage fields don't have to make a second call.
+        
+        This method integrates:
+        - Prompt validation (prevents injection attacks)
+        - Circuit breaker (prevents cascading failures)
+        - Rate limiting (prevents overloading)
+        - Audit logging (tracks all LLM interactions)
+        """
+        # Validate prompts
+        try:
+            validated_system = self.prompt_validator.validate_system_prompt(system_prompt)
+            validated_user = self.prompt_validator.validate_user_prompt(user_prompt)
+        except prompt_validator.ValidationError as e:
+            self.audit_logger.log_security_event(
+                event_type="prompt_validation_failed",
+                message=f"Prompt validation failed: {e}",
+                severity="error",
+            )
+            raise OllamaError(f"Prompt validation failed: {e}") from e
+        
+        # Log the prompt
+        self.audit_logger.log_llm_prompt(
+            model=model,
+            system_prompt=validated_system,
+            user_prompt=validated_user,
+        )
+        
         payload = {
             "model": model,
             "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
+                {"role": "system", "content": validated_system},
+                {"role": "user", "content": validated_user},
             ],
             "format": "json",
             "stream": False,
             "options": {"temperature": temperature},
         }
         url = f"{self.base_url}/api/chat"
-        try:
-            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
-                resp = await client.post(url, json=payload)
-        except httpx.ConnectError as e:
-            raise OllamaError(
-                f"Could not reach Ollama at {self.base_url}. "
-                f"Is `ollama serve` running? ({e})"
-            ) from e
-        except httpx.TimeoutException as e:
-            raise OllamaError(f"Ollama request timed out after {self.timeout_seconds}s") from e
+        
+        # Use circuit breaker and rate limiter
+        async with self.circuit_breaker:
+            async with self.rate_limiter:
+                try:
+                    async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+                        resp = await client.post(url, json=payload)
+                except httpx.ConnectError as e:
+                    self.audit_logger.log_llm_error(
+                        model=model,
+                        error=e,
+                    )
+                    raise OllamaError(
+                        f"Could not reach Ollama at {self.base_url}. "
+                        f"Is `ollama serve` running? ({e})"
+                    ) from e
+                except httpx.TimeoutException as e:
+                    self.audit_logger.log_llm_error(
+                        model=model,
+                        error=e,
+                    )
+                    raise OllamaError(f"Ollama request timed out after {self.timeout_seconds}s") from e
 
-        if resp.status_code != 200:
-            raise OllamaError(f"Ollama returned HTTP {resp.status_code}: {resp.text[:500]}")
+                if resp.status_code != 200:
+                    self.audit_logger.log_llm_error(
+                        model=model,
+                        error=OllamaError(f"Ollama returned HTTP {resp.status_code}: {resp.text[:500]}"),
+                    )
+                    raise OllamaError(f"Ollama returned HTTP {resp.status_code}: {resp.text[:500]}")
 
-        data = resp.json()
-        content = data.get("message", {}).get("content", "")
-        if not content:
-            raise OllamaError(f"Ollama returned an empty message body: {data}")
+                data = resp.json()
+                content = data.get("message", {}).get("content", "")
+                if not content:
+                    self.audit_logger.log_llm_error(
+                        model=model,
+                        error=OllamaError(f"Ollama returned an empty message body: {data}"),
+                    )
+                    raise OllamaError(f"Ollama returned an empty message body: {data}")
 
-        try:
-            return json.loads(content), data
-        except json.JSONDecodeError as e:
-            raise OllamaError(
-                f"Model '{model}' did not return valid JSON. "
-                f"Raw content (truncated): {content[:500]}"
-            ) from e
+                try:
+                    parsed = json.loads(content)
+                    
+                    # Log the response
+                    prompt_tokens = data.get("prompt_eval_count", 0) or 0
+                    completion_tokens = data.get("eval_count", 0) or 0
+                    self.audit_logger.log_llm_response(
+                        model=model,
+                        response=content,
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                    )
+                    
+                    # Record token usage
+                    self.rate_limiter.record_usage(prompt_tokens, completion_tokens)
+                    
+                    return parsed, data
+                except json.JSONDecodeError as e:
+                    self.audit_logger.log_llm_error(
+                        model=model,
+                        error=e,
+                    )
+                    raise OllamaError(
+                        f"Model '{model}' did not return valid JSON. "
+                        f"Raw content (truncated): {content[:500]}"
+                    ) from e
 
     async def chat_json(
         self,
