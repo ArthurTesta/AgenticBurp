@@ -174,6 +174,48 @@ async def sessions_for_host(host: str, authorization: str | None = Header(defaul
     return await __import__("asyncio").to_thread(store.sessions_for_host, host)
 
 
+
+
+@app.get("/cache/stats")
+async def cache_stats(authorization: str | None = Header(default=None)):
+    """Get cache statistics (hits, misses, hit rate, etc.)."""
+    _require_auth(authorization)
+    import cache
+    stats = cache.get_cache().stats()
+    return {
+        "cache_enabled": cache.get_cache().is_enabled(),
+        "size": cache.get_cache().size(),
+        "stats": stats.to_dict(),
+    }
+
+
+@app.post("/cache/clear")
+async def cache_clear(authorization: str | None = Header(default=None)):
+    """Clear all cached analysis results."""
+    _require_auth(authorization)
+    import cache
+    cache.get_cache().clear()
+    return {"status": "ok", "message": "Cache cleared"}
+
+
+@app.post("/cache/enable")
+async def cache_enable(authorization: str | None = Header(default=None)):
+    """Enable caching."""
+    _require_auth(authorization)
+    import cache
+    cache.get_cache().set_enabled(True)
+    return {"status": "ok", "cache_enabled": True}
+
+
+@app.post("/cache/disable")
+async def cache_disable(authorization: str | None = Header(default=None)):
+    """Disable caching."""
+    _require_auth(authorization)
+    import cache
+    cache.get_cache().set_enabled(False)
+    return {"status": "ok", "cache_enabled": False}
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
