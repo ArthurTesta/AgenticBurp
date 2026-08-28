@@ -38,7 +38,10 @@ log = logging.getLogger("harness.fast_path")
 # Format: (compiled_regex, [agent_names])
 _URL_PATTERNS: list[tuple[re.Pattern, list[str]]] = [
     # GraphQL endpoints
-    (re.compile(r'/graphql|/api/graphql|/gql', re.IGNORECASE), ['sqli', 'idor', 'business_logic']),
+    (re.compile(r'/graphql|/api/graphql|/gql', re.IGNORECASE), ['graphql', 'sqli', 'idor', 'business_logic']),
+    
+    # AI/LLM endpoints
+    (re.compile(r'/ai|/llm|/chat|/assistant|/completion|/prompt|/agent|/copilot', re.IGNORECASE), ['ai_security', 'ai_llm']),
     
     # Admin/management endpoints - often have auth issues
     (re.compile(r'/admin|/administrator|/manage|/console|/panel', re.IGNORECASE), 
@@ -136,7 +139,7 @@ _REQUEST_HEADER_PATTERNS: list[tuple[re.Pattern, list[str]]] = [
     
     # GraphQL
     (re.compile(r'application/graphql', re.IGNORECASE), 
-     ['sqli', 'idor']),
+     ['graphql', 'sqli', 'idor']),
     
     # Authorization headers (auth issues)
     (re.compile(r'bearer|basic|digest|token', re.IGNORECASE), 
@@ -172,6 +175,11 @@ _RESPONSE_PATTERNS: list[tuple[re.Pattern, list[str]]] = [
     # JSON errors
     (re.compile(r'"error"|"message"|"status":\s*"error"', re.IGNORECASE), 
      ['misconfig', 'business_logic']),
+    
+    # GraphQL-specific response patterns
+    (re.compile(r'"data":\s*\{|"errors":\s*\[', re.IGNORECASE), ['graphql']),
+    (re.compile(r'__schema|__type|introspection|"query":', re.IGNORECASE), ['graphql']),
+    (re.compile(r'"__typename"|GraphQL|graphql', re.IGNORECASE), ['graphql']),
 ]
 
 # HTTP method patterns

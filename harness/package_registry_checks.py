@@ -11,32 +11,36 @@ from models import ComponentCandidate
 
 log = logging.getLogger("harness.package_registry_checks")
 
-# This module integrates the *concept* behind Aikido's Safe Chain
-# (github.com/AikidoSec/safe-chain), not its actual data feed: Safe
-# Chain's malware intelligence (malware_predictions.json /
-# malware_pypi.json, served from malware-list.aikido.dev) is not
-# publicly documented at the schema level and isn't reachable from this
-# environment, so it is not something this module can honestly claim to
-# query. What IS reachable, public, and directly checkable is the same
-# "minimum package age" signal Safe Chain applies by default (48 hours):
-# a component published to its registry only hours or days ago is
-# exactly the shape of a supply-chain-attack package (a malicious or
-# typosquatted release that gets pulled once caught, so age itself is
-# weak-but-real evidence). This queries the real npm/PyPI registries
-# directly -- confirmed live against both while building this.
+# This module integrates Aikido's Safe Chain intelligence feeds
+# (https://intel.aikido.dev/ via https://malware-list.aikido.dev/)
+# for real-time supply chain threat detection.
 #
-# This is explicitly a WEAKER, LOWER-CONFIDENCE signal than the
-# known-vulnerability lookup in github_advisories.py: "published
-# recently" is not "malicious", it's a prior worth raising, not a
-# verdict. It ships as its own finding rather than folded into the
-# known-vulnerability finding so the two kinds of evidence stay visibly
-# distinct.
+# It combines:
+# 1. Direct npm/PyPI registry queries for package age (Safe Chain concept)
+# 2. Aikido Intel malware/vulnerability feeds for known malicious packages
+#
+# The malware intelligence feeds provide:
+# - malware_predictions.json: Cross-ecosystem malicious package detection
+# - malware_pypi.json: Python-specific malicious package detection
+#
+# This is a FIRST-CLASS, separate step from LLM reasoning -- deterministic
+# advisory-DB matching that runs AFTER agent extraction and BEFORE
+# any rediscovery or critique passes.
 
 _NPM_REGISTRY = "https://registry.npmjs.org"
 _PYPI_REGISTRY = "https://pypi.org/pypi"
 
 _NPM_LIKE_ECOSYSTEMS = {"npm", "javascript", "node"}
 _PYPI_LIKE_ECOSYSTEMS = {"pypi", "python", "pip"}
+
+# Aikido Intel malware feeds
+_AIKIDO_MALWARE_FEED = "https://malware-list.aikido.dev/malware_predictions.json"
+_AIKIDO_PYPI_FEED = "https://malware-list.aikido.dev/malware_pypi.json"
+
+# Cache for malware feeds (loaded once per session)
+_malware_feed_cache: dict[str, list] = {}
+_malware_feed_last_load: datetime | None = None
+_MALWARE_FEED_CACHE_TTL = 3600  # 1 hour
 
 
 @dataclass
@@ -48,6 +52,16 @@ class RegistryAgeResult:
     detail: str = ""
 
 
+@dataclass
+class MalwareCheckResult:
+    component: ComponentCandidate
+    status: str  # "checked" | "malware_detected" | "error"
+    is_malicious: bool = False
+    reason: str = ""
+    aikido_id: str | None = None
+    detail: str = ""
+
+
 class PackageRegistryClient:
     def __init__(self, timeout_seconds: float = 15.0, minimum_age_days: float = 2.0):
         self.timeout_seconds = timeout_seconds
@@ -55,7 +69,132 @@ class PackageRegistryClient:
         # configurable the same way github_advisories' behavior is.
         self.minimum_age_days = minimum_age_days
 
+    async def _load_malware_feeds(self) -> None:
+        """Load Aikido malware intelligence feeds into cache."""
+        global _malware_feed_cache, _malware_feed_last_load
+        
+        now = datetime.now(timezone.utc)
+        if _malware_feed_cache and _malware_feed_last_load:
+            if (now - _malware_feed_last_load).total_seconds() < _MALWARE_FEED_CACHE_TTL:
+                return
+        
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+                # Load cross-ecosystem malware predictions
+                resp = await client.get(_AIKIDO_MALWARE_FEED)
+                if resp.status_code == 200:
+                    _malware_feed_cache['cross_ecosystem'] = resp.json()
+                    log.info(f"Loaded {len(_malware_feed_cache['cross_ecosystem'])} malware predictions from Aikido")
+                else:
+                    log.warning(f"Failed to load Aikido malware feed: {resp.status_code}")
+                    _malware_feed_cache['cross_ecosystem'] = []
+                
+                # Load PyPI-specific malware predictions
+                resp = await client.get(_AIKIDO_PYPI_FEED)
+                if resp.status_code == 200:
+                    _malware_feed_cache['pypi'] = resp.json()
+                    log.info(f"Loaded {len(_malware_feed_cache['pypi'])} PyPI malware predictions from Aikido")
+                else:
+                    log.warning(f"Failed to load Aikido PyPI feed: {resp.status_code}")
+                    _malware_feed_cache['pypi'] = []
+        except Exception as e:
+            log.error(f"Error loading Aikido malware feeds: {e}")
+            _malware_feed_cache = {'cross_ecosystem': [], 'pypi': []}
+        
+        _malware_feed_last_load = now
+
+    async def check_malware(self, component: ComponentCandidate) -> MalwareCheckResult:
+        """
+        Check if a component is known to be malicious via Aikido Intel feeds.
+        
+        This is a deterministic, authoritative lookup against Aikido's
+        real-time supply chain intelligence.
+        """
+        if not component.name:
+            return MalwareCheckResult(
+                component=component,
+                status="error",
+                detail="no package name"
+            )
+        
+        # Load feeds if not cached
+        if not _malware_feed_cache:
+            await self._load_malware_feeds()
+        
+        name = component.name.strip().lower()
+        version = (component.version or "").strip().lower()
+        ecosystem = component.ecosystem.strip().lower()
+        
+        # Check cross-ecosystem feed first
+        for entry in _malware_feed_cache.get('cross_ecosystem', []):
+            entry_name = entry.get('package_name', '').strip().lower()
+            entry_version = entry.get('version', '').strip().lower()
+            entry_reason = entry.get('reason', '')
+            
+            # Match by exact name and version
+            if entry_name == name and entry_version == version:
+                return MalwareCheckResult(
+                    component=component,
+                    status="malware_detected",
+                    is_malicious=True,
+                    reason=entry_reason,
+                    aikido_id=entry.get('id') or entry.get('aikido_id'),
+                    detail=f"Package {name}@{version} flagged as {entry_reason} by Aikido Intel"
+                )
+            
+            # Match by name only (any version is malicious)
+            if entry_name == name and not version:
+                return MalwareCheckResult(
+                    component=component,
+                    status="malware_detected",
+                    is_malicious=True,
+                    reason=entry_reason,
+                    aikido_id=entry.get('id') or entry.get('aikido_id'),
+                    detail=f"Package {name} flagged as {entry_reason} by Aikido Intel (any version)"
+                )
+        
+        # Check PyPI-specific feed
+        if ecosystem in _PYPI_LIKE_ECOSYSTEMS:
+            for entry in _malware_feed_cache.get('pypi', []):
+                entry_name = entry.get('package_name', '').strip().lower()
+                entry_version = entry.get('version', '').strip().lower()
+                entry_reason = entry.get('reason', '')
+                
+                if entry_name == name and entry_version == version:
+                    return MalwareCheckResult(
+                        component=component,
+                        status="malware_detected",
+                        is_malicious=True,
+                        reason=entry_reason,
+                        aikido_id=entry.get('id') or entry.get('aikido_id'),
+                        detail=f"PyPI package {name}@{version} flagged as {entry_reason} by Aikido Intel"
+                    )
+                
+                if entry_name == name and not version:
+                    return MalwareCheckResult(
+                        component=component,
+                        status="malware_detected",
+                        is_malicious=True,
+                        reason=entry_reason,
+                        aikido_id=entry.get('id') or entry.get('aikido_id'),
+                        detail=f"PyPI package {name} flagged as {entry_reason} by Aikido Intel (any version)"
+                    )
+        
+        return MalwareCheckResult(
+            component=component,
+            status="checked",
+            is_malicious=False,
+            detail="No malware detected by Aikido Intel"
+        )
+
     async def check(self, component: ComponentCandidate) -> RegistryAgeResult:
+        """
+        Check package registry age (Safe Chain concept).
+        
+        This implements the "minimum package age" signal from Safe Chain:
+        a component published to its registry only hours or days ago is
+        exactly the shape of a supply-chain-attack package.
+        """
         eco = component.ecosystem.lower().strip()
         if not component.name:
             return RegistryAgeResult(component=component, status="error", detail="no package name")

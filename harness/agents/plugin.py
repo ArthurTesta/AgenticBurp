@@ -66,8 +66,8 @@ class AgentMetadata:
 class PluginSource:
     """Represents a source of agent plugins."""
     name: str
-    priority: int = 0  # Higher priority sources are loaded first
     loader: Callable[[], list[AgentMetadata]]
+    priority: int = 0  # Higher priority sources are loaded first
 
 
 class AgentPluginSystem:
