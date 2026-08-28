@@ -1,0 +1,164 @@
+# Harness configuration
+# Ollama must be running locally: `ollama serve` (default http://localhost:11434)
+
+ollama:
+  base_url: "http://localhost:11434"
+  timeout_seconds: 120
+
+# The coordinator decides which specialist agents to dispatch to, and
+# synthesizes their findings into a final report. Use a stronger local
+# model here if you have the VRAM for it -- its routing prompt now carries
+# trend priors from HackerOne/Intigriti/CWE data (see orchestrator.py),
+# so a weak coordinator model is the single biggest risk of a finding
+# never being generated at all.
+coordinator:
+  model: "llama3.1:8b"
+  temperature: 0.1
+
+# Each agent can use a different model. Smaller/faster models are fine
+# for narrow, well-scoped classification tasks.
+agents:
+  sqli:
+    enabled: true
+    model: "llama3.1:8b"
+    temperature: 0.1
+  xss:
+    enabled: true
+    model: "llama3.1:8b"
+    temperature: 0.1
+  idor:
+    enabled: true
+    model: "llama3.1:8b"
+    temperature: 0.1
+  ssrf:
+    enabled: true
+    model: "llama3.1:8b"
+    temperature: 0.1
+  auth:
+    enabled: true
+    model: "llama3.1:8b"
+    temperature: 0.1
+  # Added: rising per 2021-2025 bug bounty/CVE data (see README).
+  business_logic:
+    enabled: true
+    model: "llama3.1:8b"
+    temperature: 0.1
+  misconfig:
+    enabled: true
+    model: "llama3.1:8b"
+    temperature: 0.1
+  ai_llm:
+    enabled: true
+    model: "llama3.1:8b"
+    temperature: 0.1
+  rate_limit:
+    enabled: true
+    model: "llama3.1:8b"
+    temperature: 0.1
+  supply_chain:
+    enabled: true
+    model: "llama3.1:8b"
+    temperature: 0.1
+
+# Deterministic lookup against GitHub's public Security Advisory
+# Database, used to resolve component candidates the supply_chain agent
+# extracts. This is the "known" half of "prefer a known-vulnerability
+# match over having an LLM try to rediscover it": if a disclosed
+# advisory exists for a package name, this reports it directly with a
+# citable GHSA/CVE ID instead of relying on model recall (which can be
+# stale or simply wrong).
+#
+# IMPORTANT: unauthenticated GitHub API requests are capped at 60/hour,
+# and that ceiling is easy to exhaust in normal use (confirmed directly
+# while building this -- a handful of test calls was enough). Set a
+# token, via this field or the GITHUB_TOKEN environment variable, to
+# raise the limit to 5000/hour. A token needs no special scopes for this
+# endpoint (it's a public read), just needs to exist.
+github_advisories:
+  enabled: true
+  token: null  # or set GITHUB_TOKEN in your environment
+  max_lookups_per_exchange: 6
+
+# Concept borrowed from Aikido Safe Chain (github.com/AikidoSec/safe-chain):
+# a component published to its registry very recently is weak evidence of
+# a supply-chain-attack package. Unlike Safe Chain, this queries the real
+# public npm/PyPI registries directly rather than Aikido's own malware
+# feed (which isn't publicly documented/reachable) -- so treat this as a
+# much coarser, lower-confidence signal than what Safe Chain itself
+# provides. Findings from this check always carry confidence 0.3.
+package_registry_checks:
+  enabled: true
+  minimum_age_days: 2.0  # Safe Chain's own default is 48 hours
+
+# CISA Known Exploited Vulnerabilities catalog cross-reference. Answers
+# "is this actively being exploited in the wild", a stronger and more
+# urgent signal than "a disclosed advisory exists" -- see kev_check.py's
+# module docstring for an important caveat: the live-fetch path in this
+# module has not been verified working from this build's own dev
+# environment (blocked by both bot detection and network allowlisting).
+# If you hit persistent errors, download a copy manually from
+# https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json
+# and point local_file at it.
+kev_check:
+  enabled: true
+  local_file: null  # e.g. "/path/to/known_exploited_vulnerabilities.json"
+  cache_ttl_hours: 24.0
+
+# Adversarial second pass over the highest-confidence findings, modeled
+# on "attack your own conclusion before shipping it": rival explanation,
+# fragility check, survive/downgrade/reject verdict. Only findings above
+# confidence_threshold get reviewed -- low-confidence findings are already
+# labeled as guesses and don't need the extra model call.
+critique:
+  enabled: true
+  model: "llama3.1:8b"
+  temperature: 0.1
+  confidence_threshold: 0.5
+  max_findings: 12
+
+# Operator-selected token budget for the whole assessment (cumulative
+# across every /analyze call this orchestrator process handles, not per
+# exchange). Two modes, deliberately not auto-detected -- see effort.py's
+# BudgetMode docstring for why this has to be a human decision:
+#   soft: warn and record a warning once the budget is spent, but keep
+#         going unless/until the operator explicitly confirms otherwise
+#         is NOT wanted (see POST /effort/confirm-overspend). Sensible
+#         default for this project's only integrated backend today
+#         (local Ollama, config above) -- overspend costs time, not money.
+#   hard: stop dispatching new agent/critique/routing calls the moment
+#         the budget is spent. Appropriate for a metered/paid backend,
+#         where silent overspend is a real cost, not just extra wait time.
+# total_tokens: null means "track spend for visibility, never block" --
+# useful even without picking a hard number. Set an integer to enable
+# either mode's actual gating behavior. See POST /estimate (in server.py)
+# for a projected total across a discovered URL set, to help pick one.
+effort_budget:
+  mode: "soft"
+  total_tokens: null
+
+server:
+  host: "127.0.0.1"
+  port: 8787
+  # Optional bearer token. REQUIRED automatically when host is non-loopback.
+  # Prefer HARNESS_BEARER_TOKEN in the environment rather than committing a token here.
+  auth_token: null
+  # Optional engagement scope. If non-empty, only these hostnames and their
+  # subdomains may be analyzed. Empty means no application-level scope file.
+  allowed_hosts: []
+  # Cap on request/response body bytes sent into prompts, to keep local
+  # context windows sane. Bodies are truncated, not dropped, with a marker.
+  max_body_chars: 6000
+
+# Validator/tool layer. Agents propose hypotheses; validators independently
+# test them. Active validators are OFF by default and never accept a
+# model-generated URL/command. They operate only on the original captured
+# exchange and inherit the server.allowed_hosts scope.
+validators:
+  enabled: true
+  active_enabled: false
+  sqlmap:
+    enabled: true
+    binary: "sqlmap"
+    timeout_seconds: 90
+    level: 1
+    risk: 1

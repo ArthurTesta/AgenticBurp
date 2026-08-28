@@ -1,0 +1,63 @@
+plugins {
+    id 'java'
+    // com.github.johnrengelman.shadow (last release 8.1.1) is unmaintained
+    // and only supports Gradle 8.0-8.2.x; a real build attempt against a
+    // newer Gradle failed inside the plugin's own internals
+    // (NormalizingCopyActionDecorator$StubbedFileCopyDetails had no
+    // "mode" property -- an internal Gradle class the old plugin reaches
+    // into reflectively via Groovy, which changed shape in Gradle 8.3).
+    // Maintenance moved to the GradleUp org under a new plugin ID;
+    // 8.3.x is their last release in the same (non-rewritten) 8.x line,
+    // documented as a drop-in replacement for 8.1.1's API/DSL, and is
+    // also Gradle 9 compatible -- safer than jumping to the fully
+    // rewritten 9.x line, which has several documented breaking changes
+    // and couldn't be verified here (Maven Central is blocked in the
+    // sandbox this was fixed from; the next real Gradle run is the
+    // actual signal, not this comment).
+    id 'com.gradleup.shadow' version '8.3.11'
+}
+
+group = 'com.harness.llm'
+version = '0.1.0'
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    // Montoya API is Burp's current (post-2023) extension API.
+    // Check https://portswigger.github.io/burp-extensions-montoya-api/
+    // for the latest version number before building.
+    compileOnly 'net.portswigger.burp.extensions:montoya-api:2023.12.1'
+    implementation 'com.google.code.gson:gson:2.10.1'
+
+    // Test files under src/test/java use real JUnit 5 (Jupiter) @Test
+    // methods. Without this, they compile but Gradle's default `test`
+    // task finds zero discoverable tests and fails the build with
+    // "test sources present... did not discover any tests" -- exactly
+    // what happened before this was added. junit-platform-launcher is
+    // included explicitly per Gradle's own documented recommendation
+    // (docs.gradle.org/current/userguide/java_testing.html) for running
+    // via `gradle test` rather than relying on an IDE to supply it.
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.14.4'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+
+test {
+    useJUnitPlatform()
+}
+
+// Shadow jar bundles Gson into the extension jar so Burp doesn't need it
+// on its own classpath. This is the file you load into Burp:
+// Extensions -> Installed -> Add -> select build/libs/burp-extension-all.jar
+shadowJar {
+    archiveClassifier.set('all')
+    relocate 'com.google.gson', 'com.harness.llm.shaded.gson'
+}
+
+build.dependsOn(shadowJar)
