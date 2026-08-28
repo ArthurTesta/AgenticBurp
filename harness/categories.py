@@ -33,6 +33,7 @@ CANONICAL_CATEGORIES: tuple[str, ...] = (
     "jwt", "xxe", "csrf", "file_upload", "nosql",
     "command_injection", "ssti", "open_redirect", "info_disclosure",
     "anomaly",
+    "cors",
 )
 
 # Deliberately generous but not promiscuous: each entry is a phrase an
@@ -85,6 +86,10 @@ _SYNONYMS: dict[str, str] = {
     "business_logic_enhanced": "business_logic_enhanced", "business logic enhanced": "business_logic_enhanced",
     "workflow abuse": "business_logic_enhanced", "state manipulation": "business_logic_enhanced",
     "anomaly": "anomaly", "anomaly detection": "anomaly", "unknown vulnerability": "anomaly",
+    "cors": "cors",
+    "cross-origin resource sharing": "cors",
+    "cross origin resource sharing": "cors",
+    "cors misconfiguration": "cors",
     "behavioral anomaly": "anomaly", "suspicious behavior": "anomaly",
 }
 

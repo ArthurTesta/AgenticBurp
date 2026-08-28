@@ -22,6 +22,7 @@ _CAPABILITIES = {
     "ssti": ("ssti_validation", True),
     "open_redirect": ("open_redirect_validation", True),
     "info_disclosure": ("info_disclosure_scan", False),  # Passive, no active validation
+    "cors": ("cors_misconfiguration_detection", True),
 }
 
 def exchange_fingerprint(exchange: HttpExchange) -> str:

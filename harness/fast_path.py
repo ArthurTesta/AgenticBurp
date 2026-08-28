@@ -125,6 +125,9 @@ _QUERY_PARAM_PATTERNS: list[tuple[re.Pattern, list[str]]] = [
 
 # Request header patterns
 _REQUEST_HEADER_PATTERNS: list[tuple[re.Pattern, list[str]]] = [
+    # CORS headers in requests
+    (re.compile(r'Origin|Access-Control-Request-Method|Access-Control-Request-Headers', re.IGNORECASE), ['cors']),
+
     # JSON content type
     (re.compile(r'application/json', re.IGNORECASE), 
      ['sqli', 'xss', 'idor', 'business_logic']),
@@ -180,6 +183,10 @@ _RESPONSE_PATTERNS: list[tuple[re.Pattern, list[str]]] = [
     (re.compile(r'"data":\s*\{|"errors":\s*\[', re.IGNORECASE), ['graphql']),
     (re.compile(r'__schema|__type|introspection|"query":', re.IGNORECASE), ['graphql']),
     (re.compile(r'"__typename"|GraphQL|graphql', re.IGNORECASE), ['graphql']),
+    
+    # CORS-related patterns
+    (re.compile(r'Access-Control-Allow-Origin|Access-Control-Allow-Credentials|Access-Control-Allow-Headers|Access-Control-Allow-Methods|Access-Control-Expose-Headers|Access-Control-Max-Age|Vary: Origin', re.IGNORECASE), ['cors']),
+    (re.compile(r'origin.*\*|allow-origin.*null|credentials.*true', re.IGNORECASE), ['cors']),
 ]
 
 # HTTP method patterns

@@ -1,6 +1,7 @@
 from __future__ import annotations
 from .base import Validator
 from .sqlmap import SqlmapValidator
+from .cors_validator import CorsValidator
 
 
 class ValidatorRegistry:
@@ -16,6 +17,14 @@ class ValidatorRegistry:
                 timeout_seconds=int(sqlmap_cfg.get("timeout_seconds", 90)),
                 level=int(sqlmap_cfg.get("level", 1)),
                 risk=int(sqlmap_cfg.get("risk", 1)),
+            )
+        
+        # CORS validator
+        cors_cfg = cfg.get("cors", {})
+        if cors_cfg.get("enabled", True):
+            self.validators["cors"] = CorsValidator(
+                timeout=float(cors_cfg.get("timeout", 10.0)),
+                max_redirects=int(cors_cfg.get("max_redirects", 5)),
             )
 
     def for_finding(self, finding, exchange):
