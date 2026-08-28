@@ -147,6 +147,9 @@ _REQUEST_HEADER_PATTERNS: list[tuple[re.Pattern, list[str]]] = [
     # Authorization headers (auth issues)
     (re.compile(r'bearer|basic|digest|token', re.IGNORECASE), 
      ['auth']),
+    
+    # HTTP Request Smuggling - conflicting headers
+    (re.compile(r'Content-Length|Transfer-Encoding', re.IGNORECASE), ['http_request_smuggling']),
 ]
 
 # Response patterns that indicate specific issues
@@ -191,6 +194,8 @@ _RESPONSE_PATTERNS: list[tuple[re.Pattern, list[str]]] = [
     # Recon patterns - discovery files and endpoints
     (re.compile(r'robots\.txt|sitemap\.xml|\.git/|\.env|README|CHANGELOG|package\.json|pom\.xml|build\.gradle', re.IGNORECASE), ['recon']),
     (re.compile(r'/api|/swagger|/openapi|/redoc|/graphql|/admin|/login|/auth|/administrator', re.IGNORECASE), ['recon']),
+    
+    # HTTP Request Smuggling patterns (also in request headers)
 ]
 
 # HTTP method patterns

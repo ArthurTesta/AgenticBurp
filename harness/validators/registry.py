@@ -3,6 +3,7 @@ from .base import Validator
 from .sqlmap import SqlmapValidator
 from .cors_validator import CorsValidator
 from .recon_validator import ReconValidator
+from .http_request_smuggling_validator import HttpRequestSmugglingValidator
 
 
 class ValidatorRegistry:
@@ -35,6 +36,14 @@ class ValidatorRegistry:
                 timeout=float(recon_cfg.get("timeout", 15.0)),
                 max_redirects=int(recon_cfg.get("max_redirects", 10)),
                 max_depth=int(recon_cfg.get("max_depth", 5)),
+            )
+        
+        # HTTP Request Smuggling validator
+        hrs_cfg = cfg.get("http_request_smuggling", {})
+        if hrs_cfg.get("enabled", True):
+            self.validators["http_request_smuggling"] = HttpRequestSmugglingValidator(
+                timeout=float(hrs_cfg.get("timeout", 30.0)),
+                max_redirects=int(hrs_cfg.get("max_redirects", 0)),
             )
 
     def for_finding(self, finding, exchange):

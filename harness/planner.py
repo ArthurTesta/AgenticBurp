@@ -24,6 +24,7 @@ _CAPABILITIES = {
     "info_disclosure": ("info_disclosure_scan", False),  # Passive, no active validation
     "cors": ("cors_misconfiguration_detection", True),
     "recon": ("attack_surface_mapping", True),
+    "http_request_smuggling": ("http_request_smuggling_detection", True),
 }
 
 def exchange_fingerprint(exchange: HttpExchange) -> str:
