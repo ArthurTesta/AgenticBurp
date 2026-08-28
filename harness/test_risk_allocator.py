@@ -81,9 +81,39 @@ class CostWeightedRankingTests(unittest.TestCase):
         ranked = rank([low_risk_cheap, high_risk_expensive])
         self.assertEqual(ranked[0].category, "a")
 
+    def test_zero_cost_uses_neutral_fallback_not_absurd_density(self):
+        """Zero cost should fall back to neutral cost (1.0), not create extreme density."""
+        # A low-severity info finding with zero cost
+        zero_cost_info = RiskScore(category="a", url="u", probability=0.5, severity="info", cost=0.0)
+        # Expected risk for info at 0.5 probability = 0.5 * 0.1 = 0.05
+        # With neutral fallback cost of 1.0, value_density = 0.05 / 1.0 = 0.05
+        self.assertAlmostEqual(zero_cost_info.value_density, 0.05, places=5)
+        
+        # A high-severity critical finding with normal cost
+        normal_cost_critical = RiskScore(category="b", url="u", probability=0.5, severity="critical", cost=1.0)
+        # Expected risk for critical at 0.5 probability = 0.5 * 1.0 = 0.5
+        # value_density = 0.5 / 1.0 = 0.5
+        self.assertAlmostEqual(normal_cost_critical.value_density, 0.5, places=5)
+        
+        # The zero-cost info finding should NOT outrank the normal-cost critical finding
+        ranked = rank([zero_cost_info, normal_cost_critical])
+        self.assertEqual(ranked[0].category, "b", 
+                        "Normal-cost critical should outrank zero-cost info")
+
+    def test_negative_cost_also_uses_neutral_fallback(self):
+        """Negative cost should also fall back to neutral cost (1.0)."""
+        neg_cost = RiskScore(category="a", url="u", probability=0.5, severity="high", cost=-1.0)
+        # Expected risk = 0.5 * 0.75 = 0.375
+        # With neutral fallback, value_density = 0.375 / 1.0 = 0.375
+        self.assertAlmostEqual(neg_cost.value_density, 0.375, places=5)
+
     def test_zero_cost_does_not_divide_by_zero(self):
+        """Legacy test: ensure no division by zero error."""
         s = RiskScore(category="a", url="u", probability=0.5, severity="high", cost=0.0)
         self.assertTrue(s.value_density > 0)  # must not raise ZeroDivisionError or be inf/nan
+        # Additionally, verify it's a reasonable value (not absurdly large)
+        self.assertLess(s.value_density, 10.0, 
+                       "Zero-cost density should not be absurdly large")
 
 
 if __name__ == "__main__":

@@ -29,6 +29,11 @@ class RiskScore:
     means two findings with identical risk but very different retry cost
     (a one-shot sqlmap confirmation vs. an XSS finding needing several
     payload rounds) are no longer treated as equal priority.
+
+    Zero or negative cost is treated as "unknown cost" and falls back to
+    a neutral/default cost of 1.0. This prevents division by near-zero
+    values (which would create absurdly high density for "free" items)
+    while still allowing cost-aware ranking when real costs are known.
     """
     category: str
     url: str
@@ -42,7 +47,12 @@ class RiskScore:
     def __post_init__(self) -> None:
         p = max(0.0, min(1.0, self.probability))
         self.expected_risk = p * _SEVERITY_WEIGHT.get(self.severity, _SEVERITY_WEIGHT["info"])
-        self.value_density = self.expected_risk / max(self.cost, 1e-9)
+        # Treat zero/negative cost as unknown cost, not "free".
+        # Using 1.0 (the declared default) as the fallback means "use neutral
+        # cost when no real cost is known", which prevents zero-cost items
+        # from artificially dominating the ranking due to division by near-zero.
+        effective_cost = self.cost if self.cost > 0 else 1.0
+        self.value_density = self.expected_risk / effective_cost
 
 
 def rank(scores: list[RiskScore]) -> list[RiskScore]:

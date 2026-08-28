@@ -10,6 +10,7 @@ import chaining
 import planner
 import effort
 from effort import BudgetMode, CallKind, EffortBudget
+import security
 from github_advisories import GitHubAdvisoryClient
 from package_registry_checks import PackageRegistryClient
 from kev_check import KevClient
@@ -279,15 +280,18 @@ class Orchestrator:
 
     async def _choose_agents(self, exchange: HttpExchange) -> tuple[list[str], str]:
         available = list(self.agents.keys())
+        # Redact sensitive headers before sending to LLM
+        redacted_req_headers = security.redact_headers(exchange.request_headers)
+        redacted_resp_headers = security.redact_headers(exchange.response_headers)
         user_prompt = f"""
 Available specialists: {available}
 
 METHOD: {exchange.method}
 URL: {exchange.url}
-REQUEST HEADERS: {exchange.request_headers}
+REQUEST HEADERS: {redacted_req_headers}
 REQUEST BODY (first 1000 chars): {exchange.request_body[:1000]}
 RESPONSE STATUS: {exchange.response_status}
-RESPONSE HEADERS: {exchange.response_headers}
+RESPONSE HEADERS: {redacted_resp_headers}
 <response-body>
 {exchange.response_body[:1000]}
 </response-body>

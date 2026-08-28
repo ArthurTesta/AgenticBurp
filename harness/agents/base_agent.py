@@ -4,6 +4,15 @@ from abc import ABC, abstractmethod
 from ollama_client import OllamaClient, OllamaError
 from models import HttpExchange, AgentReport, Finding, ComponentCandidate
 import knowledge
+import sys
+import os
+
+# Add the harness directory to the path so we can import security
+_harness_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _harness_dir not in sys.path:
+    sys.path.insert(0, _harness_dir)
+
+import security
 
 
 # Shared instructions every specialist agent gets, on top of its own
@@ -76,22 +85,6 @@ Rules:
 """
 
 
-# Header names whose VALUES are session-identifying secrets (bearer
-# tokens, session cookies, API keys) and must never reach the model --
-# only the fact that such a header is present matters for an agent's
-# reasoning (e.g. "this request is authenticated"), never the value
-# itself. Names only, matched case-insensitively; kept as a module-level
-# constant so it's one reviewable list, not scattered inline logic.
-_SECRET_HEADER_NAMES = {"authorization", "cookie", "set-cookie", "x-api-key", "x-auth-token", "proxy-authorization"}
-
-
-def _redact_headers(headers: dict[str, str]) -> dict[str, str]:
-    return {
-        k: ("[REDACTED -- header present, value withheld from model]" if k.lower() in _SECRET_HEADER_NAMES else v)
-        for k, v in headers.items()
-    }
-
-
 class BaseAgent(ABC):
     name: str = "base"
 
@@ -123,8 +116,8 @@ class BaseAgent(ABC):
                 return s
             return s[:max_body_chars] + f"\n...[truncated, {len(s) - max_body_chars} more chars]"
 
-        headers_req = "\n".join(f"{k}: {v}" for k, v in _redact_headers(exchange.request_headers).items())
-        headers_resp = "\n".join(f"{k}: {v}" for k, v in _redact_headers(exchange.response_headers).items())
+        headers_req = "\n".join(f"{k}: {v}" for k, v in security.redact_headers(exchange.request_headers).items())
+        headers_resp = "\n".join(f"{k}: {v}" for k, v in security.redact_headers(exchange.response_headers).items())
 
         prior_block = ""
         if prior_context:
