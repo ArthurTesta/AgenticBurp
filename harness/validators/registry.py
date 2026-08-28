@@ -2,6 +2,7 @@ from __future__ import annotations
 from .base import Validator
 from .sqlmap import SqlmapValidator
 from .cors_validator import CorsValidator
+from .recon_validator import ReconValidator
 
 
 class ValidatorRegistry:
@@ -25,6 +26,15 @@ class ValidatorRegistry:
             self.validators["cors"] = CorsValidator(
                 timeout=float(cors_cfg.get("timeout", 10.0)),
                 max_redirects=int(cors_cfg.get("max_redirects", 5)),
+            )
+        
+        # Recon validator
+        recon_cfg = cfg.get("recon", {})
+        if recon_cfg.get("enabled", True):
+            self.validators["recon"] = ReconValidator(
+                timeout=float(recon_cfg.get("timeout", 15.0)),
+                max_redirects=int(recon_cfg.get("max_redirects", 10)),
+                max_depth=int(recon_cfg.get("max_depth", 5)),
             )
 
     def for_finding(self, finding, exchange):

@@ -90,6 +90,14 @@ _SYNONYMS: dict[str, str] = {
     "cross-origin resource sharing": "cors",
     "cross origin resource sharing": "cors",
     "cors misconfiguration": "cors",
+    "recon": "recon",
+    "reconnaissance": "recon",
+    "attack surface mapping": "recon",
+    "attack map": "recon",
+    "recon": "recon",
+    "reconnaissance": "recon",
+    "attack surface mapping": "recon",
+    "attack map": "recon",
     "behavioral anomaly": "anomaly", "suspicious behavior": "anomaly",
 }
 

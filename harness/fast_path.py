@@ -187,6 +187,10 @@ _RESPONSE_PATTERNS: list[tuple[re.Pattern, list[str]]] = [
     # CORS-related patterns
     (re.compile(r'Access-Control-Allow-Origin|Access-Control-Allow-Credentials|Access-Control-Allow-Headers|Access-Control-Allow-Methods|Access-Control-Expose-Headers|Access-Control-Max-Age|Vary: Origin', re.IGNORECASE), ['cors']),
     (re.compile(r'origin.*\*|allow-origin.*null|credentials.*true', re.IGNORECASE), ['cors']),
+    
+    # Recon patterns - discovery files and endpoints
+    (re.compile(r'robots\.txt|sitemap\.xml|\.git/|\.env|README|CHANGELOG|package\.json|pom\.xml|build\.gradle', re.IGNORECASE), ['recon']),
+    (re.compile(r'/api|/swagger|/openapi|/redoc|/graphql|/admin|/login|/auth|/administrator', re.IGNORECASE), ['recon']),
 ]
 
 # HTTP method patterns
