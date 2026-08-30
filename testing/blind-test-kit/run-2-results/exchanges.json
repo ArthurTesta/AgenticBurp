@@ -1,0 +1,1637 @@
+[
+  {
+    "label": "probe: /api/",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/",
+    "request_headers": {},
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:13 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "probe: /api/health",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/health",
+    "request_headers": {},
+    "request_body": "",
+    "response_status": 200,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:13 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "16",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "{\"status\":\"ok\"}\n"
+  },
+  {
+    "label": "probe: /api/status",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/status",
+    "request_headers": {},
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:13 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "probe: /api/users",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/users",
+    "request_headers": {},
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:13 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "probe: /api/products",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/products",
+    "request_headers": {},
+    "request_body": "",
+    "response_status": 200,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:13 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "376",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "[{\"description\":\"2.4GHz wireless mouse, 1600 DPI\",\"id\":1,\"name\":\"Wireless Mouse\",\"price\":24.99},{\"description\":\"Hot-swappable, brown switches\",\"id\":2,\"name\":\"Mechanical Keyboard\",\"price\":79.99},{\"description\":\"7-in-1 hub with HDMI and SD card reader\",\"id\":3,\"name\":\"USB-C Hub\",\"price\":34.5},{\"description\":\"Autofocus, built-in mic\",\"id\":4,\"name\":\"Webcam 1080p\",\"price\":45.0}]\n"
+  },
+  {
+    "label": "probe: /api/orders",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/orders",
+    "request_headers": {},
+    "request_body": "",
+    "response_status": 405,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:13 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Allow": "POST, OPTIONS",
+      "Content-Length": "153",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>405 Method Not Allowed</title>\n<h1>Method Not Allowed</h1>\n<p>The method is not allowed for the requested URL.</p>\n"
+  },
+  {
+    "label": "probe: /api/items",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/items",
+    "request_headers": {},
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:13 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "probe: /api/posts",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/posts",
+    "request_headers": {},
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:13 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "probe: /api/comments",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/comments",
+    "request_headers": {},
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:13 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "probe: /api/auth",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/auth",
+    "request_headers": {},
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:13 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "probe: /api/login",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/login",
+    "request_headers": {},
+    "request_body": "",
+    "response_status": 405,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:13 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Allow": "POST, OPTIONS",
+      "Content-Length": "153",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>405 Method Not Allowed</title>\n<h1>Method Not Allowed</h1>\n<p>The method is not allowed for the requested URL.</p>\n"
+  },
+  {
+    "label": "probe: /api/register",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/register",
+    "request_headers": {},
+    "request_body": "",
+    "response_status": 405,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:13 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Allow": "POST, OPTIONS",
+      "Content-Length": "153",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>405 Method Not Allowed</title>\n<h1>Method Not Allowed</h1>\n<p>The method is not allowed for the requested URL.</p>\n"
+  },
+  {
+    "label": "probe: /api/logout",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/logout",
+    "request_headers": {},
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:13 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "probe: /health",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/health",
+    "request_headers": {},
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:13 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "probe: /status",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/status",
+    "request_headers": {},
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:13 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "probe: /.well-known/",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/.well-known/",
+    "request_headers": {},
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:13 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "discovery: /api",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api",
+    "request_headers": {},
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:13 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "discovery: /swagger",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/swagger",
+    "request_headers": {},
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:13 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "discovery: /openapi.json",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/openapi.json",
+    "request_headers": {},
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:13 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "discovery: /api/docs",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/docs",
+    "request_headers": {},
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:13 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "discovery: /docs",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/docs",
+    "request_headers": {},
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:13 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "discovery: /v1",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/v1",
+    "request_headers": {},
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:13 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "discovery: /v2",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/v2",
+    "request_headers": {},
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:13 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "register new user",
+    "method": "POST",
+    "url": "http://127.0.0.1:5001/api/register",
+    "request_headers": {},
+    "request_body": "{\"username\": \"testuser\", \"password\": \"testpass123\"}",
+    "response_status": 200,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:13 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "164",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "{\"token\":\"eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNCwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1NzMzfQ.KrOTrn7INfv9crxfjpqFtNo-nUBCdOP6zPJApg-2AK8\"}\n"
+  },
+  {
+    "label": "register admin user",
+    "method": "POST",
+    "url": "http://127.0.0.1:5001/api/register",
+    "request_headers": {},
+    "request_body": "{\"username\": \"admin\", \"password\": \"admin123\"}",
+    "response_status": 409,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:13 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "27",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "{\"error\":\"username taken\"}\n"
+  },
+  {
+    "label": "register alice",
+    "method": "POST",
+    "url": "http://127.0.0.1:5001/api/register",
+    "request_headers": {},
+    "request_body": "{\"username\": \"alice\", \"password\": \"alice123\"}",
+    "response_status": 409,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:13 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "27",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "{\"error\":\"username taken\"}\n"
+  },
+  {
+    "label": "register bob",
+    "method": "POST",
+    "url": "http://127.0.0.1:5001/api/register",
+    "request_headers": {},
+    "request_body": "{\"username\": \"bob\", \"password\": \"bob123\"}",
+    "response_status": 409,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:13 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "27",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "{\"error\":\"username taken\"}\n"
+  },
+  {
+    "label": "login testuser",
+    "method": "POST",
+    "url": "http://127.0.0.1:5001/api/login",
+    "request_headers": {},
+    "request_body": "{\"username\": \"testuser\", \"password\": \"testpass123\"}",
+    "response_status": 200,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:13 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "178",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "{\"role\":\"user\",\"token\":\"eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNCwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1NzMzfQ.KrOTrn7INfv9crxfjpqFtNo-nUBCdOP6zPJApg-2AK8\"}\n"
+  },
+  {
+    "label": "login admin",
+    "method": "POST",
+    "url": "http://127.0.0.1:5001/api/login",
+    "request_headers": {},
+    "request_body": "{\"username\": \"admin\", \"password\": \"admin123\"}",
+    "response_status": 401,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:13 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "32",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "{\"error\":\"invalid credentials\"}\n"
+  },
+  {
+    "label": "login alice",
+    "method": "POST",
+    "url": "http://127.0.0.1:5001/api/login",
+    "request_headers": {},
+    "request_body": "{\"username\": \"alice\", \"password\": \"alice123\"}",
+    "response_status": 401,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:13 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "32",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "{\"error\":\"invalid credentials\"}\n"
+  },
+  {
+    "label": "register alice_new",
+    "method": "POST",
+    "url": "http://127.0.0.1:5001/api/register",
+    "request_headers": {},
+    "request_body": "{\"username\": \"alice_new\", \"password\": \"alice123\"}",
+    "response_status": 200,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:37 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "164",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "{\"token\":\"eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNSwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1NzU3fQ.sWxpcVdReA4iRMkO3TZg5Q0G70FLF7b_DbPhSSqa5ao\"}\n"
+  },
+  {
+    "label": "login alice_new",
+    "method": "POST",
+    "url": "http://127.0.0.1:5001/api/login",
+    "request_headers": {},
+    "request_body": "{\"username\": \"alice_new\", \"password\": \"alice123\"}",
+    "response_status": 200,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:37 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "178",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "{\"role\":\"user\",\"token\":\"eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNSwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1NzU3fQ.sWxpcVdReA4iRMkO3TZg5Q0G70FLF7b_DbPhSSqa5ao\"}\n"
+  },
+  {
+    "label": "login admin with password",
+    "method": "POST",
+    "url": "http://127.0.0.1:5001/api/login",
+    "request_headers": {},
+    "request_body": "{\"username\": \"admin\", \"password\": \"password\"}",
+    "response_status": 401,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:37 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "32",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "{\"error\":\"invalid credentials\"}\n"
+  },
+  {
+    "label": "login alice with password",
+    "method": "POST",
+    "url": "http://127.0.0.1:5001/api/login",
+    "request_headers": {},
+    "request_body": "{\"username\": \"alice\", \"password\": \"password\"}",
+    "response_status": 401,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:37 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "32",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "{\"error\":\"invalid credentials\"}\n"
+  },
+  {
+    "label": "login alice pwd=123456",
+    "method": "POST",
+    "url": "http://127.0.0.1:5001/api/login",
+    "request_headers": {},
+    "request_body": "{\"username\": \"alice\", \"password\": \"123456\"}",
+    "response_status": 401,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:37 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "32",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "{\"error\":\"invalid credentials\"}\n"
+  },
+  {
+    "label": "login alice pwd=admin",
+    "method": "POST",
+    "url": "http://127.0.0.1:5001/api/login",
+    "request_headers": {},
+    "request_body": "{\"username\": \"alice\", \"password\": \"admin\"}",
+    "response_status": 401,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:37 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "32",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "{\"error\":\"invalid credentials\"}\n"
+  },
+  {
+    "label": "login alice pwd=Alice123",
+    "method": "POST",
+    "url": "http://127.0.0.1:5001/api/login",
+    "request_headers": {},
+    "request_body": "{\"username\": \"alice\", \"password\": \"Alice123\"}",
+    "response_status": 401,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:37 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "32",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "{\"error\":\"invalid credentials\"}\n"
+  },
+  {
+    "label": "login alice pwd=",
+    "method": "POST",
+    "url": "http://127.0.0.1:5001/api/login",
+    "request_headers": {},
+    "request_body": "{\"username\": \"alice\", \"password\": \"\"}",
+    "response_status": 401,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:37 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "32",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "{\"error\":\"invalid credentials\"}\n"
+  },
+  {
+    "label": "get product 1 with auth",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/products/1",
+    "request_headers": {
+      "Authorization": "Bearer eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNSwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1NzU3fQ.sWxpcVdReA4iRMkO3TZg5Q0G70FLF7b_DbPhSSqa5ao"
+    },
+    "request_body": "",
+    "response_status": 200,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:37 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "95",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "{\"description\":\"2.4GHz wireless mouse, 1600 DPI\",\"id\":1,\"name\":\"Wireless Mouse\",\"price\":24.99}\n"
+  },
+  {
+    "label": "get product 2 with auth",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/products/2",
+    "request_headers": {
+      "Authorization": "Bearer eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNSwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1NzU3fQ.sWxpcVdReA4iRMkO3TZg5Q0G70FLF7b_DbPhSSqa5ao"
+    },
+    "request_body": "",
+    "response_status": 200,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:37 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "98",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "{\"description\":\"Hot-swappable, brown switches\",\"id\":2,\"name\":\"Mechanical Keyboard\",\"price\":79.99}\n"
+  },
+  {
+    "label": "get product 3 with auth",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/products/3",
+    "request_headers": {
+      "Authorization": "Bearer eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNSwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1NzU3fQ.sWxpcVdReA4iRMkO3TZg5Q0G70FLF7b_DbPhSSqa5ao"
+    },
+    "request_body": "",
+    "response_status": 200,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:37 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "97",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "{\"description\":\"7-in-1 hub with HDMI and SD card reader\",\"id\":3,\"name\":\"USB-C Hub\",\"price\":34.5}\n"
+  },
+  {
+    "label": "get product 4 with auth",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/products/4",
+    "request_headers": {
+      "Authorization": "Bearer eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNSwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1NzU3fQ.sWxpcVdReA4iRMkO3TZg5Q0G70FLF7b_DbPhSSqa5ao"
+    },
+    "request_body": "",
+    "response_status": 200,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:37 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "84",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "{\"description\":\"Autofocus, built-in mic\",\"id\":4,\"name\":\"Webcam 1080p\",\"price\":45.0}\n"
+  },
+  {
+    "label": "get product 5 with auth",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/products/5",
+    "request_headers": {
+      "Authorization": "Bearer eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNSwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1NzU3fQ.sWxpcVdReA4iRMkO3TZg5Q0G70FLF7b_DbPhSSqa5ao"
+    },
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:37 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "22",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "{\"error\":\"not found\"}\n"
+  },
+  {
+    "label": "get product 100 with auth",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/products/100",
+    "request_headers": {
+      "Authorization": "Bearer eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNSwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1NzU3fQ.sWxpcVdReA4iRMkO3TZg5Q0G70FLF7b_DbPhSSqa5ao"
+    },
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:37 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "22",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "{\"error\":\"not found\"}\n"
+  },
+  {
+    "label": "get product -1 with auth",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/products/-1",
+    "request_headers": {
+      "Authorization": "Bearer eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNSwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1NzU3fQ.sWxpcVdReA4iRMkO3TZg5Q0G70FLF7b_DbPhSSqa5ao"
+    },
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:37 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "get product test with auth",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/products/test",
+    "request_headers": {
+      "Authorization": "Bearer eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNSwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1NzU3fQ.sWxpcVdReA4iRMkO3TZg5Q0G70FLF7b_DbPhSSqa5ao"
+    },
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:37 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "create order without auth",
+    "method": "POST",
+    "url": "http://127.0.0.1:5001/api/orders",
+    "request_headers": {},
+    "request_body": "{\"product_id\": 1, \"quantity\": 1}",
+    "response_status": 401,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:37 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "25",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "{\"error\":\"unauthorized\"}\n"
+  },
+  {
+    "label": "create order qty 5",
+    "method": "POST",
+    "url": "http://127.0.0.1:5001/api/orders",
+    "request_headers": {
+      "Authorization": "Bearer eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNSwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1NzU3fQ.sWxpcVdReA4iRMkO3TZg5Q0G70FLF7b_DbPhSSqa5ao"
+    },
+    "request_body": "{\"product_id\": 1, \"quantity\": 5}",
+    "response_status": 200,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:37 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "87",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "{\"new_balance\":-49.93999999999998,\"status\":\"ordered\",\"total_price\":124.94999999999999}\n"
+  },
+  {
+    "label": "create order product 2",
+    "method": "POST",
+    "url": "http://127.0.0.1:5001/api/orders",
+    "request_headers": {
+      "Authorization": "Bearer eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNSwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1NzU3fQ.sWxpcVdReA4iRMkO3TZg5Q0G70FLF7b_DbPhSSqa5ao"
+    },
+    "request_body": "{\"product_id\": 2, \"quantity\": 1}",
+    "response_status": 200,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:37 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "75",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "{\"new_balance\":-129.92999999999998,\"status\":\"ordered\",\"total_price\":79.99}\n"
+  },
+  {
+    "label": "get order 1",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/orders/1",
+    "request_headers": {
+      "Authorization": "Bearer eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNSwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1NzU3fQ.sWxpcVdReA4iRMkO3TZg5Q0G70FLF7b_DbPhSSqa5ao"
+    },
+    "request_body": "",
+    "response_status": 200,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:37 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "87",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "{\"id\":1,\"product_id\":1,\"quantity\":1,\"status\":\"placed\",\"total_price\":24.99,\"user_id\":5}\n"
+  },
+  {
+    "label": "get current user",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/user",
+    "request_headers": {
+      "Authorization": "Bearer eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNSwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1NzU3fQ.sWxpcVdReA4iRMkO3TZg5Q0G70FLF7b_DbPhSSqa5ao"
+    },
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:37 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "get /me",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/me",
+    "request_headers": {
+      "Authorization": "Bearer eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNSwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1NzU3fQ.sWxpcVdReA4iRMkO3TZg5Q0G70FLF7b_DbPhSSqa5ao"
+    },
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:37 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "get user by username",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/users/alice_new",
+    "request_headers": {
+      "Authorization": "Bearer eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNSwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1NzU3fQ.sWxpcVdReA4iRMkO3TZg5Q0G70FLF7b_DbPhSSqa5ao"
+    },
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:37 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "get user 1",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/users/1",
+    "request_headers": {
+      "Authorization": "Bearer eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNSwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1NzU3fQ.sWxpcVdReA4iRMkO3TZg5Q0G70FLF7b_DbPhSSqa5ao"
+    },
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:37 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "product injection '",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/products/1%27",
+    "request_headers": {
+      "Authorization": "Bearer eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNSwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1NzU3fQ.sWxpcVdReA4iRMkO3TZg5Q0G70FLF7b_DbPhSSqa5ao"
+    },
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:37 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "product injection OR",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/products/1 OR 1=1",
+    "request_headers": {
+      "Authorization": "Bearer eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNSwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1NzU3fQ.sWxpcVdReA4iRMkO3TZg5Q0G70FLF7b_DbPhSSqa5ao"
+    },
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:37 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "login injection comment",
+    "method": "POST",
+    "url": "http://127.0.0.1:5001/api/login",
+    "request_headers": {},
+    "request_body": "{\"username\": \"admin' --\", \"password\": \"x\"}",
+    "response_status": 200,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:37 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "180",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "{\"role\":\"admin\",\"token\":\"eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogMywgInJvbGUiOiAiYWRtaW4iLCAiaWF0IjogMTc4ODAxNTc1N30.Jm9zlnH6BDszX3NWHdVV6aiTvTfGRMM_pwALA09qfPA\"}\n"
+  },
+  {
+    "label": "order injection SQL",
+    "method": "POST",
+    "url": "http://127.0.0.1:5001/api/orders",
+    "request_headers": {
+      "Authorization": "Bearer eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNSwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1NzU3fQ.sWxpcVdReA4iRMkO3TZg5Q0G70FLF7b_DbPhSSqa5ao"
+    },
+    "request_body": "{\"product_id\": \"1; DROP TABLE orders\", \"quantity\": 1}",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:37 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "28",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "{\"error\":\"no such product\"}\n"
+  },
+  {
+    "label": "check endpoint /api/cart",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/cart",
+    "request_headers": {
+      "Authorization": "Bearer eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNSwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1NzU3fQ.sWxpcVdReA4iRMkO3TZg5Q0G70FLF7b_DbPhSSqa5ao"
+    },
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:37 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "check endpoint /api/checkout",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/checkout",
+    "request_headers": {
+      "Authorization": "Bearer eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNSwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1NzU3fQ.sWxpcVdReA4iRMkO3TZg5Q0G70FLF7b_DbPhSSqa5ao"
+    },
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:37 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "check endpoint /api/payment",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/payment",
+    "request_headers": {
+      "Authorization": "Bearer eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNSwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1NzU3fQ.sWxpcVdReA4iRMkO3TZg5Q0G70FLF7b_DbPhSSqa5ao"
+    },
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:37 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "check endpoint /api/shipping",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/shipping",
+    "request_headers": {
+      "Authorization": "Bearer eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNSwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1NzU3fQ.sWxpcVdReA4iRMkO3TZg5Q0G70FLF7b_DbPhSSqa5ao"
+    },
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:37 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "check endpoint /api/profile",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/profile",
+    "request_headers": {
+      "Authorization": "Bearer eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNSwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1NzU3fQ.sWxpcVdReA4iRMkO3TZg5Q0G70FLF7b_DbPhSSqa5ao"
+    },
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:37 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "check endpoint /api/settings",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/settings",
+    "request_headers": {
+      "Authorization": "Bearer eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNSwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1NzU3fQ.sWxpcVdReA4iRMkO3TZg5Q0G70FLF7b_DbPhSSqa5ao"
+    },
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:37 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "check endpoint /api/admin",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/admin",
+    "request_headers": {
+      "Authorization": "Bearer eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNSwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1NzU3fQ.sWxpcVdReA4iRMkO3TZg5Q0G70FLF7b_DbPhSSqa5ao"
+    },
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:37 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "check endpoint /api/report",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/report",
+    "request_headers": {
+      "Authorization": "Bearer eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNSwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1NzU3fQ.sWxpcVdReA4iRMkO3TZg5Q0G70FLF7b_DbPhSSqa5ao"
+    },
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:37 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "check endpoint /api/files",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/files",
+    "request_headers": {
+      "Authorization": "Bearer eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNSwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1NzU3fQ.sWxpcVdReA4iRMkO3TZg5Q0G70FLF7b_DbPhSSqa5ao"
+    },
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:37 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "check endpoint /api/upload",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/upload",
+    "request_headers": {
+      "Authorization": "Bearer eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNSwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1NzU3fQ.sWxpcVdReA4iRMkO3TZg5Q0G70FLF7b_DbPhSSqa5ao"
+    },
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:37 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "check endpoint /api/download",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/download",
+    "request_headers": {
+      "Authorization": "Bearer eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNSwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1NzU3fQ.sWxpcVdReA4iRMkO3TZg5Q0G70FLF7b_DbPhSSqa5ao"
+    },
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:02:37 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "access order 2 with testuser token",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/orders/2",
+    "request_headers": {
+      "Authorization": "Bearer eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNCwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1NzMzfQ.KrOTrn7INfv9crxfjpqFtNo-nUBCdOP6zPJApg-2AK8"
+    },
+    "request_body": "",
+    "response_status": 200,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:03:06 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "100",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "{\"id\":2,\"product_id\":1,\"quantity\":5,\"status\":\"placed\",\"total_price\":124.94999999999999,\"user_id\":5}\n"
+  },
+  {
+    "label": "access order 3 with testuser token",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/orders/3",
+    "request_headers": {
+      "Authorization": "Bearer eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNCwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1NzMzfQ.KrOTrn7INfv9crxfjpqFtNo-nUBCdOP6zPJApg-2AK8"
+    },
+    "request_body": "",
+    "response_status": 200,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:03:06 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "87",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "{\"id\":3,\"product_id\":2,\"quantity\":1,\"status\":\"placed\",\"total_price\":79.99,\"user_id\":5}\n"
+  },
+  {
+    "label": "access order 4 with testuser token",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/orders/4",
+    "request_headers": {
+      "Authorization": "Bearer eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNCwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1NzMzfQ.KrOTrn7INfv9crxfjpqFtNo-nUBCdOP6zPJApg-2AK8"
+    },
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:03:06 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "22",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "{\"error\":\"not found\"}\n"
+  },
+  {
+    "label": "access order 5 with testuser token",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/orders/5",
+    "request_headers": {
+      "Authorization": "Bearer eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNCwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1NzMzfQ.KrOTrn7INfv9crxfjpqFtNo-nUBCdOP6zPJApg-2AK8"
+    },
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:03:06 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "22",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "{\"error\":\"not found\"}\n"
+  },
+  {
+    "label": "access order 6 with testuser token",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/orders/6",
+    "request_headers": {
+      "Authorization": "Bearer eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNCwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1NzMzfQ.KrOTrn7INfv9crxfjpqFtNo-nUBCdOP6zPJApg-2AK8"
+    },
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:03:06 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "22",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "{\"error\":\"not found\"}\n"
+  },
+  {
+    "label": "access order 7 with testuser token",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/orders/7",
+    "request_headers": {
+      "Authorization": "Bearer eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNCwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1NzMzfQ.KrOTrn7INfv9crxfjpqFtNo-nUBCdOP6zPJApg-2AK8"
+    },
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:03:06 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "22",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "{\"error\":\"not found\"}\n"
+  },
+  {
+    "label": "access order 8 with testuser token",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/orders/8",
+    "request_headers": {
+      "Authorization": "Bearer eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNCwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1NzMzfQ.KrOTrn7INfv9crxfjpqFtNo-nUBCdOP6zPJApg-2AK8"
+    },
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:03:06 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "22",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "{\"error\":\"not found\"}\n"
+  },
+  {
+    "label": "access order 9 with testuser token",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/orders/9",
+    "request_headers": {
+      "Authorization": "Bearer eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNCwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1NzMzfQ.KrOTrn7INfv9crxfjpqFtNo-nUBCdOP6zPJApg-2AK8"
+    },
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:03:06 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "22",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "{\"error\":\"not found\"}\n"
+  },
+  {
+    "label": "register bob_test",
+    "method": "POST",
+    "url": "http://127.0.0.1:5001/api/register",
+    "request_headers": {},
+    "request_body": "{\"username\": \"bob_test\", \"password\": \"bob123\"}",
+    "response_status": 200,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:03:06 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "164",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "{\"token\":\"eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNiwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1Nzg2fQ.K7qEg-8tafdu0woXGQdnIO8VrxQf6e5cA-b1oGXV86w\"}\n"
+  },
+  {
+    "label": "login bob_test",
+    "method": "POST",
+    "url": "http://127.0.0.1:5001/api/login",
+    "request_headers": {},
+    "request_body": "{\"username\": \"bob_test\", \"password\": \"bob123\"}",
+    "response_status": 200,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:03:06 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "178",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "{\"role\":\"user\",\"token\":\"eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNiwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1Nzg2fQ.K7qEg-8tafdu0woXGQdnIO8VrxQf6e5cA-b1oGXV86w\"}\n"
+  },
+  {
+    "label": "try PUT order 1 from bob",
+    "method": "PUT",
+    "url": "http://127.0.0.1:5001/api/orders/1",
+    "request_headers": {
+      "Authorization": "Bearer eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNiwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1Nzg2fQ.K7qEg-8tafdu0woXGQdnIO8VrxQf6e5cA-b1oGXV86w"
+    },
+    "request_body": "{\"quantity\": 100}",
+    "response_status": 405,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:03:06 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Allow": "GET, OPTIONS, HEAD",
+      "Content-Length": "153",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>405 Method Not Allowed</title>\n<h1>Method Not Allowed</h1>\n<p>The method is not allowed for the requested URL.</p>\n"
+  },
+  {
+    "label": "try PATCH order 1 from bob",
+    "method": "PATCH",
+    "url": "http://127.0.0.1:5001/api/orders/1",
+    "request_headers": {
+      "Authorization": "Bearer eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNiwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1Nzg2fQ.K7qEg-8tafdu0woXGQdnIO8VrxQf6e5cA-b1oGXV86w"
+    },
+    "request_body": "{\"status\": \"delivered\"}",
+    "response_status": 405,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:03:06 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Allow": "GET, OPTIONS, HEAD",
+      "Content-Length": "153",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>405 Method Not Allowed</title>\n<h1>Method Not Allowed</h1>\n<p>The method is not allowed for the requested URL.</p>\n"
+  },
+  {
+    "label": "try DELETE order 1 from bob",
+    "method": "DELETE",
+    "url": "http://127.0.0.1:5001/api/orders/1",
+    "request_headers": {
+      "Authorization": "Bearer eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNiwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1Nzg2fQ.K7qEg-8tafdu0woXGQdnIO8VrxQf6e5cA-b1oGXV86w"
+    },
+    "request_body": "",
+    "response_status": 405,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:03:06 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Allow": "GET, OPTIONS, HEAD",
+      "Content-Length": "153",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>405 Method Not Allowed</title>\n<h1>Method Not Allowed</h1>\n<p>The method is not allowed for the requested URL.</p>\n"
+  },
+  {
+    "label": "order with negative quantity",
+    "method": "POST",
+    "url": "http://127.0.0.1:5001/api/orders",
+    "request_headers": {
+      "Authorization": "Bearer eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNiwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1Nzg2fQ.K7qEg-8tafdu0woXGQdnIO8VrxQf6e5cA-b1oGXV86w"
+    },
+    "request_body": "{\"product_id\": 1, \"quantity\": -1}",
+    "response_status": 200,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:03:06 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "62",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "{\"new_balance\":100.0,\"status\":\"ordered\",\"total_price\":-24.99}\n"
+  },
+  {
+    "label": "order with zero quantity",
+    "method": "POST",
+    "url": "http://127.0.0.1:5001/api/orders",
+    "request_headers": {
+      "Authorization": "Bearer eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNiwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1Nzg2fQ.K7qEg-8tafdu0woXGQdnIO8VrxQf6e5cA-b1oGXV86w"
+    },
+    "request_body": "{\"product_id\": 1, \"quantity\": 0}",
+    "response_status": 200,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:03:06 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "59",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "{\"new_balance\":100.0,\"status\":\"ordered\",\"total_price\":0.0}\n"
+  },
+  {
+    "label": "order with massive quantity",
+    "method": "POST",
+    "url": "http://127.0.0.1:5001/api/orders",
+    "request_headers": {
+      "Authorization": "Bearer eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNiwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1Nzg2fQ.K7qEg-8tafdu0woXGQdnIO8VrxQf6e5cA-b1oGXV86w"
+    },
+    "request_body": "{\"product_id\": 1, \"quantity\": 999999}",
+    "response_status": 200,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:03:06 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "88",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "{\"new_balance\":-24989875.009999998,\"status\":\"ordered\",\"total_price\":24989975.009999998}\n"
+  },
+  {
+    "label": "order with invalid product_id",
+    "method": "POST",
+    "url": "http://127.0.0.1:5001/api/orders",
+    "request_headers": {
+      "Authorization": "Bearer eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNiwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1Nzg2fQ.K7qEg-8tafdu0woXGQdnIO8VrxQf6e5cA-b1oGXV86w"
+    },
+    "request_body": "{\"product_id\": 999, \"quantity\": 1}",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:03:06 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "28",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "{\"error\":\"no such product\"}\n"
+  },
+  {
+    "label": "order with string quantity",
+    "method": "POST",
+    "url": "http://127.0.0.1:5001/api/orders",
+    "request_headers": {
+      "Authorization": "Bearer eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNiwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1Nzg2fQ.K7qEg-8tafdu0woXGQdnIO8VrxQf6e5cA-b1oGXV86w"
+    },
+    "request_body": "{\"product_id\": 1, \"quantity\": \"aaa\"}",
+    "response_status": 500,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:03:06 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "265",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>500 Internal Server Error</title>\n<h1>Internal Server Error</h1>\n<p>The server encountered an internal error and was unable to complete your request. Either the server is overloaded or there is an error in the application.</p>\n"
+  },
+  {
+    "label": "POST products",
+    "method": "POST",
+    "url": "http://127.0.0.1:5001/api/products",
+    "request_headers": {
+      "Authorization": "Bearer eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNiwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1Nzg2fQ.K7qEg-8tafdu0woXGQdnIO8VrxQf6e5cA-b1oGXV86w"
+    },
+    "request_body": "{}",
+    "response_status": 405,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:03:06 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Allow": "GET, OPTIONS, HEAD",
+      "Content-Length": "153",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>405 Method Not Allowed</title>\n<h1>Method Not Allowed</h1>\n<p>The method is not allowed for the requested URL.</p>\n"
+  },
+  {
+    "label": "PUT product price",
+    "method": "PUT",
+    "url": "http://127.0.0.1:5001/api/products/1",
+    "request_headers": {
+      "Authorization": "Bearer eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNiwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1Nzg2fQ.K7qEg-8tafdu0woXGQdnIO8VrxQf6e5cA-b1oGXV86w"
+    },
+    "request_body": "{\"price\": 0.01}",
+    "response_status": 405,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:03:06 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Allow": "GET, OPTIONS, HEAD",
+      "Content-Length": "153",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>405 Method Not Allowed</title>\n<h1>Method Not Allowed</h1>\n<p>The method is not allowed for the requested URL.</p>\n"
+  },
+  {
+    "label": "DELETE product",
+    "method": "DELETE",
+    "url": "http://127.0.0.1:5001/api/products/1",
+    "request_headers": {
+      "Authorization": "Bearer eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyX2lkIjogNiwgInJvbGUiOiAidXNlciIsICJpYXQiOiAxNzg4MDE1Nzg2fQ.K7qEg-8tafdu0woXGQdnIO8VrxQf6e5cA-b1oGXV86w"
+    },
+    "request_body": "",
+    "response_status": 405,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 15:03:06 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Allow": "GET, OPTIONS, HEAD",
+      "Content-Length": "153",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>405 Method Not Allowed</title>\n<h1>Method Not Allowed</h1>\n<p>The method is not allowed for the requested URL.</p>\n"
+  }
+]

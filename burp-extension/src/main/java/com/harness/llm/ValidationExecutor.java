@@ -1,0 +1,1153 @@
+package com.harness.llm;
+
+import burp.api.montoya.MontoyaApi;
+import burp.api.montoya.collaborator.CollaboratorClient;
+import burp.api.montoya.collaborator.CollaboratorPayload;
+import burp.api.montoya.collaborator.Interaction;
+import burp.api.montoya.collaborator.InteractionFilter;
+import burp.api.montoya.http.message.HttpRequestResponse;
+import burp.api.montoya.http.message.HttpHeader;
+import burp.api.montoya.http.message.params.HttpParameter;
+import burp.api.montoya.http.message.params.HttpParameterType;
+import burp.api.montoya.http.message.requests.HttpRequest;
+import com.harness.llm.logic.CommandInjectionTimingLogic;
+import com.harness.llm.logic.CorsMisconfigLogic;
+import com.harness.llm.logic.CspClickjackingLogic;
+import com.harness.llm.logic.CsrfLogic;
+import com.harness.llm.logic.DeserializationFormatLogic;
+import com.harness.llm.logic.IdentityCompareLogic;
+import com.harness.llm.logic.IdentityLabelResolver;
+import com.harness.llm.logic.InfoDisclosureLogic;
+import com.harness.llm.logic.JwtForgeryLogic;
+import com.harness.llm.logic.OpenRedirectLogic;
+import com.harness.llm.logic.SessionLifecycleLogic;
+import com.harness.llm.logic.SsrfCallbackLogic;
+import com.harness.llm.logic.SstiPayloadLogic;
+import com.harness.llm.logic.UrlIdentifierDiff;
+import com.harness.llm.logic.WorkflowReplayLogic;
+import com.harness.llm.logic.XssPayloadLogic;
+import com.harness.llm.logic.XxeCollaboratorLogic;
+import com.harness.llm.model.AnalysisModels.TestPlan;
+import com.harness.llm.model.AnalysisModels.ValidationSubmission;
+
+import javax.swing.*;
+import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.BiConsumer;
+
+/**
+ * Typed, policy-aware Burp execution plane. Each capability has its own
+ * narrowly-scoped executor; there is deliberately no generic "mutate this
+ * request" path controlled by model output.
+ */
+public final class ValidationExecutor {
+    private static final int MAX_BURST = 5;
+    private final MontoyaApi api;
+    private final HarnessClient client;
+    private final Map<String, HttpRequestResponse> sources = new ConcurrentHashMap<>();
+    private final Map<String, HttpRequestResponse> exchangePool = new ConcurrentHashMap<>();
+
+    public ValidationExecutor(MontoyaApi api, HarnessClient client) {
+        this.api = api;
+        this.client = client;
+    }
+
+    public void registerExchange(HttpRequestResponse rr) {
+        if (rr == null) return;
+        try { exchangePool.put(exchangeFingerprint(rr), rr); } catch (Exception ignored) {}
+    }
+
+    public void registerSources(HttpRequestResponse rr, Iterable<TestPlan> plans) {
+        registerExchange(rr);
+        for (TestPlan plan : plans) if (plan != null && plan.id != null) sources.put(plan.id, rr);
+    }
+
+    public void execute(TestPlan plan, BiConsumer<String, String> onComplete) {
+        if (plan == null || plan.id == null) { onComplete.accept("ERROR", "No test plan supplied."); return; }
+        HttpRequestResponse source = sources.get(plan.id);
+        if (source == null) { onComplete.accept("ERROR", "Captured exchange is no longer available."); return; }
+        if (!"burp".equalsIgnoreCase(plan.execution_plane)) { onComplete.accept("ERROR", "Plan is not assigned to Burp."); return; }
+        if (!source.request().isInScope()) { submit(plan, source, "rejected", 0, false, "Request is outside Burp's configured scope.", ""); onComplete.accept("REJECTED", "Out-of-scope request refused."); return; }
+        if (!exchangeFingerprint(source).equals(plan.source_exchange_hash)) { onComplete.accept("REJECTED", "Source request fingerprint does not match the plan."); return; }
+
+        new SwingWorker<Void, Void>() {
+            @Override protected Void doInBackground() {
+                try {
+                    switch (plan.capability) {
+                        case "reflection_context_validation" -> reflection(plan, source);
+                        case "bounded_rate_limit_probe" -> rateLimit(plan, source);
+                        case "workflow_replay_compare" -> workflowReplay(plan, source);
+                        case "authorization_boundary_compare", "cross_identity_compare" -> identityCompare(plan, source);
+                        case "controlled_callback_probe" -> controlledCallbackProbe(plan, source);
+                        case "session_fixation_compare" -> sessionFixationCompare(plan, source);
+                        case "logout_invalidation_compare" -> logoutInvalidationCompare(plan, source);
+                        case "csp_clickjacking_validation" -> cspClickjacking(plan, source);
+                        case "info_disclosure_scan" -> infoDisclosureScan(plan, source);
+                        case "cors_misconfiguration_detection" -> corsMisconfig(plan, source);
+                        case "open_redirect_validation" -> openRedirect(plan, source);
+                        case "jwt_validation" -> jwtForgery(plan, source);
+                        case "xxe_validation" -> xxeValidation(plan, source);
+                        case "csrf_validation" -> csrfValidation(plan, source);
+                        case "ssti_validation" -> sstiValidation(plan, source);
+                        case "deserialization_format_confirmation" -> deserializationFormatScan(plan, source);
+                        case "command_injection_validation" -> commandInjectionTiming(plan, source);
+                        default -> submit(plan, source, "inconclusive", 0, false, "No typed executor exists for capability '"+plan.capability+"'.", "");
+                    }
+                } catch (Exception e) {
+                    Outcome o=new Outcome(); o.status="error"; o.detail="Validation failed: "+e.getMessage();
+                    outcomes.put(plan.id, o);
+                    submit(plan, source, o.status, 0, false, o.detail, "");
+                }
+                return null;
+            }
+            @Override protected void done() { Outcome o=outcomes.remove(plan.id); if(o==null)o=new Outcome(); onComplete.accept(o.status.toUpperCase(Locale.ROOT), o.detail); }
+        }.execute();
+    }
+
+    /**
+     * v4.11. Was a single fixed alnum canary checked for bare substring
+     * presence -- proved only that text echoes, never that HTML/JS-
+     * breaking characters survive unescaped (a response that safely
+     * HTML-encodes everything could still report "supported, 0.86").
+     * Now loops through XssPayloadLogic.PAYLOADS (weakest-signal-last),
+     * per mutable parameter, stopping at the first CONFIRMED result --
+     * this is the retry-with-a-new-payload loop, bounded by the payload
+     * library's own size (4) times the number of mutable parameters, so
+     * there's no unbounded retry risk. No LLM is in this loop at all
+     * (unlike the Python-side retry_policy.py this mirrors), so there is
+     * no "escalate to a stronger model" step here -- each retry is a live
+     * HTTP probe, not a judgment call, which is a stronger kind of check
+     * to begin with; the closest analog to "handover" is that a SUPPORTED
+     * (partial signal: something echoed, breakout didn't survive) is
+     * exactly the caveat-attached status an analyst should look at
+     * manually, same as before.
+     */
+    private void reflection(TestPlan plan, HttpRequestResponse source) {
+        HttpRequest req = source.request();
+        List<HttpParameter> targets = new ArrayList<>();
+        for (var p : req.parameters()) {
+            if (p.type() == HttpParameterType.COOKIE) continue;
+            targets.add(p);
+        }
+        if (targets.isEmpty()) {
+            submit(plan, source, "inconclusive", 0, false,
+                    "No mutable URL/body parameter was available for reflection validation.", "");
+            return;
+        }
+
+        XssPayloadLogic.Verdict best = XssPayloadLogic.Verdict.REJECTED;
+        String bestDetail = "";
+        HttpParameter bestParam = null;
+        XssPayloadLogic.Payload bestPayload = null;
+
+        outer:
+        for (HttpParameter param : targets) {
+            List<String> tried = new ArrayList<>();
+            XssPayloadLogic.Payload payload;
+            while ((payload = XssPayloadLogic.nextPayload(tried)) != null) {
+                tried.add(payload.template());
+                String canary = "LLMHARNESS_" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+                String rendered = payload.render(canary);
+                var rr = api.http().sendRequest(req.withParameter(HttpParameter.parameter(param.name(), rendered, param.type())));
+                String body = rr.response() == null ? "" : rr.response().bodyToString();
+                XssPayloadLogic.Verdict v = XssPayloadLogic.classify(payload, canary, body);
+                if (v == XssPayloadLogic.Verdict.CONFIRMED) {
+                    best = v; bestParam = param; bestPayload = payload;
+                    bestDetail = "param=" + param.name() + " payload=" + payload.template();
+                    break outer;
+                }
+                if (v == XssPayloadLogic.Verdict.SUPPORTED && best != XssPayloadLogic.Verdict.SUPPORTED) {
+                    best = v; bestParam = param; bestPayload = payload;
+                    bestDetail = "param=" + param.name() + " payload=" + payload.template();
+                    // keep trying other payloads on this param, and other params -- a SUPPORTED here
+                    // doesn't stop the search for a CONFIRMED elsewhere, unlike CONFIRMED itself.
+                }
+            }
+        }
+
+        switch (best) {
+            case CONFIRMED -> statusFor(plan, source, "confirmed", 0.9, true,
+                    "A breakout payload survived unescaped in the response for parameter '" + bestParam.name() + "'.",
+                    bestDetail);
+            case SUPPORTED -> statusFor(plan, source, "supported", 0.6, false,
+                    "Content was reflected for parameter '" + bestParam.name() + "' but no breakout payload survived "
+                            + "unescaped across " + XssPayloadLogic.PAYLOADS.size() + " tried -- this does not by itself "
+                            + "prove executable XSS.", bestDetail);
+            default -> statusFor(plan, source, "rejected", 0.72, false,
+                    "No reflection was observed for any of " + XssPayloadLogic.PAYLOADS.size()
+                            + " payloads across " + targets.size() + " parameter(s).", "");
+        }
+    }
+
+    private void rateLimit(TestPlan plan, HttpRequestResponse source) {
+        long start=System.nanoTime(); int throttled=0; List<Integer> statuses=new ArrayList<>();
+        for(int i=0;i<MAX_BURST;i++) {
+            var rr=api.http().sendRequest(source.request());
+            int code=rr.response()==null?0:rr.response().statusCode(); statuses.add(code);
+            if(code==429 || code==503) throttled++;
+        }
+        double sec=(System.nanoTime()-start)/1_000_000_000.0;
+        if(throttled>0) statusFor(plan,source,"supported",0.82,false,"The bounded probe triggered throttling on "+throttled+"/"+MAX_BURST+" requests.","statuses="+statuses+", duration="+String.format(Locale.ROOT,"%.2fs",sec));
+        else statusFor(plan,source,"inconclusive",0.55,false,"No throttling response was observed in the bounded probe.","Absence of throttling in five requests is not proof of a rate-limit vulnerability.");
+    }
+
+    /**
+     * v4.1 correction. The v4 version of this method confirmed IDOR/authz
+     * findings whenever two different captured identities received a
+     * similar response for the *same URL* -- which cannot distinguish a
+     * real authorization failure from a resource that is simply public
+     * (a homepage, a public listing). See IdentityCompareLogic's class
+     * doc for the full rationale; this method's job is only to gather
+     * the four HTTP observations that logic needs and hand off the
+     * decision to it, rather than deciding here.
+     *
+     * For "cross_identity_compare" (object-level IDOR), the candidate
+     * must reference a *different* object identifier than the source
+     * (found via UrlIdentifierDiff) and the "attempt" is identity A's
+     * session replayed with that identifier swapped in. For
+     * "authorization_boundary_compare" (no identifier to swap -- e.g.
+     * a low-privilege user hitting an admin-only URL) the candidate
+     * must share the *same* URL, and the "attempt" is simply identity
+     * A's own request replayed as-is.
+     */
+    private void identityCompare(TestPlan plan, HttpRequestResponse source) {
+        boolean isIdor = "cross_identity_compare".equals(plan.capability);
+
+        List<HttpRequestResponse> candidates = new ArrayList<>();
+        List<UrlIdentifierDiff.Diff> diffs = new ArrayList<>();
+        String sourceFingerprint = exchangeFingerprint(source);
+        for (HttpRequestResponse rr : exchangePool.values()) {
+            if (rr == null || rr == source) continue;
+            try {
+                if (exchangeFingerprint(rr).equals(sourceFingerprint)) continue;
+                if (isIdor) {
+                    Optional<UrlIdentifierDiff.Diff> d =
+                            UrlIdentifierDiff.singleDifferingIdentifier(source.request().url(), rr.request().url());
+                    if (d.isPresent()) { candidates.add(rr); diffs.add(d.get()); }
+                } else if (rr.request().url().equals(source.request().url())) {
+                    candidates.add(rr); diffs.add(null);
+                }
+            } catch (Exception ignored) {}
+        }
+
+        if (candidates.isEmpty()) {
+            String need = isIdor
+                    ? "No second captured request referencing a different object identifier for the same endpoint shape is available. Capture the same operation for a second identity with a different object id and retry."
+                    : "No second captured request for the same URL from a different identity is available. Capture the same operation as a second identity and retry.";
+            statusFor(plan, source, "inconclusive", 0, false, need, "");
+            return;
+        }
+
+        String host = netloc(source.request().url());
+        Map<String, String> sessionLabelsByFingerprint = fetchSessionLookup(host);
+
+        String[] labels = new String[candidates.size()];
+        for (int i = 0; i < candidates.size(); i++) {
+            HttpRequestResponse rr = candidates.get(i);
+            String fullFingerprint = exchangeFingerprint(rr);
+            labels[i] = IdentityLabelResolver.labelFor(
+                    rr.request().method(), rr.request().url(), fullFingerprint.substring(0, 8),
+                    fullFingerprint, sessionLabelsByFingerprint);
+        }
+        final int[] selected = {-1};
+        try {
+            selected[0] = JOptionPane.showOptionDialog(null,
+                    "Select the captured request made as the comparison identity (identity B).\n\n" +
+                            "This assertion is analyst-controlled; the harness will not invent credentials or session state.",
+                    "Select comparison identity", JOptionPane.DEFAULT_OPTION, JOptionPane.PLAIN_MESSAGE, null, labels, labels[0]);
+        } catch (Exception e) {
+            statusFor(plan, source, "inconclusive", 0, false, "No comparison identity was selected.", "");
+            return;
+        }
+        if (selected[0] < 0) { statusFor(plan, source, "inconclusive", 0, false, "Comparison cancelled.", ""); return; }
+
+        HttpRequestResponse candidate = candidates.get(selected[0]);
+        UrlIdentifierDiff.Diff diff = diffs.get(selected[0]);
+
+        var sourceReplay = api.http().sendRequest(source.request());
+        var candidateReplay = api.http().sendRequest(candidate.request());
+        if (sourceReplay.response() == null || candidateReplay.response() == null) {
+            statusFor(plan, source, "inconclusive", 0, false, "One baseline request returned no response.", "");
+            return;
+        }
+
+        HttpRequest attemptReq = (isIdor && diff != null) ? applyIdentifierSwap(source.request(), diff) : source.request();
+        var attemptResp = api.http().sendRequest(attemptReq);
+        if (attemptResp.response() == null) {
+            statusFor(plan, source, "inconclusive", 0, false, "The cross-identity attempt request returned no response.", "");
+            return;
+        }
+
+        HttpRequestResponse anonResp = null;
+        try {
+            HttpRequest anonReq = stripIdentityHeaders(attemptReq);
+            anonResp = api.http().sendRequest(anonReq);
+        } catch (Exception ignored) {}
+
+        IdentityCompareLogic.Probe sourceProbe = toProbe(sourceReplay);
+        IdentityCompareLogic.Probe candidateProbe = toProbe(candidateReplay);
+        IdentityCompareLogic.Probe attemptProbe = toProbe(attemptResp);
+        IdentityCompareLogic.Probe anonProbe = (anonResp == null || anonResp.response() == null) ? null : toProbe(anonResp);
+
+        boolean identifierChanged = !isIdor || diff != null;
+        IdentityCompareLogic.Evidence ev = IdentityCompareLogic.evaluate(
+                plan.capability, identifierChanged, sourceProbe, candidateProbe, attemptProbe, anonProbe);
+
+        String status = ev.confirmed ? "confirmed" : ev.verdict.name().toLowerCase(Locale.ROOT);
+        statusFor(plan, source, status, ev.confidence, ev.confirmed, ev.summary, ev.detail);
+    }
+
+    /**
+     * Session fixation: compares a session cookie's value across a
+     * pre-login and post-login exchange picked from the exchange pool.
+     * No live replay needed -- both observations are already-captured
+     * responses, so this is a pure comparison, unlike the other
+     * capabilities in this file which send fresh requests.
+     *
+     * Cookie-name matching is a heuristic: common session-cookie name
+     * patterns are tried first (session/sid/token/auth-shaped names,
+     * plus the well-known framework defaults), falling back to any
+     * cookie name present in both exchanges' Set-Cookie headers if no
+     * pattern match is found. This can pick the wrong cookie on an
+     * app with multiple stateful cookies -- the plan's raw detail
+     * output includes which cookie name was actually compared, so a
+     * wrong pick is visible and correctable, not silently wrong.
+     */
+    private void sessionFixationCompare(TestPlan plan, HttpRequestResponse source) {
+        List<HttpRequestResponse> candidates = new ArrayList<>();
+        String sourceFingerprint = exchangeFingerprint(source);
+        for (HttpRequestResponse rr : exchangePool.values()) {
+            if (rr == null || rr == source) continue;
+            try {
+                if (exchangeFingerprint(rr).equals(sourceFingerprint)) continue;
+                if (!extractSetCookiePairs(rr).isEmpty()) candidates.add(rr);
+            } catch (Exception ignored) {}
+        }
+        if (candidates.isEmpty()) {
+            statusFor(plan, source, "inconclusive", 0, false,
+                    "No other captured exchange with a Set-Cookie header is available to compare against. "
+                            + "Capture the pre-login response (the one that first sets the session cookie) and retry.", "");
+            return;
+        }
+
+        String[] labels = new String[candidates.size()];
+        for (int i = 0; i < candidates.size(); i++) {
+            HttpRequestResponse rr = candidates.get(i);
+            labels[i] = rr.request().method() + " " + rr.request().url() + " [" + exchangeFingerprint(rr).substring(0, 8) + "]";
+        }
+        int selected;
+        try {
+            selected = JOptionPane.showOptionDialog(null,
+                    "Select the OTHER captured exchange to compare session cookies against\n"
+                            + "(pick the pre-login response if 'source' is post-login, or vice versa).\n\n"
+                            + "This assertion is analyst-controlled; the harness will not guess which is which.",
+                    "Select comparison exchange", JOptionPane.DEFAULT_OPTION, JOptionPane.PLAIN_MESSAGE, null, labels, labels[0]);
+        } catch (Exception e) {
+            statusFor(plan, source, "inconclusive", 0, false, "No comparison exchange was selected.", "");
+            return;
+        }
+        if (selected < 0) { statusFor(plan, source, "inconclusive", 0, false, "Comparison cancelled.", ""); return; }
+
+        Map<String, String> sourceCookies = extractSetCookiePairs(source);
+        Map<String, String> otherCookies = extractSetCookiePairs(candidates.get(selected));
+        String cookieName = pickSessionCookieName(sourceCookies.keySet(), otherCookies.keySet());
+        if (cookieName == null) {
+            statusFor(plan, source, "inconclusive", 0, false,
+                    "Neither exchange's Set-Cookie headers share a common cookie name to compare.", "");
+            return;
+        }
+
+        SessionLifecycleLogic.Evidence ev = SessionLifecycleLogic.evaluateSessionFixation(
+                sourceCookies.get(cookieName), otherCookies.get(cookieName));
+        String fixationStatus = ev.confirmed ? "confirmed" : ev.verdict.name().toLowerCase(Locale.ROOT);
+        statusFor(plan, source, fixationStatus, ev.confidence, ev.confirmed, ev.summary,
+                "cookieCompared=" + cookieName + " " + ev.detail);
+    }
+
+    /**
+     * Logout invalidation: the analyst picks the protected-resource
+     * exchange (made using the session BEFORE logout) from the pool;
+     * this method replays that SAME request (same cookie, unmodified)
+     * now that the logout captured in `source` has already happened,
+     * and checks whether the old session still works.
+     */
+    private void logoutInvalidationCompare(TestPlan plan, HttpRequestResponse source) {
+        List<HttpRequestResponse> candidates = new ArrayList<>();
+        String sourceFingerprint = exchangeFingerprint(source);
+        for (HttpRequestResponse rr : exchangePool.values()) {
+            if (rr == null || rr == source) continue;
+            try {
+                if (exchangeFingerprint(rr).equals(sourceFingerprint)) continue;
+                candidates.add(rr);
+            } catch (Exception ignored) {}
+        }
+        if (candidates.isEmpty()) {
+            statusFor(plan, source, "inconclusive", 0, false,
+                    "No other captured exchange is available. Capture a request to a protected resource "
+                            + "made BEFORE this logout, using the same session, and retry.", "");
+            return;
+        }
+
+        String[] labels = new String[candidates.size()];
+        for (int i = 0; i < candidates.size(); i++) {
+            HttpRequestResponse rr = candidates.get(i);
+            labels[i] = rr.request().method() + " " + rr.request().url() + " [" + exchangeFingerprint(rr).substring(0, 8) + "]";
+        }
+        int selected;
+        try {
+            selected = JOptionPane.showOptionDialog(null,
+                    "Select the pre-logout request to a PROTECTED resource, made with the SAME session "
+                            + "as the logout request being validated.\n\n"
+                            + "This assertion is analyst-controlled; the harness will not guess which request that is.",
+                    "Select pre-logout protected request", JOptionPane.DEFAULT_OPTION, JOptionPane.PLAIN_MESSAGE, null, labels, labels[0]);
+        } catch (Exception e) {
+            statusFor(plan, source, "inconclusive", 0, false, "No comparison exchange was selected.", "");
+            return;
+        }
+        if (selected < 0) { statusFor(plan, source, "inconclusive", 0, false, "Comparison cancelled.", ""); return; }
+
+        HttpRequestResponse protectedResource = candidates.get(selected);
+        var reuseReplay = api.http().sendRequest(protectedResource.request());
+        if (reuseReplay.response() == null) {
+            statusFor(plan, source, "inconclusive", 0, false,
+                    "Replaying the old session against the protected resource returned no response.", "");
+            return;
+        }
+
+        HttpRequestResponse anonResp = null;
+        try {
+            HttpRequest anonReq = stripIdentityHeaders(protectedResource.request());
+            anonResp = api.http().sendRequest(anonReq);
+        } catch (Exception ignored) {}
+
+        SessionLifecycleLogic.Probe preLogoutProbe =
+                new SessionLifecycleLogic.Probe(protectedResource.response().statusCode(), protectedResource.response().bodyToString());
+        SessionLifecycleLogic.Probe postLogoutProbe = toSessionProbe(reuseReplay);
+        SessionLifecycleLogic.Probe anonProbe = (anonResp == null || anonResp.response() == null) ? null : toSessionProbe(anonResp);
+
+        SessionLifecycleLogic.Evidence ev = SessionLifecycleLogic.evaluateLogoutInvalidation(preLogoutProbe, postLogoutProbe, anonProbe);
+        String logoutStatus = ev.confirmed ? "confirmed" : ev.verdict.name().toLowerCase(Locale.ROOT);
+        statusFor(plan, source, logoutStatus, ev.confidence, ev.confirmed, ev.summary, ev.detail);
+    }
+
+    private static SessionLifecycleLogic.Probe toSessionProbe(HttpRequestResponse rr) {
+        int status = rr.response() == null ? 0 : rr.response().statusCode();
+        String body = rr.response() == null ? "" : rr.response().bodyToString();
+        return new SessionLifecycleLogic.Probe(status, body);
+    }
+
+    private static final String[] SESSION_COOKIE_NAME_HINTS = {
+            "session", "sess", "sid", "token", "auth",
+            "phpsessid", "jsessionid", "connect.sid", "asp.net_sessionid",
+    };
+
+    /** Prefer a cookie name matching common session-cookie conventions; fall back to any shared name. */
+    private static String pickSessionCookieName(Set<String> namesA, Set<String> namesB) {
+        Set<String> shared = new HashSet<>(namesA);
+        shared.retainAll(namesB);
+        if (shared.isEmpty()) return null;
+        for (String hint : SESSION_COOKIE_NAME_HINTS) {
+            for (String name : shared) {
+                if (name.toLowerCase(Locale.ROOT).contains(hint)) return name;
+            }
+        }
+        return shared.iterator().next();
+    }
+
+    /** Parses Set-Cookie response headers into {@code name -> value}, first occurrence wins per name. */
+    private static Map<String, String> extractSetCookiePairs(HttpRequestResponse rr) {
+        Map<String, String> pairs = new LinkedHashMap<>();
+        if (rr == null || rr.response() == null) return pairs;
+        for (var header : rr.response().headers()) {
+            if (!"Set-Cookie".equalsIgnoreCase(header.name())) continue;
+            String value = header.value();
+            int semi = value.indexOf(';');
+            String nameValue = semi >= 0 ? value.substring(0, semi) : value;
+            int eq = nameValue.indexOf('=');
+            if (eq <= 0) continue;
+            String name = nameValue.substring(0, eq).trim();
+            String val = nameValue.substring(eq + 1).trim();
+            pairs.putIfAbsent(name, val);
+        }
+        return pairs;
+    }
+
+    private static IdentityCompareLogic.Probe toProbe(HttpRequestResponse rr) {
+        int status = rr.response() == null ? 0 : rr.response().statusCode();
+        String body = rr.response() == null ? "" : rr.response().bodyToString();
+        return new IdentityCompareLogic.Probe(status, body);
+    }
+
+    /**
+     * Swap the differing identifier (path segment or query value) into
+     * {@code req}, keeping req's own headers/cookies/session -- i.e.
+     * identity A's own credentials, pointed at identity B's object.
+     * Verified against the Montoya API interface source
+     * (HttpRequest.withPath / .withParameter) -- these are the same
+     * primitives already used elsewhere in this file for the reflection
+     * canary (withParameter) -- withPath is new to this method.
+     */
+    private static HttpRequest applyIdentifierSwap(HttpRequest req, UrlIdentifierDiff.Diff diff) {
+        if (diff.isPathDiff()) {
+            String path = req.path(); // path including query, per Montoya's HttpRequest#path()
+            String query = "";
+            int qIdx = path.indexOf('?');
+            if (qIdx >= 0) { query = path.substring(qIdx); path = path.substring(0, qIdx); }
+            String[] segments = path.split("/", -1);
+            int seen = -1;
+            for (int i = 0; i < segments.length; i++) {
+                if (segments[i].isEmpty()) continue;
+                seen++;
+                if (seen == diff.pathSegmentIndex) { segments[i] = diff.valueB; break; }
+            }
+            return req.withPath(String.join("/", segments) + query);
+        }
+        return req.withParameter(HttpParameter.parameter(diff.queryKey, diff.valueB, HttpParameterType.URL));
+    }
+
+    /** Strip session-identifying headers to build an unauthenticated baseline probe. */
+    private static HttpRequest stripIdentityHeaders(HttpRequest req) {
+        return req.withRemovedHeader("Cookie").withRemovedHeader("Authorization");
+    }
+
+    /**
+     * v4.9. Replaces the previous placeholder, which called baselineCompare()
+     * and always returned "inconclusive" regardless of what happened --
+     * see WorkflowReplayLogic's class doc for the full rationale and scope
+     * disclosure. This method's job is only to gather the three HTTP
+     * observations that logic needs (baseline / boundary / malformed) and
+     * hand off the decision to it, matching identityCompare()'s pattern.
+     *
+     * Targets the first numeric business-logic-shaped parameter found
+     * (price/amount/quantity/qty/discount/count/total/balance/value --
+     * see WorkflowReplayLogic.isNumericBoundaryCandidateParam). Cookies
+     * are skipped, same reasoning as reflection(): mutating session state
+     * isn't the point here and risks breaking the request entirely.
+     */
+    private void workflowReplay(TestPlan plan, HttpRequestResponse source) {
+        HttpRequest req = source.request();
+        HttpParameter target = null;
+        for (var p : req.parameters()) {
+            if (p.type() == HttpParameterType.COOKIE) continue;
+            if (WorkflowReplayLogic.isNumericBoundaryCandidateParam(p.name()) && isNumeric(p.value())) {
+                target = p;
+                break;
+            }
+        }
+        if (target == null) {
+            statusFor(plan, source, "inconclusive", 0, false,
+                    "No numeric business-logic-shaped parameter (price/amount/quantity/qty/discount/count/total/"
+                            + "balance/value) with a numeric value was available on this request for "
+                            + "workflow_replay_compare.", "");
+            return;
+        }
+
+        String originalValue = target.value();
+        String boundaryValue = boundaryViolationValue(originalValue);
+        String malformedValue = "not_a_number";
+
+        var baselineResp = api.http().sendRequest(req);
+        var boundaryResp = api.http().sendRequest(
+                req.withParameter(HttpParameter.parameter(target.name(), boundaryValue, target.type())));
+        var malformedResp = api.http().sendRequest(
+                req.withParameter(HttpParameter.parameter(target.name(), malformedValue, target.type())));
+
+        IdentityCompareLogic.Probe baselineProbe = baselineResp.response() == null ? null : toProbe(baselineResp);
+        IdentityCompareLogic.Probe boundaryProbe = boundaryResp.response() == null ? null : toProbe(boundaryResp);
+        IdentityCompareLogic.Probe malformedProbe = malformedResp.response() == null ? null : toProbe(malformedResp);
+
+        WorkflowReplayLogic.Evidence ev = WorkflowReplayLogic.evaluate(
+                target.name(), originalValue, boundaryValue, baselineProbe, boundaryProbe, malformedProbe);
+
+        String status = ev.confirmed ? "confirmed" : ev.verdict.name().toLowerCase(Locale.ROOT);
+        statusFor(plan, source, status, ev.confidence, ev.confirmed, ev.summary, ev.detail);
+    }
+
+    private static boolean isNumeric(String s) {
+        if (s == null) return false;
+        try { Double.parseDouble(s.trim()); return true; } catch (Exception e) { return false; }
+    }
+
+    /**
+     * Builds a value that WorkflowReplayLogic.isGenuineBoundaryViolation
+     * will accept as a real boundary case: negate non-negative values
+     * (scaled up so a zero/near-zero original doesn't produce -0.0, which
+     * is not "< 0" in Java -- see the isGenuineBoundaryViolation test for
+     * this exact edge case), or jump three orders of magnitude for values
+     * that are already negative.
+     */
+    private static String boundaryViolationValue(String originalValue) {
+        double v = Double.parseDouble(originalValue.trim());
+        double boundary = (v >= 0) ? -Math.max(Math.abs(v), 1.0) * 100 : v * 1000.0;
+        if (!Double.isInfinite(boundary) && boundary == Math.rint(boundary) && Math.abs(boundary) < 1e15) {
+            return Long.toString((long) boundary);
+        }
+        return Double.toString(boundary);
+    }
+
+    /**
+     * v4.9. New capability -- the v4.6 handover explicitly flagged this as
+     * having zero case in the switch statement despite planner.py already
+     * generating plans for it. See SsrfCallbackLogic's class doc for the
+     * full design rationale (why Collaborator, why no weaker fallback).
+     *
+     * Requires Burp Suite Professional with a Collaborator server
+     * configured; degrades to an honest "inconclusive, here's why" status
+     * rather than a crash or a fabricated result when it isn't available.
+     */
+    private void controlledCallbackProbe(TestPlan plan, HttpRequestResponse source) {
+        HttpRequest req = source.request();
+        List<HttpParameter> candidates = new ArrayList<>();
+        for (var p : req.parameters()) {
+            if (p.type() == HttpParameterType.COOKIE) continue;
+            if (SsrfCallbackLogic.isCallbackCandidateParam(p.name())) {
+                candidates.add(p);
+                if (candidates.size() >= 3) break; // bounded, same spirit as MAX_BURST elsewhere in this file
+            }
+        }
+        if (candidates.isEmpty()) {
+            SsrfCallbackLogic.Evidence ev = SsrfCallbackLogic.evaluate(List.of());
+            statusFor(plan, source, ev.verdict.name().toLowerCase(Locale.ROOT), ev.confidence, ev.confirmed, ev.summary, ev.detail);
+            return;
+        }
+
+        CollaboratorClient client;
+        List<CollaboratorPayload> payloads = new ArrayList<>();
+        try {
+            client = api.collaborator().createClient();
+            // generatePayload() is documented to throw IllegalStateException
+            // if Collaborator is disabled -- this is the real availability
+            // check, not createClient() itself.
+            for (int i = 0; i < candidates.size(); i++) payloads.add(client.generatePayload());
+        } catch (IllegalStateException e) {
+            statusFor(plan, source, "inconclusive", 0, false,
+                    "Burp Collaborator is unavailable (requires Burp Suite Professional with a Collaborator server "
+                            + "configured) -- controlled_callback_probe cannot run. " + e.getMessage(), "");
+            return;
+        } catch (Exception e) {
+            statusFor(plan, source, "error", 0, false, "Could not initialize Burp Collaborator: " + e.getMessage(), "");
+            return;
+        }
+
+        for (int i = 0; i < candidates.size(); i++) {
+            HttpParameter p = candidates.get(i);
+            String calloutUrl = "http://" + payloads.get(i) + "/";
+            try {
+                api.http().sendRequest(req.withParameter(HttpParameter.parameter(p.name(), calloutUrl, p.type())));
+            } catch (Exception ignored) {}
+        }
+
+        // Bounded poll -- interactions can take a few seconds to register
+        // server-side, so a single immediate check (the pattern used
+        // elsewhere in this file, e.g. rateLimit()) would produce false
+        // negatives here specifically. Polls up to ~10s total, exits as
+        // soon as any candidate has a hit.
+        List<SsrfCallbackLogic.CallbackAttempt> attempts = buildAttempts(candidates, payloads, client);
+        for (int round = 0; round < 5 && attempts.stream().noneMatch(a -> !a.interactionTypes.isEmpty()); round++) {
+            try { Thread.sleep(2000); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); break; }
+            attempts = buildAttempts(candidates, payloads, client);
+        }
+
+        SsrfCallbackLogic.Evidence ev = SsrfCallbackLogic.evaluate(attempts);
+        String status = ev.confirmed ? "confirmed" : ev.verdict.name().toLowerCase(Locale.ROOT);
+        statusFor(plan, source, status, ev.confidence, ev.confirmed, ev.summary, ev.detail);
+    }
+
+    private static List<SsrfCallbackLogic.CallbackAttempt> buildAttempts(
+            List<HttpParameter> candidates, List<CollaboratorPayload> payloads, CollaboratorClient client) {
+        List<SsrfCallbackLogic.CallbackAttempt> out = new ArrayList<>();
+        for (int i = 0; i < candidates.size(); i++) {
+            String token = payloads.get(i).toString();
+            List<Interaction> hits = client.getInteractions(InteractionFilter.interactionPayloadFilter(token));
+            List<String> types = hits.stream().map(h -> h.type().name()).distinct().toList();
+            out.add(new SsrfCallbackLogic.CallbackAttempt(candidates.get(i).name(), token, types));
+        }
+        return out;
+    }
+
+    private static final class Outcome { String status="inconclusive"; String detail=""; }
+    private final Map<String, Outcome> outcomes = new ConcurrentHashMap<>();
+    private void statusFor(TestPlan p,HttpRequestResponse s,String st,double conf,boolean confirmed,String summary,String evidence){ Outcome o=new Outcome(); o.status=st; o.detail=summary; outcomes.put(p.id,o); submit(p,s,st,conf,confirmed,summary,evidence); }
+
+    // ---------------------------------------------------------------
+    // csp_clickjacking_validation -- passive, no new request. Classifies
+    // the response Burp already captured; see CspClickjackingLogic.
+    // ---------------------------------------------------------------
+    private void cspClickjacking(TestPlan plan, HttpRequestResponse source) {
+        var resp = source.response();
+        if (resp == null) {
+            statusFor(plan, source, "inconclusive", 0, false, "No response was captured for this exchange.", "");
+            return;
+        }
+        String contentType = resp.headerValue("Content-Type");
+        String xfo = resp.headerValue("X-Frame-Options");
+        String csp = resp.headerValue("Content-Security-Policy");
+        CspClickjackingLogic.Evidence ev = CspClickjackingLogic.evaluate(contentType, xfo, csp);
+        statusFor(plan, source, ev.verdict().name().toLowerCase(Locale.ROOT), ev.confidence(), ev.confirmed(), ev.summary(), ev.detail());
+    }
+
+    // ---------------------------------------------------------------
+    // info_disclosure_scan -- passive, no new request. Classifies the
+    // response body Burp already captured; see InfoDisclosureLogic.
+    // ---------------------------------------------------------------
+    private void infoDisclosureScan(TestPlan plan, HttpRequestResponse source) {
+        var resp = source.response();
+        String body = resp == null ? null : resp.bodyToString();
+        InfoDisclosureLogic.Evidence ev = InfoDisclosureLogic.evaluate(body);
+        statusFor(plan, source, ev.verdict().name().toLowerCase(Locale.ROOT), ev.confidence(), ev.confirmed(), ev.summary(), ev.detail());
+    }
+
+    // ---------------------------------------------------------------
+    // cors_misconfiguration_detection -- adds a foreign Origin header to
+    // the captured request and resends once; see CorsMisconfigLogic.
+    // ---------------------------------------------------------------
+    private static final String CORS_PROBE_ORIGIN = "https://evil-harness-probe.example";
+
+    private void corsMisconfig(TestPlan plan, HttpRequestResponse source) {
+        HttpRequest req = source.request();
+        HttpRequest probeReq = req.withUpdatedHeader("Origin", CORS_PROBE_ORIGIN);
+        var rr = api.http().sendRequest(probeReq);
+        var resp = rr.response();
+        if (resp == null) {
+            statusFor(plan, source, "inconclusive", 0, false, "No response was received for the CORS probe request.", "");
+            return;
+        }
+        String acao = resp.headerValue("Access-Control-Allow-Origin");
+        String acac = resp.headerValue("Access-Control-Allow-Credentials");
+        CorsMisconfigLogic.Evidence ev = CorsMisconfigLogic.evaluate(CORS_PROBE_ORIGIN, acao, acac);
+        statusFor(plan, source, ev.verdict().name().toLowerCase(Locale.ROOT), ev.confidence(), ev.confirmed(), ev.summary(), ev.detail());
+    }
+
+    // ---------------------------------------------------------------
+    // open_redirect_validation -- reuses SsrfCallbackLogic's URL/redirect
+    // -shaped parameter name heuristic (SSRF and open redirect target
+    // near-identically-named parameters) rather than duplicating it.
+    // See OpenRedirectLogic.
+    // ---------------------------------------------------------------
+    private static final String OPEN_REDIRECT_PROBE_URL = "https://harness-redirect-probe.example/proof";
+
+    private void openRedirect(TestPlan plan, HttpRequestResponse source) {
+        HttpRequest req = source.request();
+        HttpParameter target = null;
+        for (var p : req.parameters()) {
+            if (p.type() == HttpParameterType.COOKIE) continue;
+            if (SsrfCallbackLogic.isCallbackCandidateParam(p.name())) { target = p; break; }
+        }
+        if (target == null) {
+            statusFor(plan, source, "invalid", 0, false,
+                    "No URL/redirect-shaped parameter was available on this request for open_redirect_validation to target.", "");
+            return;
+        }
+        var rr = api.http().sendRequest(req.withParameter(HttpParameter.parameter(target.name(), OPEN_REDIRECT_PROBE_URL, target.type())));
+        var resp = rr.response();
+        if (resp == null) {
+            statusFor(plan, source, "inconclusive", 0, false, "No response was received for the open redirect probe request.", "");
+            return;
+        }
+        String location = resp.headerValue("Location");
+        OpenRedirectLogic.Evidence ev = OpenRedirectLogic.evaluate(OPEN_REDIRECT_PROBE_URL, resp.statusCode(), location, target.name());
+        statusFor(plan, source, ev.verdict().name().toLowerCase(Locale.ROOT), ev.confidence(), ev.confirmed(), ev.summary(), ev.detail());
+    }
+
+    // ---------------------------------------------------------------
+    // jwt_validation -- forges an alg:none variant and a garbled-
+    // signature variant of the Authorization bearer token (if present
+    // and JWT-shaped) and resends each once, comparing against the
+    // original response. See JwtForgeryLogic. Ties directly to the
+    // alg:none finding worked through by hand in testing/test-target/
+    // earlier this project -- this is that same check, now
+    // deterministic instead of requiring a human to reason through it.
+    // ---------------------------------------------------------------
+    private void jwtForgery(TestPlan plan, HttpRequestResponse source) {
+        HttpRequest req = source.request();
+        String authHeader = null;
+        for (HttpHeader h : req.headers()) {
+            if (h.name().equalsIgnoreCase("Authorization")) { authHeader = h.value(); break; }
+        }
+        if (authHeader == null || !authHeader.regionMatches(true, 0, "Bearer ", 0, 7)) {
+            statusFor(plan, source, "invalid", 0, false,
+                    "No Bearer Authorization header was present on this request for jwt_validation to target.", "");
+            return;
+        }
+        String originalToken = authHeader.substring(7).trim();
+        if (!JwtForgeryLogic.looksLikeJwt(originalToken)) {
+            statusFor(plan, source, "invalid", 0, false,
+                    "The Authorization bearer value is not JWT-shaped (three dot-separated segments) -- "
+                            + "jwt_validation only applies to JWTs, not opaque tokens.", "");
+            return;
+        }
+
+        var originalResp = source.response();
+        int originalStatus = originalResp == null ? 0 : originalResp.statusCode();
+        int originalLen = originalResp == null ? 0 : originalResp.bodyToString().length();
+
+        String algNone = JwtForgeryLogic.forgeAlgNone(originalToken);
+        if (algNone != null) {
+            var rr = api.http().sendRequest(req.withUpdatedHeader("Authorization", "Bearer " + algNone));
+            var resp = rr.response();
+            if (resp != null) {
+                JwtForgeryLogic.Evidence ev = JwtForgeryLogic.evaluate("alg:none", originalStatus, resp.statusCode(), originalLen, resp.bodyToString().length());
+                if (ev.verdict() == JwtForgeryLogic.Verdict.CONFIRMED || ev.verdict() == JwtForgeryLogic.Verdict.SUPPORTED) {
+                    statusFor(plan, source, ev.verdict().name().toLowerCase(Locale.ROOT), ev.confidence(), ev.confirmed(), ev.summary(), ev.detail());
+                    return;
+                }
+            }
+        }
+
+        String garbled = JwtForgeryLogic.forgeGarbledSignature(originalToken);
+        var rr2 = api.http().sendRequest(req.withUpdatedHeader("Authorization", "Bearer " + garbled));
+        var resp2 = rr2.response();
+        if (resp2 == null) {
+            statusFor(plan, source, "inconclusive", 0, false, "No response was received for the garbled-signature probe.", "");
+            return;
+        }
+        JwtForgeryLogic.Evidence ev2 = JwtForgeryLogic.evaluate("garbled signature", originalStatus, resp2.statusCode(), originalLen, resp2.bodyToString().length());
+        statusFor(plan, source, ev2.verdict().name().toLowerCase(Locale.ROOT), ev2.confidence(), ev2.confirmed(), ev2.summary(), ev2.detail());
+    }
+
+    // ---------------------------------------------------------------
+    // xxe_validation -- reuses the Collaborator infrastructure already
+    // built for controlled_callback_probe; the mechanism (an out-of-
+    // band interaction) is identical, only the injection point differs
+    // (an XML external entity in the body, not a URL-shaped parameter).
+    // See XxeCollaboratorLogic.
+    // ---------------------------------------------------------------
+    private void xxeValidation(TestPlan plan, HttpRequestResponse source) {
+        HttpRequest req = source.request();
+        String contentType = null;
+        for (HttpHeader h : req.headers()) {
+            if (h.name().equalsIgnoreCase("Content-Type")) { contentType = h.value(); break; }
+        }
+        boolean isXml = XxeCollaboratorLogic.isXmlLike(contentType, req.bodyToString());
+        if (!isXml) {
+            XxeCollaboratorLogic.Evidence ev = XxeCollaboratorLogic.evaluate(false, List.of());
+            statusFor(plan, source, ev.verdict().name().toLowerCase(Locale.ROOT), ev.confidence(), ev.confirmed(), ev.summary(), ev.detail());
+            return;
+        }
+
+        CollaboratorClient client;
+        CollaboratorPayload payload;
+        try {
+            client = api.collaborator().createClient();
+            payload = client.generatePayload();
+        } catch (IllegalStateException e) {
+            statusFor(plan, source, "inconclusive", 0, false,
+                    "Burp Collaborator is unavailable (requires Burp Suite Professional with a Collaborator "
+                            + "server configured) -- xxe_validation cannot run. " + e.getMessage(), "");
+            return;
+        }
+
+        String payloadBody = XxeCollaboratorLogic.buildPayload(payload.toString());
+        api.http().sendRequest(req.withBody(payloadBody));
+        List<Interaction> hits = client.getInteractions(InteractionFilter.interactionPayloadFilter(payload.toString()));
+        List<String> types = hits.stream().map(h -> h.type().name()).distinct().toList();
+        XxeCollaboratorLogic.Evidence ev = XxeCollaboratorLogic.evaluate(true, types);
+        statusFor(plan, source, ev.verdict().name().toLowerCase(Locale.ROOT), ev.confidence(), ev.confirmed(), ev.summary(), ev.detail());
+    }
+
+    // ---------------------------------------------------------------
+    // csrf_validation -- if a CSRF-token-shaped header or body/form
+    // parameter is found, removes it and resends once, comparing
+    // status codes; if none is found, reports the passive signal
+    // without an extra request. See CsrfLogic for the full scope note
+    // (this only evaluates classic cookie-based session CSRF).
+    // ---------------------------------------------------------------
+    private void csrfValidation(TestPlan plan, HttpRequestResponse source) {
+        HttpRequest req = source.request();
+        boolean cookieAuthPresent = false;
+        for (HttpHeader h : req.headers()) {
+            if (h.name().equalsIgnoreCase("Cookie")) { cookieAuthPresent = true; break; }
+        }
+
+        HttpParameter tokenParam = null;
+        for (HttpHeader h : req.headers()) {
+            if (CsrfLogic.looksLikeCsrfTokenName(h.name())) {
+                // Header-based token: remove the header itself and resend.
+                var resp0 = source.response();
+                int originalStatus0 = resp0 == null ? 0 : resp0.statusCode();
+                var rr0 = api.http().sendRequest(req.withRemovedHeader(h.name()));
+                var mutatedResp0 = rr0.response();
+                int mutatedStatus0 = mutatedResp0 == null ? -1 : mutatedResp0.statusCode();
+                CsrfLogic.Evidence ev0 = CsrfLogic.evaluate(req.method(), true, true, originalStatus0, mutatedStatus0);
+                statusFor(plan, source, ev0.verdict().name().toLowerCase(Locale.ROOT), ev0.confidence(), ev0.confirmed(), ev0.summary(), ev0.detail());
+                return;
+            }
+        }
+        for (var p : req.parameters()) {
+            if (p.type() == HttpParameterType.COOKIE) continue;
+            if (CsrfLogic.looksLikeCsrfTokenName(p.name())) { tokenParam = p; break; }
+        }
+
+        if (tokenParam != null) {
+            var resp = source.response();
+            int originalStatus = resp == null ? 0 : resp.statusCode();
+            var rr = api.http().sendRequest(req.withParameter(HttpParameter.parameter(tokenParam.name(), "invalidated-by-harness", tokenParam.type())));
+            var mutatedResp = rr.response();
+            int mutatedStatus = mutatedResp == null ? -1 : mutatedResp.statusCode();
+            CsrfLogic.Evidence ev = CsrfLogic.evaluate(req.method(), cookieAuthPresent, true, originalStatus, mutatedStatus);
+            statusFor(plan, source, ev.verdict().name().toLowerCase(Locale.ROOT), ev.confidence(), ev.confirmed(), ev.summary(), ev.detail());
+            return;
+        }
+
+        CsrfLogic.Evidence ev = CsrfLogic.evaluate(req.method(), cookieAuthPresent, false, 0, -1);
+        statusFor(plan, source, ev.verdict().name().toLowerCase(Locale.ROOT), ev.confidence(), ev.confirmed(), ev.summary(), ev.detail());
+    }
+
+    // ---------------------------------------------------------------
+    // ssti_validation -- mirrors reflection()'s (XSS) candidate/payload
+    // iteration exactly: all non-cookie parameters, cycling payloads
+    // until CONFIRMED or exhausted. See SstiPayloadLogic.
+    // ---------------------------------------------------------------
+    private void sstiValidation(TestPlan plan, HttpRequestResponse source) {
+        HttpRequest req = source.request();
+        List<HttpParameter> targets = new ArrayList<>();
+        for (var p : req.parameters()) {
+            if (p.type() == HttpParameterType.COOKIE) continue;
+            targets.add(p);
+        }
+        if (targets.isEmpty()) {
+            statusFor(plan, source, "invalid", 0, false,
+                    "No mutable URL/body parameter was available for ssti_validation to target.", "");
+            return;
+        }
+
+        String baselineBody = source.response() == null ? null : source.response().bodyToString();
+        SstiPayloadLogic.Verdict best = SstiPayloadLogic.Verdict.REJECTED;
+        String bestDetail = "";
+        HttpParameter bestParam = null;
+
+        outer:
+        for (HttpParameter param : targets) {
+            List<String> tried = new ArrayList<>();
+            SstiPayloadLogic.Payload payload;
+            while ((payload = SstiPayloadLogic.nextPayload(tried)) != null) {
+                tried.add(payload.template());
+                var rr = api.http().sendRequest(req.withParameter(HttpParameter.parameter(param.name(), payload.template(), param.type())));
+                String mutatedBody = rr.response() == null ? null : rr.response().bodyToString();
+                SstiPayloadLogic.Evidence ev = SstiPayloadLogic.classify(payload, baselineBody, mutatedBody);
+                if (ev.verdict() == SstiPayloadLogic.Verdict.CONFIRMED) {
+                    best = ev.verdict(); bestParam = param; bestDetail = "param=" + param.name() + " | " + ev.detail();
+                    break outer;
+                }
+                if (ev.verdict() == SstiPayloadLogic.Verdict.SUPPORTED && best != SstiPayloadLogic.Verdict.SUPPORTED) {
+                    best = ev.verdict(); bestParam = param; bestDetail = "param=" + param.name() + " | " + ev.detail();
+                }
+            }
+        }
+
+        switch (best) {
+            case CONFIRMED -> statusFor(plan, source, "confirmed", 0.88, true,
+                    "A template expression was evaluated server-side for parameter '" + bestParam.name() + "'.", bestDetail);
+            case SUPPORTED -> statusFor(plan, source, "supported", 0.5, false,
+                    "A partial SSTI signal was observed for parameter '" + bestParam.name()
+                            + "' across " + SstiPayloadLogic.PAYLOADS.size() + " engine payloads tried -- not confirmed.", bestDetail);
+            default -> statusFor(plan, source, "rejected", 0.72, false,
+                    "No template evaluation was observed for any of " + SstiPayloadLogic.PAYLOADS.size()
+                            + " engine payloads across " + targets.size() + " parameter(s).", "");
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // deserialization_format_confirmation -- passive, no new request.
+    // Classifies the request body Burp already captured. See
+    // DeserializationFormatLogic for why this is scoped to pure-ASCII
+    // signatures only (no raw magic bytes).
+    // ---------------------------------------------------------------
+    private void deserializationFormatScan(TestPlan plan, HttpRequestResponse source) {
+        String body = source.request().bodyToString();
+        DeserializationFormatLogic.Evidence ev = DeserializationFormatLogic.evaluate(body);
+        statusFor(plan, source, ev.verdict().name().toLowerCase(Locale.ROOT), ev.confidence(), ev.confirmed(), ev.summary(), ev.detail());
+    }
+
+    // ---------------------------------------------------------------
+    // command_injection_validation -- differential timing probe. See
+    // CommandInjectionTimingLogic for why two different injected delays
+    // are compared against each other rather than one delay against a
+    // noisy baseline. Deliberately bounded to ONE candidate parameter
+    // and 2 payload templates (unlike reflection()/sstiValidation(),
+    // which try every parameter and payload) -- each attempt here costs
+    // several real seconds of wall-clock wait time (SHORT_SECONDS +
+    // LONG_SECONDS of actual sleep, if the injection works), so the
+    // same "try everything" approach that's cheap for XSS/SSTI would
+    // make an analyst wait a genuinely long time for one click.
+    // ---------------------------------------------------------------
+    private static final int COMMAND_INJECTION_MAX_PAYLOADS = 2;
+
+    private void commandInjectionTiming(TestPlan plan, HttpRequestResponse source) {
+        HttpRequest req = source.request();
+        List<HttpParameter> targets = new ArrayList<>();
+        for (var p : req.parameters()) {
+            if (p.type() == HttpParameterType.COOKIE) continue;
+            targets.add(p);
+        }
+        if (targets.isEmpty()) {
+            statusFor(plan, source, "invalid", 0, false,
+                    "No mutable URL/body parameter was available for command_injection_validation to target.", "");
+            return;
+        }
+        HttpParameter target = targets.get(0);
+
+        long baselineStart = System.nanoTime();
+        api.http().sendRequest(req);
+        long baselineMs = (System.nanoTime() - baselineStart) / 1_000_000;
+
+        CommandInjectionTimingLogic.Verdict best = CommandInjectionTimingLogic.Verdict.REJECTED;
+        String bestDetail = "";
+        int attempts = 0;
+        for (CommandInjectionTimingLogic.Payload payload : CommandInjectionTimingLogic.PAYLOADS) {
+            if (attempts >= COMMAND_INJECTION_MAX_PAYLOADS) break;
+            attempts++;
+
+            String shortPayload = payload.render(CommandInjectionTimingLogic.SHORT_SECONDS);
+            long shortStart = System.nanoTime();
+            api.http().sendRequest(req.withParameter(HttpParameter.parameter(target.name(), shortPayload, target.type())));
+            long shortMs = (System.nanoTime() - shortStart) / 1_000_000;
+
+            String longPayload = payload.render(CommandInjectionTimingLogic.LONG_SECONDS);
+            long longStart = System.nanoTime();
+            api.http().sendRequest(req.withParameter(HttpParameter.parameter(target.name(), longPayload, target.type())));
+            long longMs = (System.nanoTime() - longStart) / 1_000_000;
+
+            CommandInjectionTimingLogic.Evidence ev = CommandInjectionTimingLogic.evaluate(payload, baselineMs, shortMs, longMs);
+            if (ev.verdict() == CommandInjectionTimingLogic.Verdict.CONFIRMED) {
+                statusFor(plan, source, "confirmed", ev.confidence(), true,
+                        "Command injection timing signal for parameter '" + target.name() + "'.",
+                        "param=" + target.name() + " | " + ev.detail());
+                return;
+            }
+            if (ev.verdict() == CommandInjectionTimingLogic.Verdict.SUPPORTED && best != CommandInjectionTimingLogic.Verdict.SUPPORTED) {
+                best = ev.verdict();
+                bestDetail = "param=" + target.name() + " | " + ev.detail();
+            }
+        }
+
+        if (best == CommandInjectionTimingLogic.Verdict.SUPPORTED) {
+            statusFor(plan, source, "supported", 0.4, false,
+                    "Partial timing signal for parameter '" + target.name() + "' across " + attempts
+                            + " payload(s) tried -- not confirmed.", bestDetail);
+        } else {
+            statusFor(plan, source, "rejected", 0.7, false,
+                    "No timing evidence of command injection for parameter '" + target.name() + "' across "
+                            + attempts + " payload(s) tried.", "");
+        }
+    }
+
+    private void submit(TestPlan p,HttpRequestResponse source,String status,double confidence,boolean confirmed,String summary,String evidence){
+        ValidationSubmission v=new ValidationSubmission(); v.plan_id=p.id; v.status=status; v.confidence=confidence; v.confirmed=confirmed;
+        v.summary=summary; v.evidence=evidence; v.executor="burp:"+p.capability; v.source_exchange_hash=exchangeFingerprint(source);
+        try{ client.submitValidationResult(v); }catch(HarnessClient.HarnessException e){ api.logging().logToError("Validation submission failed: "+e.getMessage()); }
+    }
+
+    /**
+     * Must produce byte-for-byte the same string material that
+     * harness/planner.py's exchange_fingerprint() hashes -- that
+     * function fingerprints the exchange as the Python server actually
+     * received it, which went through headersToMap() (HarnessContextMenu.java)
+     * on the way there. headersToMap() merges duplicate header names
+     * (e.g. two Cookie headers) into one entry joined by "\n", since the
+     * wire format is a plain string map that can't represent duplicate
+     * JSON keys. This method used to iterate Burp's raw, non-deduplicated
+     * header list directly instead -- meaning ANY request with even one
+     * duplicate header name would compute a different hash here than the
+     * one computed at plan-creation time, and every validation attempt
+     * against it would be rejected with "fingerprint does not match",
+     * regardless of the request being byte-identical. Deduplicating the
+     * same way here, before sorting and hashing, is what makes the two
+     * sides agree.
+     */
+    public static String exchangeFingerprint(HttpRequestResponse rr){
+        try{ var req=rr.request(); MessageDigest md=MessageDigest.getInstance("SHA-256"); StringBuilder m=new StringBuilder();
+            m.append(req.method().toUpperCase()).append('\u001f').append(req.url()).append('\u001f');
+            Map<String, String> merged = new java.util.LinkedHashMap<>();
+            for (HttpHeader h : req.headers()) {
+                merged.merge(h.name(), h.value(), (oldValue, newValue) -> oldValue + "\n" + newValue);
+            }
+            // Sort by the ORIGINAL-case key first, matching Python's
+            // sorted(dict.items()) exactly -- then lowercase only for the
+            // output string. Lowercasing before sorting would give a
+            // different order whenever two header names' relative order
+            // depends on case (e.g. "Content-Type" sorts before "accept"
+            // by original case, but after it if both are lowercased
+            // first) -- a real, if narrow, way these two sides could
+            // still silently disagree even with merging fixed.
+            merged.entrySet().stream()
+                    .sorted(Map.Entry.comparingByKey())
+                    .forEach(h -> m.append(h.getKey().toLowerCase(Locale.ROOT)).append(':').append(h.getValue()).append('\u001f'));
+            m.append(req.bodyToString()); return HexFormat.of().formatHex(md.digest(m.toString().getBytes(StandardCharsets.UTF_8)));
+        }catch(Exception e){return "";}
+    }
+
+    /**
+     * Extracts host[:port] from a URL the same way harness/store.py's
+     * host_of() does (urlparse(url).netloc) -- needed because
+     * sessions_for_host() is keyed on that exact string, and this
+     * project has no shared code between the Java and Python sides to
+     * guarantee the two stay in sync by construction. If Python's
+     * host_of() ever changes its normalization (e.g. starts
+     * lowercasing, or stripping default ports), this must be updated
+     * to match or session lookups will silently stop matching -- there
+     * is no test that could catch that kind of cross-language drift
+     * automatically, which is worth naming rather than pretending this
+     * pairing is more robust than it is.
+     */
+    /**
+     * Extracts host[:port] from a URL the same way harness/store.py's
+     * host_of() does (urlparse(url).netloc) -- needed because
+     * sessions_for_host() is keyed on that exact string, and this
+     * project has no shared code between the Java and Python sides to
+     * guarantee the two stay in sync by construction. If Python's
+     * host_of() ever changes its normalization (e.g. starts
+     * lowercasing, or stripping default ports), this must be updated
+     * to match or session lookups will silently stop matching -- there
+     * is no test that could catch that kind of cross-language drift
+     * automatically, which is worth naming rather than pretending this
+     * pairing is more robust than it is.
+     *
+     * Public (not private) so HarnessContextMenu's session-registration
+     * action can reuse it rather than holding its own copy -- exactly
+     * the kind of small duplicated helper that silently drifts apart
+     * over time, per this project's own documented history of that
+     * exact failure mode (see exchange_text.py's harness-side
+     * equivalent fix from an earlier session).
+     */
+    public static String netloc(String url) {
+        try {
+            URI uri = URI.create(url);
+            String host = uri.getHost();
+            if (host == null) return url; // unparseable -- fall back to the raw string rather than throwing
+            int port = uri.getPort();
+            return port == -1 ? host : host + ":" + port;
+        } catch (Exception e) {
+            return url;
+        }
+    }
+
+    /**
+     * Fetches sessions for `host` and adapts them into the
+     * exchange_hash -> "name (role)" lookup IdentityLabelResolver.labelFor()
+     * expects. Never throws -- a harness-server hiccup (not running,
+     * network blip, auth misconfigured) must degrade the picker back to
+     * its original unlabeled format, not break the identity-compare
+     * capability entirely. This is a deliberate fail-open-to-the-OLD-
+     * behavior choice, not a safety-relevant fail-closed one: unlike
+     * safety_gate.py/safety_proxy_addon.py, nothing here authorizes a
+     * mutating action -- worst case on failure is a less-informative
+     * picker label, exactly what existed before this feature.
+     */
+    private Map<String, String> fetchSessionLookup(String host) {
+        try {
+            var sessions = client.sessionsForHost(host);
+            List<IdentityLabelResolver.SessionEntry> entries = new ArrayList<>();
+            for (var s : sessions) {
+                entries.add(new IdentityLabelResolver.SessionEntry(s.exchange_hash, s.identity_name, s.identity_role));
+            }
+            return IdentityLabelResolver.buildLookup(entries);
+        } catch (Exception e) {
+            api.logging().logToError("Could not fetch sessions for " + host + " (picker will show unlabeled candidates): " + e.getMessage());
+            return Map.of();
+        }
+    }
+}

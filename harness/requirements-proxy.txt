@@ -1,0 +1,5 @@
+# Optional dependency for harness/safety_proxy_addon.py only. Not
+# required for the core harness (server.py, orchestrator.py, agents,
+# validators) -- kept separate so the main install stays light for
+# anyone not running the forced-egress proxy. See PROXY_SETUP.md.
+mitmproxy>=11.0

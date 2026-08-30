@@ -1,0 +1,199 @@
+import tempfile
+import unittest
+from pathlib import Path
+
+import store
+from models import HttpExchange, Finding
+
+
+class TestFindingsPersistenceRoundTrip(unittest.TestCase):
+    """
+    Regression test for the report-generation gap found this session:
+    evidence, suggested_test, and owasp_category were present on every
+    Finding object but silently dropped at the persistence boundary,
+    meaning a report built from stored findings had no reproduction
+    detail -- only a one-line summary. This confirms the fix actually
+    round-trips, not just that the schema migration runs without error.
+    """
+
+    def setUp(self):
+        # Isolated temp DB per test -- never touch the real harness_state.db.
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self._original_db_path = store._DB_PATH
+        store._DB_PATH = Path(self._tmpdir.name) / "test_harness_state.db"
+
+    def tearDown(self):
+        store._DB_PATH = self._original_db_path
+        self._tmpdir.cleanup()
+
+    def test_evidence_and_suggested_test_and_owasp_category_round_trip(self):
+        exchange = HttpExchange(
+            url="https://example.com/api/users", method="GET",
+            request_headers={}, request_body="",
+            response_status=200, response_headers={}, response_body="",
+        )
+        finding = Finding(
+            vulnerability_class="sqli",
+            confidence=0.9,
+            summary="Boolean-blind SQL injection in id parameter",
+            evidence="Response length differs by 40 bytes between id=1 AND 1=1 and id=1 AND 1=2",
+            suggested_test="Send id=1 AND 1=1 vs id=1 AND 1=2 and compare response length",
+            basis="derived",
+            severity="critical",
+            owasp_category="A03:2021-Injection",
+            confirmed=True,
+        )
+        store.persist_findings(exchange, "sqli_agent", [finding])
+
+        results = store.all_host_findings(exchange.url)
+        self.assertEqual(len(results), 1)
+        r = results[0]
+        self.assertEqual(r["evidence"], finding.evidence)
+        self.assertEqual(r["suggested_test"], finding.suggested_test)
+        self.assertEqual(r["owasp_category"], finding.owasp_category)
+        self.assertEqual(r["basis"], "derived")
+        self.assertTrue(r["confirmed"])
+        self.assertEqual(r["agent"], "sqli_agent")
+
+    def test_owasp_category_none_round_trips_as_none(self):
+        exchange = HttpExchange(
+            url="https://example.com/x", method="GET",
+            request_headers={}, request_body="",
+            response_status=200, response_headers={}, response_body="",
+        )
+        finding = Finding(
+            vulnerability_class="info_disclosure", confidence=0.5,
+            summary="s", evidence="e", suggested_test="t", basis="derived",
+            owasp_category=None,
+        )
+        store.persist_findings(exchange, "info_disclosure_agent", [finding])
+        results = store.all_host_findings(exchange.url)
+        self.assertIsNone(results[0]["owasp_category"])
+
+    def test_multiple_findings_same_host_all_persist(self):
+        exchange = HttpExchange(
+            url="https://example.com/a", method="GET",
+            request_headers={}, request_body="",
+            response_status=200, response_headers={}, response_body="",
+        )
+        findings = [
+            Finding(vulnerability_class="xss", confidence=0.8, summary="s1",
+                    evidence="e1", suggested_test="t1", basis="derived"),
+            Finding(vulnerability_class="idor", confidence=0.7, summary="s2",
+                    evidence="e2", suggested_test="t2", basis="derived"),
+        ]
+        store.persist_findings(exchange, "test_agent", findings)
+        results = store.all_host_findings(exchange.url)
+        self.assertEqual(len(results), 2)
+        classes = {r["vulnerability_class"] for r in results}
+        self.assertEqual(classes, {"xss", "idor"})
+
+
+class TestFindingSuppression(unittest.TestCase):
+    """
+    Tests for the cross-run finding suppression feature -- the workflow
+    gap named in this project's own milestones list: without it, a
+    re-scan of the same host re-surfaces every previously-dismissed
+    finding with no memory of the dismissal.
+    """
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self._original_db_path = store._DB_PATH
+        store._DB_PATH = Path(self._tmpdir.name) / "test_harness_state.db"
+
+    def tearDown(self):
+        store._DB_PATH = self._original_db_path
+        self._tmpdir.cleanup()
+
+    def _persist_one(self, url="https://example.com/x", vulnerability_class="sqli", summary="s") -> str:
+        exchange = HttpExchange(url=url, method="GET", request_headers={}, request_body="",
+                                 response_status=200, response_headers={}, response_body="")
+        finding = Finding(vulnerability_class=vulnerability_class, confidence=0.8, summary=summary,
+                           evidence="e", suggested_test="t", basis="derived")
+        store.persist_findings(exchange, "test_agent", [finding])
+        results = store.all_host_findings(url, include_suppressed=True)
+        matching = [r for r in results if r["vulnerability_class"] == vulnerability_class and r["summary"] == summary]
+        self.assertEqual(len(matching), 1)
+        return matching[0]["fingerprint"]
+
+    def test_all_host_findings_includes_fingerprint_and_suppressed_fields(self):
+        self._persist_one()
+        results = store.all_host_findings("https://example.com/x", include_suppressed=True)
+        self.assertEqual(len(results), 1)
+        self.assertIn("fingerprint", results[0])
+        self.assertIn("suppressed", results[0])
+        self.assertFalse(results[0]["suppressed"])
+        self.assertNotEqual(results[0]["fingerprint"], "")
+
+    def test_suppressed_finding_is_excluded_by_default(self):
+        fp = self._persist_one()
+        self.assertEqual(len(store.all_host_findings("https://example.com/x")), 1)
+        store.suppress_finding(fp, reason="confirmed false positive during manual review")
+        self.assertEqual(len(store.all_host_findings("https://example.com/x")), 0)
+
+    def test_suppressed_finding_still_visible_with_include_suppressed(self):
+        fp = self._persist_one()
+        store.suppress_finding(fp, reason="false positive")
+        results = store.all_host_findings("https://example.com/x", include_suppressed=True)
+        self.assertEqual(len(results), 1)
+        self.assertTrue(results[0]["suppressed"])
+
+    def test_is_suppressed_reflects_current_state(self):
+        fp = self._persist_one()
+        self.assertFalse(store.is_suppressed(fp))
+        store.suppress_finding(fp)
+        self.assertTrue(store.is_suppressed(fp))
+
+    def test_unsuppress_restores_visibility(self):
+        fp = self._persist_one()
+        store.suppress_finding(fp)
+        self.assertEqual(len(store.all_host_findings("https://example.com/x")), 0)
+        removed = store.unsuppress_finding(fp)
+        self.assertTrue(removed)
+        self.assertEqual(len(store.all_host_findings("https://example.com/x")), 1)
+
+    def test_unsuppress_unknown_fingerprint_returns_false(self):
+        self.assertFalse(store.unsuppress_finding("not-a-real-fingerprint"))
+
+    def test_suppress_is_idempotent_and_updates_reason(self):
+        fp = self._persist_one()
+        store.suppress_finding(fp, reason="first reason")
+        store.suppress_finding(fp, reason="updated reason")
+        suppressions = store.list_suppressions()
+        self.assertEqual(len(suppressions), 1)
+        self.assertEqual(suppressions[0]["reason"], "updated reason")
+
+    def test_list_suppressions_most_recent_first(self):
+        fp1 = self._persist_one(url="https://a.example.com/x", summary="finding A")
+        fp2 = self._persist_one(url="https://b.example.com/x", summary="finding B")
+        store.suppress_finding(fp1, reason="first")
+        store.suppress_finding(fp2, reason="second")
+        suppressions = store.list_suppressions()
+        self.assertEqual([s["fingerprint"] for s in suppressions], [fp2, fp1])
+
+    def test_suppressing_one_finding_does_not_affect_a_different_one(self):
+        fp1 = self._persist_one(url="https://example.com/x", vulnerability_class="sqli", summary="s1")
+        fp2 = self._persist_one(url="https://example.com/x", vulnerability_class="xss", summary="s2")
+        store.suppress_finding(fp1)
+        results = store.all_host_findings("https://example.com/x")
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["vulnerability_class"], "xss")
+
+    def test_suppressed_findings_do_not_feed_chain_detection(self):
+        """
+        Side effect worth locking in with a test: orchestrator.py builds
+        chain hypotheses from store.all_host_findings()'s default
+        (non-suppressed) output, so suppressing a false positive also
+        keeps it out of future chain-detection input, not just out of
+        the main findings list.
+        """
+        fp = self._persist_one(vulnerability_class="open_redirect", summary="false positive redirect")
+        store.suppress_finding(fp, reason="not actually attacker-controlled")
+        results = store.all_host_findings("https://example.com/x")
+        classes = [r["vulnerability_class"] for r in results]
+        self.assertNotIn("open_redirect", classes)
+
+
+if __name__ == "__main__":
+    unittest.main()

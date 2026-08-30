@@ -1,0 +1,1429 @@
+{
+  "results": [
+    {
+      "exchange_index": 0,
+      "label": "probe: /api/",
+      "url": "http://127.0.0.1:5001/api/",
+      "dispatched_agents": [
+        "api_security",
+        "misconfig",
+        "supply_chain",
+        "xss"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, misconfig, supply_chain, xss (Fast-path: URL pattern: http://127.0.0.1:5001/api/; Response headers: ['Server', 'Date', 'Content-Type']...; Response body patterns). 0 finding(s) across 4 agent(s)."
+    },
+    {
+      "exchange_index": 1,
+      "label": "probe: /api/health",
+      "url": "http://127.0.0.1:5001/api/health",
+      "dispatched_agents": [
+        "api_security",
+        "misconfig",
+        "supply_chain"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, misconfig, supply_chain (Fast-path: URL pattern: http://127.0.0.1:5001/api/health; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 3 agent(s)."
+    },
+    {
+      "exchange_index": 2,
+      "label": "probe: /api/status",
+      "url": "http://127.0.0.1:5001/api/status",
+      "dispatched_agents": [
+        "api_security",
+        "misconfig",
+        "supply_chain",
+        "xss"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, misconfig, supply_chain, xss (Fast-path: URL pattern: http://127.0.0.1:5001/api/status; Response headers: ['Server', 'Date', 'Content-Type']...; Response body patterns). 0 finding(s) across 4 agent(s)."
+    },
+    {
+      "exchange_index": 3,
+      "label": "probe: /api/users",
+      "url": "http://127.0.0.1:5001/api/users",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "idor",
+        "misconfig",
+        "supply_chain",
+        "xss"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, idor, misconfig, supply_chain, xss (Fast-path: URL pattern: http://127.0.0.1:5001/api/users; Response headers: ['Server', 'Date', 'Content-Type']...; Response body patterns). 0 finding(s) across 6 agent(s)."
+    },
+    {
+      "exchange_index": 4,
+      "label": "probe: /api/products",
+      "url": "http://127.0.0.1:5001/api/products",
+      "dispatched_agents": [
+        "api_security",
+        "misconfig",
+        "supply_chain"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, misconfig, supply_chain (Fast-path: URL pattern: http://127.0.0.1:5001/api/products; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 3 agent(s)."
+    },
+    {
+      "exchange_index": 5,
+      "label": "probe: /api/orders",
+      "url": "http://127.0.0.1:5001/api/orders",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "idor",
+        "misconfig",
+        "supply_chain",
+        "xss"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, idor, misconfig, supply_chain, xss (Fast-path: URL pattern: http://127.0.0.1:5001/api/orders; Response headers: ['Server', 'Date', 'Content-Type']...; Response body patterns). 0 finding(s) across 6 agent(s)."
+    },
+    {
+      "exchange_index": 6,
+      "label": "probe: /api/items",
+      "url": "http://127.0.0.1:5001/api/items",
+      "dispatched_agents": [
+        "api_security",
+        "misconfig",
+        "supply_chain",
+        "xss"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, misconfig, supply_chain, xss (Fast-path: URL pattern: http://127.0.0.1:5001/api/items; Response headers: ['Server', 'Date', 'Content-Type']...; Response body patterns). 0 finding(s) across 4 agent(s)."
+    },
+    {
+      "exchange_index": 7,
+      "label": "probe: /api/posts",
+      "url": "http://127.0.0.1:5001/api/posts",
+      "dispatched_agents": [
+        "api_security",
+        "misconfig",
+        "supply_chain",
+        "xss"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, misconfig, supply_chain, xss (Fast-path: URL pattern: http://127.0.0.1:5001/api/posts; Response headers: ['Server', 'Date', 'Content-Type']...; Response body patterns). 0 finding(s) across 4 agent(s)."
+    },
+    {
+      "exchange_index": 8,
+      "label": "probe: /api/comments",
+      "url": "http://127.0.0.1:5001/api/comments",
+      "dispatched_agents": [
+        "api_security",
+        "misconfig",
+        "supply_chain",
+        "xss"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, misconfig, supply_chain, xss (Fast-path: URL pattern: http://127.0.0.1:5001/api/comments; Response headers: ['Server', 'Date', 'Content-Type']...; Response body patterns). 0 finding(s) across 4 agent(s)."
+    },
+    {
+      "exchange_index": 9,
+      "label": "probe: /api/auth",
+      "url": "http://127.0.0.1:5001/api/auth",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "business_logic",
+        "misconfig",
+        "supply_chain",
+        "xss"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, business_logic, misconfig, supply_chain, xss (Fast-path: URL pattern: http://127.0.0.1:5001/api/auth; Response headers: ['Server', 'Date', 'Content-Type']...; Response body patterns). 0 finding(s) across 6 agent(s)."
+    },
+    {
+      "exchange_index": 10,
+      "label": "probe: /api/login",
+      "url": "http://127.0.0.1:5001/api/login",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "business_logic",
+        "misconfig",
+        "supply_chain",
+        "xss"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, business_logic, misconfig, supply_chain, xss (Fast-path: URL pattern: http://127.0.0.1:5001/api/login; Response headers: ['Server', 'Date', 'Content-Type']...; Response body patterns). 0 finding(s) across 6 agent(s)."
+    },
+    {
+      "exchange_index": 11,
+      "label": "probe: /api/register",
+      "url": "http://127.0.0.1:5001/api/register",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "business_logic",
+        "misconfig",
+        "supply_chain",
+        "xss"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, business_logic, misconfig, supply_chain, xss (Fast-path: URL pattern: http://127.0.0.1:5001/api/register; Response headers: ['Server', 'Date', 'Content-Type']...; Response body patterns). 0 finding(s) across 6 agent(s)."
+    },
+    {
+      "exchange_index": 12,
+      "label": "probe: /api/logout",
+      "url": "http://127.0.0.1:5001/api/logout",
+      "dispatched_agents": [
+        "api_security",
+        "misconfig",
+        "supply_chain",
+        "xss"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, misconfig, supply_chain, xss (Fast-path: URL pattern: http://127.0.0.1:5001/api/logout; Response headers: ['Server', 'Date', 'Content-Type']...; Response body patterns). 0 finding(s) across 4 agent(s)."
+    },
+    {
+      "exchange_index": 13,
+      "label": "probe: /health",
+      "url": "http://127.0.0.1:5001/health",
+      "dispatched_agents": [
+        "misconfig",
+        "supply_chain",
+        "xss"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: misconfig, supply_chain, xss (Fast-path: URL pattern: http://127.0.0.1:5001/health; Response headers: ['Server', 'Date', 'Content-Type']...; Response body patterns). 0 finding(s) across 3 agent(s)."
+    },
+    {
+      "exchange_index": 14,
+      "label": "probe: /status",
+      "url": "http://127.0.0.1:5001/status",
+      "dispatched_agents": [
+        "misconfig",
+        "supply_chain",
+        "xss"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: misconfig, supply_chain, xss (Fast-path: URL pattern: http://127.0.0.1:5001/status; Response headers: ['Server', 'Date', 'Content-Type']...; Response body patterns). 0 finding(s) across 3 agent(s)."
+    },
+    {
+      "exchange_index": 15,
+      "label": "probe: /.well-known/",
+      "url": "http://127.0.0.1:5001/.well-known/",
+      "dispatched_agents": [
+        "misconfig",
+        "supply_chain",
+        "xss"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: misconfig, supply_chain, xss (Fast-path: Response headers: ['Server', 'Date', 'Content-Type']...; Response body patterns; Status: 404). 0 finding(s) across 3 agent(s)."
+    },
+    {
+      "exchange_index": 16,
+      "label": "discovery: /api",
+      "url": "http://127.0.0.1:5001/api",
+      "dispatched_agents": [
+        "misconfig",
+        "supply_chain",
+        "xss"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: misconfig, supply_chain, xss (Fast-path: Response headers: ['Server', 'Date', 'Content-Type']...; Response body patterns; Status: 404). 0 finding(s) across 3 agent(s)."
+    },
+    {
+      "exchange_index": 17,
+      "label": "discovery: /swagger",
+      "url": "http://127.0.0.1:5001/swagger",
+      "dispatched_agents": [
+        "misconfig",
+        "supply_chain",
+        "xss"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: misconfig, supply_chain, xss (Fast-path: Response headers: ['Server', 'Date', 'Content-Type']...; Response body patterns; Status: 404). 0 finding(s) across 3 agent(s)."
+    },
+    {
+      "exchange_index": 18,
+      "label": "discovery: /openapi.json",
+      "url": "http://127.0.0.1:5001/openapi.json",
+      "dispatched_agents": [
+        "misconfig",
+        "supply_chain",
+        "xss"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: misconfig, supply_chain, xss (Fast-path: Response headers: ['Server', 'Date', 'Content-Type']...; Response body patterns; Status: 404). 0 finding(s) across 3 agent(s)."
+    },
+    {
+      "exchange_index": 19,
+      "label": "discovery: /api/docs",
+      "url": "http://127.0.0.1:5001/api/docs",
+      "dispatched_agents": [
+        "api_security",
+        "misconfig",
+        "supply_chain",
+        "xss"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, misconfig, supply_chain, xss (Fast-path: URL pattern: http://127.0.0.1:5001/api/docs; Response headers: ['Server', 'Date', 'Content-Type']...; Response body patterns). 0 finding(s) across 4 agent(s)."
+    },
+    {
+      "exchange_index": 20,
+      "label": "discovery: /docs",
+      "url": "http://127.0.0.1:5001/docs",
+      "dispatched_agents": [
+        "misconfig",
+        "supply_chain",
+        "xss"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: misconfig, supply_chain, xss (Fast-path: Response headers: ['Server', 'Date', 'Content-Type']...; Response body patterns; Status: 404). 0 finding(s) across 3 agent(s)."
+    },
+    {
+      "exchange_index": 21,
+      "label": "discovery: /v1",
+      "url": "http://127.0.0.1:5001/v1",
+      "dispatched_agents": [
+        "misconfig",
+        "supply_chain",
+        "xss"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: misconfig, supply_chain, xss (Fast-path: Response headers: ['Server', 'Date', 'Content-Type']...; Response body patterns; Status: 404). 0 finding(s) across 3 agent(s)."
+    },
+    {
+      "exchange_index": 22,
+      "label": "discovery: /v2",
+      "url": "http://127.0.0.1:5001/v2",
+      "dispatched_agents": [
+        "misconfig",
+        "supply_chain",
+        "xss"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: misconfig, supply_chain, xss (Fast-path: Response headers: ['Server', 'Date', 'Content-Type']...; Response body patterns; Status: 404). 0 finding(s) across 3 agent(s)."
+    },
+    {
+      "exchange_index": 23,
+      "label": "register new user",
+      "url": "http://127.0.0.1:5001/api/register",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "business_logic",
+        "misconfig",
+        "supply_chain"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, business_logic, misconfig, supply_chain (Fast-path: URL pattern: http://127.0.0.1:5001/api/register; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 5 agent(s)."
+    },
+    {
+      "exchange_index": 24,
+      "label": "register admin user",
+      "url": "http://127.0.0.1:5001/api/register",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "business_logic",
+        "misconfig",
+        "supply_chain"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, business_logic, misconfig, supply_chain (Fast-path: URL pattern: http://127.0.0.1:5001/api/register; Response headers: ['Server', 'Date', 'Content-Type']...; Response body patterns). 0 finding(s) across 5 agent(s)."
+    },
+    {
+      "exchange_index": 25,
+      "label": "register alice",
+      "url": "http://127.0.0.1:5001/api/register",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "business_logic",
+        "misconfig",
+        "supply_chain"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, business_logic, misconfig, supply_chain (Fast-path: URL pattern: http://127.0.0.1:5001/api/register; Response headers: ['Server', 'Date', 'Content-Type']...; Response body patterns). 0 finding(s) across 5 agent(s)."
+    },
+    {
+      "exchange_index": 26,
+      "label": "register bob",
+      "url": "http://127.0.0.1:5001/api/register",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "business_logic",
+        "misconfig",
+        "supply_chain"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, business_logic, misconfig, supply_chain (Fast-path: URL pattern: http://127.0.0.1:5001/api/register; Response headers: ['Server', 'Date', 'Content-Type']...; Response body patterns). 0 finding(s) across 5 agent(s)."
+    },
+    {
+      "exchange_index": 27,
+      "label": "login testuser",
+      "url": "http://127.0.0.1:5001/api/login",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "business_logic",
+        "misconfig",
+        "supply_chain"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, business_logic, misconfig, supply_chain (Fast-path: URL pattern: http://127.0.0.1:5001/api/login; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 5 agent(s)."
+    },
+    {
+      "exchange_index": 28,
+      "label": "login admin",
+      "url": "http://127.0.0.1:5001/api/login",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "business_logic",
+        "misconfig",
+        "supply_chain"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, business_logic, misconfig, supply_chain (Fast-path: URL pattern: http://127.0.0.1:5001/api/login; Response headers: ['Server', 'Date', 'Content-Type']...; Response body patterns). 0 finding(s) across 5 agent(s)."
+    },
+    {
+      "exchange_index": 29,
+      "label": "login alice",
+      "url": "http://127.0.0.1:5001/api/login",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "business_logic",
+        "misconfig",
+        "supply_chain"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, business_logic, misconfig, supply_chain (Fast-path: URL pattern: http://127.0.0.1:5001/api/login; Response headers: ['Server', 'Date', 'Content-Type']...; Response body patterns). 0 finding(s) across 5 agent(s)."
+    },
+    {
+      "exchange_index": 30,
+      "label": "register alice_new",
+      "url": "http://127.0.0.1:5001/api/register",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "business_logic",
+        "misconfig",
+        "supply_chain"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, business_logic, misconfig, supply_chain (Fast-path: URL pattern: http://127.0.0.1:5001/api/register; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 5 agent(s)."
+    },
+    {
+      "exchange_index": 31,
+      "label": "login alice_new",
+      "url": "http://127.0.0.1:5001/api/login",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "business_logic",
+        "misconfig",
+        "supply_chain"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, business_logic, misconfig, supply_chain (Fast-path: URL pattern: http://127.0.0.1:5001/api/login; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 5 agent(s)."
+    },
+    {
+      "exchange_index": 32,
+      "label": "login admin with password",
+      "url": "http://127.0.0.1:5001/api/login",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "business_logic",
+        "misconfig",
+        "supply_chain"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, business_logic, misconfig, supply_chain (Fast-path: URL pattern: http://127.0.0.1:5001/api/login; Response headers: ['Server', 'Date', 'Content-Type']...; Response body patterns). 0 finding(s) across 5 agent(s)."
+    },
+    {
+      "exchange_index": 33,
+      "label": "login alice with password",
+      "url": "http://127.0.0.1:5001/api/login",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "business_logic",
+        "misconfig",
+        "supply_chain"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, business_logic, misconfig, supply_chain (Fast-path: URL pattern: http://127.0.0.1:5001/api/login; Response headers: ['Server', 'Date', 'Content-Type']...; Response body patterns). 0 finding(s) across 5 agent(s)."
+    },
+    {
+      "exchange_index": 34,
+      "label": "login alice pwd=123456",
+      "url": "http://127.0.0.1:5001/api/login",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "business_logic",
+        "misconfig",
+        "supply_chain"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, business_logic, misconfig, supply_chain (Fast-path: URL pattern: http://127.0.0.1:5001/api/login; Response headers: ['Server', 'Date', 'Content-Type']...; Response body patterns). 0 finding(s) across 5 agent(s)."
+    },
+    {
+      "exchange_index": 35,
+      "label": "login alice pwd=admin",
+      "url": "http://127.0.0.1:5001/api/login",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "business_logic",
+        "misconfig",
+        "supply_chain"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, business_logic, misconfig, supply_chain (Fast-path: URL pattern: http://127.0.0.1:5001/api/login; Response headers: ['Server', 'Date', 'Content-Type']...; Response body patterns). 0 finding(s) across 5 agent(s)."
+    },
+    {
+      "exchange_index": 36,
+      "label": "login alice pwd=Alice123",
+      "url": "http://127.0.0.1:5001/api/login",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "business_logic",
+        "misconfig",
+        "supply_chain"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, business_logic, misconfig, supply_chain (Fast-path: URL pattern: http://127.0.0.1:5001/api/login; Response headers: ['Server', 'Date', 'Content-Type']...; Response body patterns). 0 finding(s) across 5 agent(s)."
+    },
+    {
+      "exchange_index": 37,
+      "label": "login alice pwd=",
+      "url": "http://127.0.0.1:5001/api/login",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "business_logic",
+        "misconfig",
+        "supply_chain"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, business_logic, misconfig, supply_chain (Fast-path: URL pattern: http://127.0.0.1:5001/api/login; Response headers: ['Server', 'Date', 'Content-Type']...; Response body patterns). 0 finding(s) across 5 agent(s)."
+    },
+    {
+      "exchange_index": 38,
+      "label": "get product 1 with auth",
+      "url": "http://127.0.0.1:5001/api/products/1",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "misconfig",
+        "supply_chain"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, misconfig, supply_chain (Fast-path: URL pattern: http://127.0.0.1:5001/api/products/1; Request headers: ['Authorization']...; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 4 agent(s)."
+    },
+    {
+      "exchange_index": 39,
+      "label": "get product 2 with auth",
+      "url": "http://127.0.0.1:5001/api/products/2",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "misconfig",
+        "supply_chain"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, misconfig, supply_chain (Fast-path: URL pattern: http://127.0.0.1:5001/api/products/2; Request headers: ['Authorization']...; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 4 agent(s)."
+    },
+    {
+      "exchange_index": 40,
+      "label": "get product 3 with auth",
+      "url": "http://127.0.0.1:5001/api/products/3",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "misconfig",
+        "supply_chain"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, misconfig, supply_chain (Fast-path: URL pattern: http://127.0.0.1:5001/api/products/3; Request headers: ['Authorization']...; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 4 agent(s)."
+    },
+    {
+      "exchange_index": 41,
+      "label": "get product 4 with auth",
+      "url": "http://127.0.0.1:5001/api/products/4",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "misconfig",
+        "supply_chain"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, misconfig, supply_chain (Fast-path: URL pattern: http://127.0.0.1:5001/api/products/4; Request headers: ['Authorization']...; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 4 agent(s)."
+    },
+    {
+      "exchange_index": 42,
+      "label": "get product 5 with auth",
+      "url": "http://127.0.0.1:5001/api/products/5",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "business_logic",
+        "misconfig",
+        "supply_chain"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, business_logic, misconfig, supply_chain (Fast-path: URL pattern: http://127.0.0.1:5001/api/products/5; Request headers: ['Authorization']...; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 5 agent(s)."
+    },
+    {
+      "exchange_index": 43,
+      "label": "get product 100 with auth",
+      "url": "http://127.0.0.1:5001/api/products/100",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "business_logic",
+        "misconfig",
+        "supply_chain"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, business_logic, misconfig, supply_chain (Fast-path: URL pattern: http://127.0.0.1:5001/api/products/100; Request headers: ['Authorization']...; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 5 agent(s)."
+    },
+    {
+      "exchange_index": 44,
+      "label": "get product -1 with auth",
+      "url": "http://127.0.0.1:5001/api/products/-1",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "misconfig",
+        "supply_chain",
+        "xss"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, misconfig, supply_chain, xss (Fast-path: URL pattern: http://127.0.0.1:5001/api/products/-1; Request headers: ['Authorization']...; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 5 agent(s)."
+    },
+    {
+      "exchange_index": 45,
+      "label": "get product test with auth",
+      "url": "http://127.0.0.1:5001/api/products/test",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "misconfig",
+        "supply_chain",
+        "xss"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, misconfig, supply_chain, xss (Fast-path: URL pattern: http://127.0.0.1:5001/api/products/test; Request headers: ['Authorization']...; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 5 agent(s)."
+    },
+    {
+      "exchange_index": 46,
+      "label": "create order without auth",
+      "url": "http://127.0.0.1:5001/api/orders",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "business_logic",
+        "idor",
+        "misconfig",
+        "supply_chain"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, business_logic, idor, misconfig, supply_chain (Fast-path: URL pattern: http://127.0.0.1:5001/api/orders; Response headers: ['Server', 'Date', 'Content-Type']...; Response body patterns). 0 finding(s) across 6 agent(s)."
+    },
+    {
+      "exchange_index": 47,
+      "label": "create order qty 5",
+      "url": "http://127.0.0.1:5001/api/orders",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "idor",
+        "misconfig",
+        "supply_chain"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, idor, misconfig, supply_chain (Fast-path: URL pattern: http://127.0.0.1:5001/api/orders; Request headers: ['Authorization']...; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 5 agent(s)."
+    },
+    {
+      "exchange_index": 48,
+      "label": "create order product 2",
+      "url": "http://127.0.0.1:5001/api/orders",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "idor",
+        "misconfig",
+        "supply_chain"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, idor, misconfig, supply_chain (Fast-path: URL pattern: http://127.0.0.1:5001/api/orders; Request headers: ['Authorization']...; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 5 agent(s)."
+    },
+    {
+      "exchange_index": 49,
+      "label": "get order 1",
+      "url": "http://127.0.0.1:5001/api/orders/1",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "idor",
+        "misconfig",
+        "supply_chain"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, idor, misconfig, supply_chain (Fast-path: URL pattern: http://127.0.0.1:5001/api/orders/1; Request headers: ['Authorization']...; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 5 agent(s)."
+    },
+    {
+      "exchange_index": 50,
+      "label": "get current user",
+      "url": "http://127.0.0.1:5001/api/user",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "idor",
+        "misconfig",
+        "supply_chain",
+        "xss"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, idor, misconfig, supply_chain, xss (Fast-path: URL pattern: http://127.0.0.1:5001/api/user; Request headers: ['Authorization']...; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 6 agent(s)."
+    },
+    {
+      "exchange_index": 51,
+      "label": "get /me",
+      "url": "http://127.0.0.1:5001/api/me",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "idor",
+        "misconfig",
+        "supply_chain",
+        "xss"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, idor, misconfig, supply_chain, xss (Fast-path: URL pattern: http://127.0.0.1:5001/api/me; Request headers: ['Authorization']...; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 6 agent(s)."
+    },
+    {
+      "exchange_index": 52,
+      "label": "get user by username",
+      "url": "http://127.0.0.1:5001/api/users/alice_new",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "idor",
+        "misconfig",
+        "supply_chain",
+        "xss"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, idor, misconfig, supply_chain, xss (Fast-path: URL pattern: http://127.0.0.1:5001/api/users/alice_new; Request headers: ['Authorization']...; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 6 agent(s)."
+    },
+    {
+      "exchange_index": 53,
+      "label": "get user 1",
+      "url": "http://127.0.0.1:5001/api/users/1",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "idor",
+        "misconfig",
+        "supply_chain",
+        "xss"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, idor, misconfig, supply_chain, xss (Fast-path: URL pattern: http://127.0.0.1:5001/api/users/1; Request headers: ['Authorization']...; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 6 agent(s)."
+    },
+    {
+      "exchange_index": 54,
+      "label": "product injection '",
+      "url": "http://127.0.0.1:5001/api/products/1%27",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "misconfig",
+        "supply_chain",
+        "xss"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, misconfig, supply_chain, xss (Fast-path: URL pattern: http://127.0.0.1:5001/api/products/1%27; Request headers: ['Authorization']...; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 5 agent(s)."
+    },
+    {
+      "exchange_index": 55,
+      "label": "product injection OR",
+      "url": "http://127.0.0.1:5001/api/products/1 OR 1=1",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "misconfig",
+        "supply_chain",
+        "xss"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, misconfig, supply_chain, xss (Fast-path: URL pattern: http://127.0.0.1:5001/api/products/1 OR 1=1; Request headers: ['Authorization']...; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 5 agent(s)."
+    },
+    {
+      "exchange_index": 56,
+      "label": "login injection comment",
+      "url": "http://127.0.0.1:5001/api/login",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "business_logic",
+        "misconfig",
+        "supply_chain"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, business_logic, misconfig, supply_chain (Fast-path: URL pattern: http://127.0.0.1:5001/api/login; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 5 agent(s)."
+    },
+    {
+      "exchange_index": 57,
+      "label": "order injection SQL",
+      "url": "http://127.0.0.1:5001/api/orders",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "business_logic",
+        "idor",
+        "misconfig",
+        "supply_chain"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, business_logic, idor, misconfig, supply_chain (Fast-path: URL pattern: http://127.0.0.1:5001/api/orders; Request headers: ['Authorization']...; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 6 agent(s)."
+    },
+    {
+      "exchange_index": 58,
+      "label": "check endpoint /api/cart",
+      "url": "http://127.0.0.1:5001/api/cart",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "misconfig",
+        "supply_chain",
+        "xss"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, misconfig, supply_chain, xss (Fast-path: URL pattern: http://127.0.0.1:5001/api/cart; Request headers: ['Authorization']...; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 5 agent(s)."
+    },
+    {
+      "exchange_index": 59,
+      "label": "check endpoint /api/checkout",
+      "url": "http://127.0.0.1:5001/api/checkout",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "misconfig",
+        "supply_chain",
+        "xss"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, misconfig, supply_chain, xss (Fast-path: URL pattern: http://127.0.0.1:5001/api/checkout; Request headers: ['Authorization']...; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 5 agent(s)."
+    },
+    {
+      "exchange_index": 60,
+      "label": "check endpoint /api/payment",
+      "url": "http://127.0.0.1:5001/api/payment",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "misconfig",
+        "supply_chain",
+        "xss"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, misconfig, supply_chain, xss (Fast-path: URL pattern: http://127.0.0.1:5001/api/payment; Request headers: ['Authorization']...; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 5 agent(s)."
+    },
+    {
+      "exchange_index": 61,
+      "label": "check endpoint /api/shipping",
+      "url": "http://127.0.0.1:5001/api/shipping",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "misconfig",
+        "supply_chain",
+        "xss"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, misconfig, supply_chain, xss (Fast-path: URL pattern: http://127.0.0.1:5001/api/shipping; Request headers: ['Authorization']...; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 5 agent(s)."
+    },
+    {
+      "exchange_index": 62,
+      "label": "check endpoint /api/profile",
+      "url": "http://127.0.0.1:5001/api/profile",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "idor",
+        "misconfig",
+        "supply_chain",
+        "xss"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, idor, misconfig, supply_chain, xss (Fast-path: URL pattern: http://127.0.0.1:5001/api/profile; Request headers: ['Authorization']...; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 6 agent(s)."
+    },
+    {
+      "exchange_index": 63,
+      "label": "check endpoint /api/settings",
+      "url": "http://127.0.0.1:5001/api/settings",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "misconfig",
+        "supply_chain",
+        "xss"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, misconfig, supply_chain, xss (Fast-path: URL pattern: http://127.0.0.1:5001/api/settings; Request headers: ['Authorization']...; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 5 agent(s)."
+    },
+    {
+      "exchange_index": 64,
+      "label": "check endpoint /api/admin",
+      "url": "http://127.0.0.1:5001/api/admin",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "idor",
+        "misconfig",
+        "supply_chain",
+        "xss"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, idor, misconfig, supply_chain, xss (Fast-path: URL pattern: http://127.0.0.1:5001/api/admin; Request headers: ['Authorization']...; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 6 agent(s)."
+    },
+    {
+      "exchange_index": 65,
+      "label": "check endpoint /api/report",
+      "url": "http://127.0.0.1:5001/api/report",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "misconfig",
+        "supply_chain",
+        "xss"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, misconfig, supply_chain, xss (Fast-path: URL pattern: http://127.0.0.1:5001/api/report; Request headers: ['Authorization']...; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 5 agent(s)."
+    },
+    {
+      "exchange_index": 66,
+      "label": "check endpoint /api/files",
+      "url": "http://127.0.0.1:5001/api/files",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "misconfig",
+        "supply_chain",
+        "xss"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, misconfig, supply_chain, xss (Fast-path: URL pattern: http://127.0.0.1:5001/api/files; Request headers: ['Authorization']...; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 5 agent(s)."
+    },
+    {
+      "exchange_index": 67,
+      "label": "check endpoint /api/upload",
+      "url": "http://127.0.0.1:5001/api/upload",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "misconfig",
+        "supply_chain",
+        "xss"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, misconfig, supply_chain, xss (Fast-path: URL pattern: http://127.0.0.1:5001/api/upload; Request headers: ['Authorization']...; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 5 agent(s)."
+    },
+    {
+      "exchange_index": 68,
+      "label": "check endpoint /api/download",
+      "url": "http://127.0.0.1:5001/api/download",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "misconfig",
+        "supply_chain",
+        "xss"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, misconfig, supply_chain, xss (Fast-path: URL pattern: http://127.0.0.1:5001/api/download; Request headers: ['Authorization']...; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 5 agent(s)."
+    },
+    {
+      "exchange_index": 69,
+      "label": "access order 2 with testuser token",
+      "url": "http://127.0.0.1:5001/api/orders/2",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "idor",
+        "misconfig",
+        "supply_chain"
+      ],
+      "findings": [
+        {
+          "vulnerability_class": "idor",
+          "confidence": 0.95,
+          "summary": "A valid session for one user can retrieve another user's order by sequential id, with no ownership check.",
+          "evidence": "GET /api/orders/2 using a token whose decoded payload is {\"user_id\": 4, ...} returns {\"id\": 2, ..., \"user_id\": 5}. The requesting identity and the resource's owning identity do not match, and the request succeeded anyway.",
+          "suggested_test": "Repeat with the same token against orders 3, 1, and any other sequential id; repeat in the other direction using user_id=5's token against an order owned by user_id=4.",
+          "basis": "derived",
+          "severity": "high",
+          "owasp_category": "A01:2021-Broken Access Control",
+          "original_confidence": 0.95,
+          "review_verdict": "survived",
+          "review_note": "Independent read matches the stated finding.",
+          "confirmed": false,
+          "validation_hints": []
+        }
+      ],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, idor, misconfig, supply_chain (Fast-path: URL pattern: http://127.0.0.1:5001/api/orders/2; Request headers: ['Authorization']...; Response headers: ['Server', 'Date', 'Content-Type']...). 1 finding(s) across 3 agent(s). Critique pass reviewed 1; rejected 0."
+    },
+    {
+      "exchange_index": 70,
+      "label": "access order 3 with testuser token",
+      "url": "http://127.0.0.1:5001/api/orders/3",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "idor",
+        "misconfig",
+        "supply_chain"
+      ],
+      "findings": [
+        {
+          "vulnerability_class": "idor",
+          "confidence": 0.95,
+          "summary": "Same pattern as order id 2 (see exchange 69): a different user's order is retrievable with no ownership check.",
+          "evidence": "GET /api/orders/3 using a token whose decoded payload is {\"user_id\": 4, ...} returns {\"id\": 3, ..., \"user_id\": 5}.",
+          "suggested_test": "Same as exchange 69 -- this is a second, independent confirmation of the same missing check, not a new vulnerability class.",
+          "basis": "derived",
+          "severity": "high",
+          "owasp_category": "A01:2021-Broken Access Control",
+          "original_confidence": 0.95,
+          "review_verdict": "survived",
+          "review_note": "Independent read matches the stated finding.",
+          "confirmed": false,
+          "validation_hints": []
+        }
+      ],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, idor, misconfig, supply_chain (Fast-path: URL pattern: http://127.0.0.1:5001/api/orders/3; Request headers: ['Authorization']...; Response headers: ['Server', 'Date', 'Content-Type']...). 1 finding(s) across 3 agent(s). Critique pass reviewed 1; rejected 0."
+    },
+    {
+      "exchange_index": 71,
+      "label": "access order 4 with testuser token",
+      "url": "http://127.0.0.1:5001/api/orders/4",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "business_logic",
+        "idor",
+        "misconfig",
+        "supply_chain"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, business_logic, idor, misconfig, supply_chain (Fast-path: URL pattern: http://127.0.0.1:5001/api/orders/4; Request headers: ['Authorization']...; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 6 agent(s)."
+    },
+    {
+      "exchange_index": 72,
+      "label": "access order 5 with testuser token",
+      "url": "http://127.0.0.1:5001/api/orders/5",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "business_logic",
+        "idor",
+        "misconfig",
+        "supply_chain"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, business_logic, idor, misconfig, supply_chain (Fast-path: URL pattern: http://127.0.0.1:5001/api/orders/5; Request headers: ['Authorization']...; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 6 agent(s)."
+    },
+    {
+      "exchange_index": 73,
+      "label": "access order 6 with testuser token",
+      "url": "http://127.0.0.1:5001/api/orders/6",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "business_logic",
+        "idor",
+        "misconfig",
+        "supply_chain"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, business_logic, idor, misconfig, supply_chain (Fast-path: URL pattern: http://127.0.0.1:5001/api/orders/6; Request headers: ['Authorization']...; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 6 agent(s)."
+    },
+    {
+      "exchange_index": 74,
+      "label": "access order 7 with testuser token",
+      "url": "http://127.0.0.1:5001/api/orders/7",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "business_logic",
+        "idor",
+        "misconfig",
+        "supply_chain"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, business_logic, idor, misconfig, supply_chain (Fast-path: URL pattern: http://127.0.0.1:5001/api/orders/7; Request headers: ['Authorization']...; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 6 agent(s)."
+    },
+    {
+      "exchange_index": 75,
+      "label": "access order 8 with testuser token",
+      "url": "http://127.0.0.1:5001/api/orders/8",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "business_logic",
+        "idor",
+        "misconfig",
+        "supply_chain"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, business_logic, idor, misconfig, supply_chain (Fast-path: URL pattern: http://127.0.0.1:5001/api/orders/8; Request headers: ['Authorization']...; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 6 agent(s)."
+    },
+    {
+      "exchange_index": 76,
+      "label": "access order 9 with testuser token",
+      "url": "http://127.0.0.1:5001/api/orders/9",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "business_logic",
+        "idor",
+        "misconfig",
+        "supply_chain"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, business_logic, idor, misconfig, supply_chain (Fast-path: URL pattern: http://127.0.0.1:5001/api/orders/9; Request headers: ['Authorization']...; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 6 agent(s)."
+    },
+    {
+      "exchange_index": 77,
+      "label": "register bob_test",
+      "url": "http://127.0.0.1:5001/api/register",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "business_logic",
+        "misconfig",
+        "supply_chain"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, business_logic, misconfig, supply_chain (Fast-path: URL pattern: http://127.0.0.1:5001/api/register; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 5 agent(s)."
+    },
+    {
+      "exchange_index": 78,
+      "label": "login bob_test",
+      "url": "http://127.0.0.1:5001/api/login",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "business_logic",
+        "misconfig",
+        "supply_chain"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, business_logic, misconfig, supply_chain (Fast-path: URL pattern: http://127.0.0.1:5001/api/login; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 5 agent(s)."
+    },
+    {
+      "exchange_index": 79,
+      "label": "try PUT order 1 from bob",
+      "url": "http://127.0.0.1:5001/api/orders/1",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "idor",
+        "misconfig",
+        "supply_chain",
+        "xss"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, idor, misconfig, supply_chain, xss (Fast-path: URL pattern: http://127.0.0.1:5001/api/orders/1; Request headers: ['Authorization']...; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 6 agent(s)."
+    },
+    {
+      "exchange_index": 80,
+      "label": "try PATCH order 1 from bob",
+      "url": "http://127.0.0.1:5001/api/orders/1",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "idor",
+        "misconfig",
+        "supply_chain",
+        "xss"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, idor, misconfig, supply_chain, xss (Fast-path: URL pattern: http://127.0.0.1:5001/api/orders/1; Request headers: ['Authorization']...; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 6 agent(s)."
+    },
+    {
+      "exchange_index": 81,
+      "label": "try DELETE order 1 from bob",
+      "url": "http://127.0.0.1:5001/api/orders/1",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "idor",
+        "misconfig",
+        "supply_chain",
+        "xss"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, idor, misconfig, supply_chain, xss (Fast-path: URL pattern: http://127.0.0.1:5001/api/orders/1; Request headers: ['Authorization']...; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 6 agent(s)."
+    },
+    {
+      "exchange_index": 82,
+      "label": "order with negative quantity",
+      "url": "http://127.0.0.1:5001/api/orders",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "business_logic",
+        "idor",
+        "misconfig",
+        "supply_chain"
+      ],
+      "findings": [
+        {
+          "vulnerability_class": "improper_input_validation",
+          "confidence": 0.9,
+          "summary": "Negative order quantities are accepted, resulting in a negative transaction amount that credits the user's balance instead of debiting it.",
+          "evidence": "POST /api/orders with {\"product_id\": 1, \"quantity\": -1} returns 200 OK with total_price: -24.99 and an increased new_balance -- the purchase paid the buyer instead of charging them.",
+          "suggested_test": "Repeat with larger negative quantities against higher-priced products and confirm the balance credit scales linearly, then check whether the resulting balance can be withdrawn or spent elsewhere.",
+          "basis": "derived",
+          "severity": "critical",
+          "owasp_category": "A04:2021-Insecure Design",
+          "original_confidence": 0.9,
+          "review_verdict": "survived",
+          "review_note": "Independent read matches the stated finding.",
+          "confirmed": false,
+          "validation_hints": []
+        }
+      ],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, business_logic, idor, misconfig, supply_chain (Fast-path: URL pattern: http://127.0.0.1:5001/api/orders; Request headers: ['Authorization']...; Response headers: ['Server', 'Date', 'Content-Type']...). 1 finding(s) across 3 agent(s). Critique pass reviewed 1; rejected 0."
+    },
+    {
+      "exchange_index": 83,
+      "label": "order with zero quantity",
+      "url": "http://127.0.0.1:5001/api/orders",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "idor",
+        "misconfig",
+        "supply_chain"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, idor, misconfig, supply_chain (Fast-path: URL pattern: http://127.0.0.1:5001/api/orders; Request headers: ['Authorization']...; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 5 agent(s)."
+    },
+    {
+      "exchange_index": 84,
+      "label": "order with massive quantity",
+      "url": "http://127.0.0.1:5001/api/orders",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "idor",
+        "misconfig",
+        "supply_chain"
+      ],
+      "findings": [
+        {
+          "vulnerability_class": "unrestricted_resource_consumption",
+          "confidence": 0.9,
+          "summary": "The order quantity field has no upper bound, letting a single request produce an arbitrarily large financial transaction.",
+          "evidence": "POST /api/orders with {\"product_id\": 1, \"quantity\": 999999} for a $24.99 product returns 200 OK with total_price: 24989975.01 and a correspondingly enormous negative new_balance -- no cap is enforced on the quantity value.",
+          "suggested_test": "Try progressively larger values (10**9, 10**12) and check whether the server ever rejects the request, times out, or the response shows numeric overflow/precision loss rather than a clean rejection.",
+          "basis": "derived",
+          "severity": "high",
+          "owasp_category": "API4:2023-Unrestricted Resource Consumption",
+          "original_confidence": 0.9,
+          "review_verdict": "survived",
+          "review_note": "Independent read matches the stated finding.",
+          "confirmed": false,
+          "validation_hints": []
+        }
+      ],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, idor, misconfig, supply_chain (Fast-path: URL pattern: http://127.0.0.1:5001/api/orders; Request headers: ['Authorization']...; Response headers: ['Server', 'Date', 'Content-Type']...). 1 finding(s) across 3 agent(s). Critique pass reviewed 1; rejected 0."
+    },
+    {
+      "exchange_index": 85,
+      "label": "order with invalid product_id",
+      "url": "http://127.0.0.1:5001/api/orders",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "business_logic",
+        "idor",
+        "misconfig",
+        "supply_chain"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, business_logic, idor, misconfig, supply_chain (Fast-path: URL pattern: http://127.0.0.1:5001/api/orders; Request headers: ['Authorization']...; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 6 agent(s)."
+    },
+    {
+      "exchange_index": 86,
+      "label": "order with string quantity",
+      "url": "http://127.0.0.1:5001/api/orders",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "idor",
+        "misconfig",
+        "supply_chain",
+        "xss"
+      ],
+      "findings": [
+        {
+          "vulnerability_class": "improper_error_handling",
+          "confidence": 0.8,
+          "summary": "Invalid input types in the order quantity field trigger a 500 Internal Server Error instead of a graceful validation response.",
+          "evidence": "POST /api/orders with {\"product_id\": 1, \"quantity\": \"aaa\"} returns 500 Internal Server Error rather than 400 Bad Request.",
+          "suggested_test": "Send other malformed types (boolean, object, array, null) in the same field and check whether any of the 500 responses leak a stack trace or internal path in the body.",
+          "basis": "derived",
+          "severity": "low",
+          "owasp_category": "A05:2021-Security Misconfiguration",
+          "original_confidence": 0.8,
+          "review_verdict": "survived",
+          "review_note": "Independent read matches the stated finding.",
+          "confirmed": false,
+          "validation_hints": []
+        }
+      ],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, idor, misconfig, supply_chain, xss (Fast-path: URL pattern: http://127.0.0.1:5001/api/orders; Request headers: ['Authorization']...; Response headers: ['Server', 'Date', 'Content-Type']...). 1 finding(s) across 6 agent(s). Critique pass reviewed 1; rejected 0."
+    },
+    {
+      "exchange_index": 87,
+      "label": "POST products",
+      "url": "http://127.0.0.1:5001/api/products",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "misconfig",
+        "supply_chain",
+        "xss"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, misconfig, supply_chain, xss (Fast-path: URL pattern: http://127.0.0.1:5001/api/products; Request headers: ['Authorization']...; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 5 agent(s)."
+    },
+    {
+      "exchange_index": 88,
+      "label": "PUT product price",
+      "url": "http://127.0.0.1:5001/api/products/1",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "idor",
+        "misconfig",
+        "supply_chain",
+        "xss"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, idor, misconfig, supply_chain, xss (Fast-path: URL pattern: http://127.0.0.1:5001/api/products/1; Request headers: ['Authorization']...; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 6 agent(s)."
+    },
+    {
+      "exchange_index": 89,
+      "label": "DELETE product",
+      "url": "http://127.0.0.1:5001/api/products/1",
+      "dispatched_agents": [
+        "api_security",
+        "auth",
+        "idor",
+        "misconfig",
+        "supply_chain",
+        "xss"
+      ],
+      "findings": [],
+      "components": [],
+      "summary": "Dispatched: api_security, auth, idor, misconfig, supply_chain, xss (Fast-path: URL pattern: http://127.0.0.1:5001/api/products/1; Request headers: ['Authorization']...; Response headers: ['Server', 'Date', 'Content-Type']...). 0 finding(s) across 6 agent(s)."
+    }
+  ],
+  "critique_calls": 5
+}

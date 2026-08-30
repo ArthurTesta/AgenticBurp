@@ -1,0 +1,358 @@
+"""
+Report Generator
+
+Turns confirmed and unconfirmed findings for a host into a submission
+-ready Markdown report: title, severity, confidence/status, affected
+endpoint, evidence, reproduction steps, generic remediation guidance,
+and a clearly-separated "Potential Attack Chains" section for anything
+chaining.py produced.
+
+This replaces generate_juice_shop_report.py, which was a one-off
+hardcoded writeup for a single past run rather than something that
+works off the live data model. This module is the reusable version:
+point it at any host that has findings in store.py and get a report,
+not just Juice Shop.
+
+Design principles, matching the harness's own "know vs. guessed" ethos
+throughout the rest of this project:
+- CONFIRMED findings (validator-confirmed, Finding.confirmed=True) are
+  visually and textually distinguished from UNCONFIRMED ones. A report
+  reader should never have to guess which is which.
+- basis ("derived"/"recalled"/"assumed") is always shown -- an
+  "assumed" finding gets flagged as needing manual verification before
+  submission, not silently presented with the same confidence as a
+  "derived" one.
+- Remediation guidance is GENERIC, category-keyed best practice, never
+  a claim about this specific target's actual code. It's explicitly
+  labeled as a starting point for the analyst, not authoritative
+  advice about the target.
+- Chain hypotheses (from chaining.py) are never mixed into the same
+  list as individually-confirmed findings -- they're a distinct
+  section with their own disclaimer, matching chaining.py's own
+  confidence cap and "needs a human look" framing.
+"""
+
+from __future__ import annotations
+from dataclasses import dataclass
+from datetime import datetime, timezone
+
+import risk_allocator
+from effort import CallKind, EffortLedger
+
+_SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+
+_SEVERITY_BADGE = {
+    "critical": "🔴 CRITICAL", "high": "🟠 HIGH", "medium": "🟡 MEDIUM",
+    "low": "🔵 LOW", "info": "⚪ INFO",
+}
+
+# Generic, uncontroversial, category-keyed remediation starting points.
+# Deliberately generic -- these are NOT claims about how this specific
+# target's code is structured, just the standard first-line mitigation
+# for the category. An analyst should always adapt these to what the
+# actual root cause turns out to be.
+_REMEDIATION_HINTS: dict[str, str] = {
+    "sqli": "Use parameterized queries / prepared statements everywhere user input reaches SQL; never build queries via string concatenation.",
+    "xss": "Apply context-aware output encoding at the point of rendering, and adopt a restrictive Content-Security-Policy without 'unsafe-inline'/'unsafe-eval' as defense in depth.",
+    "idor": "Enforce object-level authorization checks server-side on every request that accepts a resource identifier -- never rely on an identifier being 'hard to guess' as an access control.",
+    "ssrf": "Validate and allowlist destination hosts server-side after DNS resolution (not just the input string), and block requests to internal/link-local address ranges.",
+    "auth": "Review session token generation (entropy, rotation on login), cookie attributes (Secure/HttpOnly/SameSite), and CSRF protection on state-changing endpoints.",
+    "business_logic": "Add server-side validation of business rules (limits, sequencing, ownership) that doesn't rely on client-side enforcement or UI flow alone.",
+    "business_logic_enhanced": "Same as business_logic: enforce workflow/state rules server-side, independent of the order the client happens to call endpoints in.",
+    "misconfig": "Review server/framework configuration against current vendor hardening guidance; remove default credentials, debug endpoints, and verbose error output in production.",
+    "rate_limit": "Add server-side rate limiting keyed on account/IP/API-key for sensitive or resource-intensive endpoints.",
+    "jwt": "Enforce a single expected signing algorithm server-side (reject 'alg: none' and algorithm-confusion attempts), and validate signatures on every request.",
+    "xxe": "Disable external entity resolution and DTD processing in the XML parser configuration.",
+    "csrf": "Require a per-session, unpredictable CSRF token on all state-changing requests, validated server-side.",
+    "file_upload": "Validate file type by content (not extension/Content-Type alone), store uploads outside the web root, and serve them without execute permissions.",
+    "nosql": "Validate and sanitize input types before passing to NoSQL query operators; reject operator-shaped input ($ne, $gt, etc.) from untrusted fields.",
+    "command_injection": "Avoid shell invocation with user-controlled input entirely; use parameterized subprocess APIs and strict allowlisting if shell use is unavoidable.",
+    "ssti": "Avoid passing user input directly into template rendering; use a logic-less template engine or sandbox template execution.",
+    "open_redirect": "Validate redirect targets against an allowlist of known-safe destinations rather than accepting arbitrary URLs.",
+    "info_disclosure": "Remove verbose error messages, stack traces, and internal identifiers from responses served to end users.",
+    "cors": "Set Access-Control-Allow-Origin to a specific, validated origin allowlist -- never reflect Origin unconditionally, especially alongside Access-Control-Allow-Credentials.",
+    "recon": "Remove or restrict access to discovery-relevant files/endpoints (.git, .env, API docs) not intended for public access.",
+    "http_request_smuggling": "Ensure front-end and back-end servers agree on request framing (Content-Length vs. Transfer-Encoding); prefer HTTP/2 end-to-end where possible.",
+    "web_cache_poisoning": "Include all inputs that affect the response (headers, params) in the cache key, or strip/normalize unkeyed inputs before the origin processes them.",
+    "oauth": "Enforce exact-match redirect_uri validation, require state on every authorization request, and require PKCE for public clients.",
+    "subdomain_takeover": "Remove the dangling DNS record, or claim the resource on the third-party provider before an attacker does.",
+    "crypto": "Enforce HTTPS with HSTS, set Secure/HttpOnly/SameSite on session cookies, and disable deprecated TLS versions/ciphers.",
+    "csp": "Add a restrictive Content-Security-Policy (no unsafe-inline/unsafe-eval) and frame-ancestors/X-Frame-Options to prevent framing.",
+    "header_injection": "Strip or encode CR/LF characters from any user input before it reaches a response header or outbound email header.",
+    "api_security": "Apply an explicit allowlist of bindable fields on create/update endpoints, and cap page-size/limit parameters server-side.",
+    "websocket": "Validate the Origin header on the WebSocket handshake server-side, and apply the same per-resource authorization checks to WebSocket messages as to equivalent REST endpoints.",
+    "race_condition": "Wrap the check-then-act sequence in a database transaction or distributed lock so concurrent requests can't both pass the check before either commits.",
+    "deserialization": "Avoid deserializing untrusted data with a format that carries type information (Java serialization, pickle, etc.); use a data-only format (JSON) instead, or a strict allowlist deserializer.",
+    "session_fixation": "Issue a new session identifier immediately after successful authentication; never continue using a pre-login session ID.",
+    "session_timeout": "Invalidate the session server-side on logout (not just client-side cookie clearing), and enforce an absolute/idle session timeout.",
+    "graphql": "Disable introspection in production, and enforce field-level authorization independent of the overall query being otherwise valid.",
+    "supply_chain": "Pin dependency versions, monitor for disclosed advisories against them, and remove exposed manifests/lockfiles from public access.",
+}
+
+_DEFAULT_REMEDIATION = ("Review the specific mechanism described in the evidence above and apply the "
+                         "standard mitigation for this vulnerability class; no category-specific "
+                         "guidance is available for this one yet.")
+
+
+@dataclass
+class ReportFinding:
+    """Normalized view of a stored finding, ready for rendering."""
+    url: str
+    vulnerability_class: str
+    severity: str
+    confidence: float
+    summary: str
+    evidence: str
+    suggested_test: str
+    owasp_category: str | None
+    basis: str
+    confirmed: bool
+    agent: str
+    is_chain: bool = False
+    fingerprint: str = ""
+
+
+def _from_store_dict(d: dict) -> ReportFinding:
+    vc = d.get("vulnerability_class", "")
+    return ReportFinding(
+        url=d.get("url", ""),
+        vulnerability_class=vc,
+        severity=d.get("severity", "info"),
+        confidence=float(d.get("confidence", 0.0)),
+        summary=d.get("summary", ""),
+        evidence=d.get("evidence", "") or "",
+        suggested_test=d.get("suggested_test", "") or "",
+        owasp_category=d.get("owasp_category"),
+        basis=d.get("basis", "derived") or "derived",
+        confirmed=bool(d.get("confirmed", False)),
+        agent=d.get("agent", ""),
+        is_chain=vc.startswith("potential-attack-chain:"),
+        fingerprint=d.get("fingerprint", ""),
+    )
+
+
+def _confidence_label(confidence: float) -> str:
+    if confidence >= 0.85:
+        return "very likely"
+    if confidence >= 0.6:
+        return "likely"
+    if confidence >= 0.35:
+        return "possible"
+    return "speculative"
+
+
+def _basis_note(basis: str) -> str:
+    return {
+        "derived": "Derived directly from what's visible in the captured traffic.",
+        "recalled": "Based on the model's training-time knowledge, not independently verified against this target -- confirm manually before relying on this.",
+        "assumed": "Rests on an assumption the model made, not something directly observed -- confirm the assumption holds before relying on this.",
+    }.get(basis, "")
+
+
+def _remediation_for(vulnerability_class: str) -> str:
+    return _REMEDIATION_HINTS.get(vulnerability_class, _DEFAULT_REMEDIATION)
+
+
+def _rank_unconfirmed_by_value_density(
+    unconfirmed: list["ReportFinding"], effort_ledger: EffortLedger,
+) -> list["ReportFinding"]:
+    """
+    Orders unconfirmed findings by risk_allocator's value_density
+    (expected_risk / cost) instead of the plain severity/confidence sort
+    `individual.sort(...)` already applied -- this is specifically about
+    "what should the analyst spend their next round of validation effort
+    on," which is a cost-vs-risk question that plain severity/confidence
+    doesn't capture (a critical-but-cheap-to-confirm finding and a
+    critical-but-expensive-to-confirm one aren't equally good uses of the
+    next validation round).
+
+    This was previously fully unwired -- risk_allocator.rank() and
+    allocate_retry_budget() had no caller anywhere in the live codebase,
+    not even a partial one (confirmed by grep before writing this). This
+    is the first live caller.
+
+    Cost honesty, stated precisely (this project's own "known vs.
+    guessed" standard applies here same as anywhere else): `cost` here
+    is `EffortLedger.average_tokens(CallKind.VALIDATION_RETRY)` -- a
+    REAL, measured average token cost (once at least one real validation
+    retry has happened this session; a labeled prior before that, same
+    as everywhere else in effort.py), but it is a PER-CATEGORY-OF-CALL
+    average, not a cost individually attributed to this specific
+    finding. This codebase does not currently persist which finding a
+    given retry's tokens were spent confirming (noted as a known gap in
+    HANDOVER.md), so a genuinely per-finding cost isn't available data --
+    using the average validation-retry cost as a shared proxy for "how
+    expensive is confirming something like this, generally" is the most
+    honest approximation available today, not a claim of per-finding
+    precision. Confirmed findings are deliberately NOT re-ranked this
+    way -- they're already resolved, so a forward-looking "what to spend
+    effort on next" question doesn't apply to them; they keep the plain
+    severity/confidence ordering.
+    """
+    scores = [
+        risk_allocator.RiskScore(
+            category=f.vulnerability_class,
+            url=f.url,
+            probability=f.confidence,
+            severity=f.severity,
+            source="agent_confidence",
+            cost=effort_ledger.average_tokens(CallKind.VALIDATION_RETRY),
+        )
+        for f in unconfirmed
+    ]
+    # RiskScore doesn't carry a back-reference to the ReportFinding it
+    # came from, and (category, url) isn't guaranteed unique across
+    # findings -- rebuild the order by index instead of re-matching on
+    # content, which would silently misorder same-category/same-url
+    # findings (e.g. two different confidence findings at the same URL).
+    order = list(range(len(unconfirmed)))
+    order.sort(key=lambda i: -scores[i].value_density)
+    return [unconfirmed[i] for i in order]
+
+
+def generate_markdown_report(host: str, findings: list[dict], generated_at: datetime | None = None,
+                              effort_ledger: EffortLedger | None = None, suppressed_count: int = 0) -> str:
+    """
+    Build a submission-ready Markdown report from store.all_host_findings()
+    -shaped dicts (or anything with the same keys). Chain hypotheses
+    (vulnerability_class starting with "potential-attack-chain:") are
+    automatically separated into their own section.
+
+    `effort_ledger`: optional. When provided, UNCONFIRMED findings are
+    additionally re-ordered by risk_allocator's cost-aware value_density
+    (see `_rank_unconfirmed_by_value_density`'s docstring for exactly
+    what "cost" means here and its honest limits). When omitted (the
+    default, and the only behavior that existed before this feature),
+    unconfirmed findings keep the same plain severity/confidence sort as
+    confirmed findings -- this parameter is purely additive; no existing
+    caller's behavior changes unless it opts in.
+    """
+    generated_at = generated_at or datetime.now(timezone.utc)
+    parsed = [_from_store_dict(f) for f in findings]
+
+    individual = [f for f in parsed if not f.is_chain]
+    chains = [f for f in parsed if f.is_chain]
+
+    individual.sort(key=lambda f: (_SEVERITY_ORDER.get(f.severity, 99), -f.confidence))
+
+    confirmed = [f for f in individual if f.confirmed]
+    unconfirmed = [f for f in individual if not f.confirmed]
+
+    if effort_ledger is not None and unconfirmed:
+        unconfirmed = _rank_unconfirmed_by_value_density(unconfirmed, effort_ledger)
+
+    lines: list[str] = []
+    lines.append(f"# Security Findings Report -- {host}")
+    lines.append("")
+    lines.append(f"Generated: {generated_at.strftime('%Y-%m-%d %H:%M UTC')}")
+    lines.append("")
+    lines.append(f"**{len(confirmed)} confirmed finding(s)**, **{len(unconfirmed)} unconfirmed finding(s)**, "
+                 f"**{len(chains)} potential attack chain(s)**.")
+    if suppressed_count:
+        lines.append("")
+        lines.append(f"*{suppressed_count} previously-suppressed finding(s) from earlier scans are not "
+                      f"shown below.* Suppression means an analyst already reviewed and dismissed these "
+                      f"(typically as false positives) -- not that they were re-checked and cleared this "
+                      f"run. Declared here so the count is never silently missing from the total.")
+    lines.append("")
+    lines.append("> Unconfirmed findings are hypotheses from an LLM agent's analysis of captured "
+                 "traffic, not verified vulnerabilities. Each is labeled with its `basis` -- treat "
+                 "`assumed` and `recalled` findings with extra scrutiny before acting on them. "
+                 "Confirmed findings were independently checked by a validator (an active probe, "
+                 "a byte-level format check, or equivalent) and carry stronger evidence.")
+    lines.append("")
+
+    if confirmed:
+        lines.append("## Confirmed Findings")
+        lines.append("")
+        for f in confirmed:
+            lines.extend(_render_finding(f))
+
+    if unconfirmed:
+        lines.append("## Unconfirmed Findings")
+        lines.append("")
+        lines.append("_These have not been independently validated. Verify manually before including "
+                     "them in a submission._")
+        lines.append("")
+        for f in unconfirmed:
+            lines.extend(_render_finding(f))
+
+    if chains:
+        lines.append("## Potential Attack Chains")
+        lines.append("")
+        lines.append("_Rule-based hypotheses from combining two independently-flagged findings on the "
+                     "same host. These are NOT confirmed exploit paths -- individually-valid findings "
+                     "don't automatically compose. Each requires an explicit, deliberate test to confirm "
+                     "the chain actually works before it's submitted as one finding rather than two._")
+        lines.append("")
+        for f in chains:
+            lines.append(f"### {f.vulnerability_class.replace('potential-attack-chain:', '').replace('+', ' → ')}")
+            lines.append("")
+            lines.append(f"**Severity if confirmed:** {_SEVERITY_BADGE.get(f.severity, f.severity)}")
+            lines.append("")
+            lines.append(f.evidence)
+            lines.append("")
+            lines.append(f"**Suggested verification:** {f.suggested_test}")
+            lines.append("")
+
+    if not individual and not chains:
+        lines.append("_No findings recorded for this host._")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def _render_finding(f: ReportFinding) -> list[str]:
+    lines = []
+    status = "✅ CONFIRMED" if f.confirmed else "❓ UNCONFIRMED"
+    lines.append(f"### {f.vulnerability_class} -- {f.url}")
+    lines.append("")
+    lines.append(f"**Status:** {status} &nbsp;|&nbsp; **Severity:** {_SEVERITY_BADGE.get(f.severity, f.severity)} "
+                 f"&nbsp;|&nbsp; **Confidence:** {f.confidence:.2f} ({_confidence_label(f.confidence)}) "
+                 f"&nbsp;|&nbsp; **Basis:** {f.basis}")
+    if f.owasp_category:
+        lines.append(f"**OWASP category:** {f.owasp_category}")
+    basis_note = _basis_note(f.basis)
+    if basis_note and f.basis != "derived":
+        lines.append(f"> ⚠️ {basis_note}")
+    lines.append("")
+    lines.append(f"**Description:** {f.summary}")
+    lines.append("")
+    if f.evidence:
+        lines.append("**Evidence:**")
+        lines.append("```")
+        lines.append(f.evidence)
+        lines.append("```")
+        lines.append("")
+    if f.suggested_test:
+        lines.append(f"**Steps to reproduce:** {f.suggested_test}")
+        lines.append("")
+    lines.append(f"**Suggested remediation:** {_remediation_for(f.vulnerability_class)} "
+                 f"_(generic starting point -- verify against this target's actual implementation)_")
+    lines.append("")
+    lines.append(f"_Reported by: `{f.agent}`_")
+    if f.fingerprint:
+        lines.append(f"_Fingerprint: `{f.fingerprint[:16]}` -- use this to suppress if this is a "
+                      f"false positive, so it doesn't resurface on a future scan of this host._")
+    lines.append("")
+    lines.append("---")
+    lines.append("")
+    return lines
+
+
+def generate_report_for_host(url: str, effort_ledger: EffortLedger | None = None) -> str:
+    """
+    Convenience entry point: pulls findings from store.py for the given
+    host's URL. `effort_ledger`: optional, forwarded to
+    `generate_markdown_report` -- pass `orchestrator.effort_budget.ledger`
+    if calling this from code that has a live orchestrator instance, to
+    get cost-aware ordering of unconfirmed findings. Omitted by default
+    since this function is also used as a standalone script entry point
+    with no orchestrator in scope.
+    """
+    import store
+    findings = store.all_host_findings(url)  # excludes suppressed, by default
+    all_including_suppressed = store.all_host_findings(url, include_suppressed=True)
+    suppressed_count = len(all_including_suppressed) - len(findings)
+    host = store.host_of(url)
+    return generate_markdown_report(host, findings, effort_ledger=effort_ledger, suppressed_count=suppressed_count)

@@ -1,0 +1,447 @@
+[
+  {
+    "label": "health check - baseline",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/health",
+    "request_headers": {},
+    "request_body": "",
+    "response_status": 200,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 14:28:39 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "16",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "{\"status\":\"ok\"}\n"
+  },
+  {
+    "label": "login - admin/admin",
+    "method": "POST",
+    "url": "http://127.0.0.1:5001/api/login",
+    "request_headers": {},
+    "request_body": "{\"username\": \"admin\", \"password\": \"admin\"}",
+    "response_status": 401,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 14:28:39 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "32",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "{\"error\":\"invalid credentials\"}\n"
+  },
+  {
+    "label": "probe: /api/v1",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/v1",
+    "request_headers": {},
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 14:28:39 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "probe: /api/auth",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/auth",
+    "request_headers": {},
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 14:28:39 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "probe: /api/auth/login",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/auth/login",
+    "request_headers": {},
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 14:28:39 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "probe: /api/auth/logout",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/auth/logout",
+    "request_headers": {},
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 14:28:39 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "probe: /api/profile",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/profile",
+    "request_headers": {},
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 14:28:39 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "probe: /api/user",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/user",
+    "request_headers": {},
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 14:28:39 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "probe: /api/me",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/me",
+    "request_headers": {},
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 14:28:39 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "probe: /api/info",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/info",
+    "request_headers": {},
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 14:28:39 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "probe: /api/config",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/config",
+    "request_headers": {},
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 14:28:39 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "probe: /api/settings",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/settings",
+    "request_headers": {},
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 14:28:39 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "probe: /api/admin",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/admin",
+    "request_headers": {},
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 14:28:39 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "probe: /api/data",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/data",
+    "request_headers": {},
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 14:28:39 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "probe: /api/products",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/products",
+    "request_headers": {},
+    "request_body": "",
+    "response_status": 200,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 14:28:39 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "376",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "[{\"description\":\"2.4GHz wireless mouse, 1600 DPI\",\"id\":1,\"name\":\"Wireless Mouse\",\"price\":24.99},{\"description\":\"Hot-swappable, brown switches\",\"id\":2,\"name\":\"Mechanical Keyboard\",\"price\":79.99},{\"description\":\"7-in-1 hub with HDMI and SD card reader\",\"id\":3,\"name\":\"USB-C Hub\",\"price\":34.5},{\"description\":\"Autofocus, built-in mic\",\"id\":4,\"name\":\"Webcam 1080p\",\"price\":45.0}]\n"
+  },
+  {
+    "label": "probe: /api/items",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/items",
+    "request_headers": {},
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 14:28:39 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "probe: /api/comments",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/comments",
+    "request_headers": {},
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 14:28:39 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "probe: /api/posts",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/posts",
+    "request_headers": {},
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 14:28:39 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "probe: /api/articles",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/articles",
+    "request_headers": {},
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 14:28:39 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "probe: /api/notes",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/notes",
+    "request_headers": {},
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 14:28:39 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "orders - POST create",
+    "method": "POST",
+    "url": "http://127.0.0.1:5001/api/orders",
+    "request_headers": {},
+    "request_body": "{\"product_id\": 1, \"quantity\": 5}",
+    "response_status": 401,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 14:28:54 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "25",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "{\"error\":\"unauthorized\"}\n"
+  },
+  {
+    "label": "orders - GET list",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/orders",
+    "request_headers": {},
+    "request_body": "",
+    "response_status": 405,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 14:28:54 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Allow": "POST, OPTIONS",
+      "Content-Length": "153",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>405 Method Not Allowed</title>\n<h1>Method Not Allowed</h1>\n<p>The method is not allowed for the requested URL.</p>\n"
+  },
+  {
+    "label": "orders - PUT update",
+    "method": "PUT",
+    "url": "http://127.0.0.1:5001/api/orders/1",
+    "request_headers": {},
+    "request_body": "{\"quantity\": 10}",
+    "response_status": 405,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 14:28:54 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Allow": "OPTIONS, GET, HEAD",
+      "Content-Length": "153",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>405 Method Not Allowed</title>\n<h1>Method Not Allowed</h1>\n<p>The method is not allowed for the requested URL.</p>\n"
+  },
+  {
+    "label": "orders - DELETE",
+    "method": "DELETE",
+    "url": "http://127.0.0.1:5001/api/orders/1",
+    "request_headers": {},
+    "request_body": "",
+    "response_status": 405,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 14:28:54 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Allow": "OPTIONS, GET, HEAD",
+      "Content-Length": "153",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>405 Method Not Allowed</title>\n<h1>Method Not Allowed</h1>\n<p>The method is not allowed for the requested URL.</p>\n"
+  },
+  {
+    "label": "auth/login - admin",
+    "method": "POST",
+    "url": "http://127.0.0.1:5001/api/auth/login",
+    "request_headers": {},
+    "request_body": "{\"username\": \"admin\", \"password\": \"admin\"}",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 14:28:54 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  },
+  {
+    "label": "auth/register",
+    "method": "POST",
+    "url": "http://127.0.0.1:5001/api/auth/register",
+    "request_headers": {},
+    "request_body": "{\"username\": \"newuser\", \"password\": \"newpass\"}",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.7 Python/3.12.3",
+      "Date": "Sat, 29 Aug 2026 14:28:54 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "X-Powered-By": "PixelMart/2.3.1 (Flask)",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n"
+  }
+]

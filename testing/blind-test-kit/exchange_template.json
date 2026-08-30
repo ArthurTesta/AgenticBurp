@@ -1,0 +1,12 @@
+[
+  {
+    "label": "example: a plain health check, for your own reference -- optional field",
+    "method": "GET",
+    "url": "http://127.0.0.1:5001/api/health",
+    "request_headers": {},
+    "request_body": "",
+    "response_status": 200,
+    "response_headers": {"Content-Type": "application/json"},
+    "response_body": "{\"status\": \"ok\"}"
+  }
+]

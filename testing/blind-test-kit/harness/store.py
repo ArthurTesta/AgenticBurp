@@ -1,0 +1,663 @@
+from __future__ import annotations
+import sqlite3
+import time
+import hashlib
+import json
+from pathlib import Path
+from urllib.parse import urlparse
+
+from models import HttpExchange, Finding, TestPlan, ValidationSubmission
+
+_DB_PATH = Path(__file__).parent / "harness_state.db"
+
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS findings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    host TEXT NOT NULL,
+    url TEXT NOT NULL,
+    method TEXT NOT NULL,
+    agent TEXT NOT NULL,
+    vulnerability_class TEXT NOT NULL,
+    severity TEXT NOT NULL,
+    confidence REAL NOT NULL,
+    summary TEXT NOT NULL,
+    basis TEXT NOT NULL,
+    evidence TEXT NOT NULL DEFAULT '',
+    suggested_test TEXT NOT NULL DEFAULT '',
+    owasp_category TEXT,
+    review_verdict TEXT,
+    confirmed INTEGER NOT NULL DEFAULT 0,
+    fingerprint TEXT NOT NULL DEFAULT '',
+    model TEXT NOT NULL DEFAULT '',
+    prompt_version TEXT NOT NULL DEFAULT '',
+    created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_findings_host ON findings(host);
+"""
+
+
+_PLAN_SCHEMA = """
+CREATE TABLE IF NOT EXISTS test_plans (
+    plan_id TEXT PRIMARY KEY,
+    host TEXT NOT NULL,
+    url TEXT NOT NULL,
+    capability TEXT NOT NULL,
+    finding_class TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT '',
+    execution_plane TEXT NOT NULL DEFAULT 'burp',
+    status TEXT NOT NULL DEFAULT 'proposed',
+    source_exchange_hash TEXT NOT NULL DEFAULT '',
+    mutation_json TEXT NOT NULL DEFAULT '{}',
+    success_signals_json TEXT NOT NULL DEFAULT '[]',
+    created_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS validation_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    plan_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    confidence REAL NOT NULL,
+    confirmed INTEGER NOT NULL,
+    summary TEXT NOT NULL,
+    evidence TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    FOREIGN KEY(plan_id) REFERENCES test_plans(plan_id)
+);
+CREATE INDEX IF NOT EXISTS idx_validation_runs_plan ON validation_runs(plan_id);
+"""
+
+_CHAIN_SCHEMA = """
+CREATE TABLE IF NOT EXISTS chains_detected (
+    host TEXT NOT NULL,
+    chain_signature TEXT NOT NULL,
+    detected_at REAL NOT NULL,
+    PRIMARY KEY (host, chain_signature)
+);
+"""
+
+_COVERAGE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS coverage_overrides (
+    host TEXT NOT NULL,
+    category TEXT NOT NULL,
+    status TEXT NOT NULL,
+    reason TEXT NOT NULL DEFAULT '',
+    created_at REAL NOT NULL,
+    PRIMARY KEY (host, category)
+);
+"""
+
+_IDENTITY_SCHEMA = """
+CREATE TABLE IF NOT EXISTS identities (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'user',
+    notes TEXT NOT NULL DEFAULT '',
+    created_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS sessions (
+    id TEXT PRIMARY KEY,
+    identity_id TEXT NOT NULL,
+    host TEXT NOT NULL,
+    exchange_hash TEXT NOT NULL,
+    label TEXT NOT NULL DEFAULT '',
+    created_at REAL NOT NULL,
+    FOREIGN KEY(identity_id) REFERENCES identities(id)
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_identity ON sessions(identity_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_host ON sessions(host);
+"""
+
+
+def _connect() -> sqlite3.Connection:
+    conn = sqlite3.connect(_DB_PATH, timeout=10.0)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=10000")
+    conn.executescript(_SCHEMA)
+    conn.executescript(_PLAN_SCHEMA)
+    conn.executescript(_CHAIN_SCHEMA)
+    conn.executescript(_COVERAGE_SCHEMA)
+    conn.executescript(_IDENTITY_SCHEMA)
+    # Lightweight migration for databases created by earlier builds.
+    plan_cols = {row[1] for row in conn.execute("PRAGMA table_info(test_plans)")}
+    for col, ddl in [
+        ("source_exchange_hash", "ALTER TABLE test_plans ADD COLUMN source_exchange_hash TEXT NOT NULL DEFAULT ''"),
+        ("mutation_json", "ALTER TABLE test_plans ADD COLUMN mutation_json TEXT NOT NULL DEFAULT '{}'"),
+        ("success_signals_json", "ALTER TABLE test_plans ADD COLUMN success_signals_json TEXT NOT NULL DEFAULT '[]'"),
+        ("category", "ALTER TABLE test_plans ADD COLUMN category TEXT NOT NULL DEFAULT ''"),
+        ("execution_plane", "ALTER TABLE test_plans ADD COLUMN execution_plane TEXT NOT NULL DEFAULT 'burp'"),
+    ]:
+        if col not in plan_cols:
+            conn.execute(ddl)
+
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(findings)")}
+    if "confirmed" not in cols:
+        conn.execute("ALTER TABLE findings ADD COLUMN confirmed INTEGER NOT NULL DEFAULT 0")
+    if "fingerprint" not in cols:
+        conn.execute("ALTER TABLE findings ADD COLUMN fingerprint TEXT NOT NULL DEFAULT ''")
+        rows = conn.execute("SELECT id, host, method, url, vulnerability_class, summary FROM findings WHERE fingerprint = ''").fetchall()
+        for row in rows:
+            fid = hashlib.sha256("\x1f".join([row[1], row[2].upper(), row[3], row[4], row[5]]).encode("utf-8")).hexdigest()
+            conn.execute("UPDATE findings SET fingerprint = ? WHERE id = ?", (fid, row[0]))
+    if "model" not in cols:
+        conn.execute("ALTER TABLE findings ADD COLUMN model TEXT NOT NULL DEFAULT ''")
+    if "prompt_version" not in cols:
+        conn.execute("ALTER TABLE findings ADD COLUMN prompt_version TEXT NOT NULL DEFAULT ''")
+    if "evidence" not in cols:
+        # Added for report generation: a submission-ready report needs the
+        # "why we believe this" detail, not just the one-line summary that
+        # was the only thing persisted before. Existing rows get an empty
+        # string, same fallback pattern as the other migrated columns above.
+        conn.execute("ALTER TABLE findings ADD COLUMN evidence TEXT NOT NULL DEFAULT ''")
+    if "suggested_test" not in cols:
+        conn.execute("ALTER TABLE findings ADD COLUMN suggested_test TEXT NOT NULL DEFAULT ''")
+    if "owasp_category" not in cols:
+        conn.execute("ALTER TABLE findings ADD COLUMN owasp_category TEXT")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_findings_fingerprint ON findings(fingerprint)")
+
+    # Cross-run finding suppression -- see suppress_finding()'s docstring
+    # for the workflow this exists for. Keyed on the same `fingerprint`
+    # persist_findings() already computes, not a new identity scheme.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS finding_suppressions (
+            fingerprint TEXT PRIMARY KEY,
+            reason TEXT NOT NULL DEFAULT '',
+            suppressed_at REAL NOT NULL
+        )
+    """)
+    conn.commit()
+    return conn
+
+
+def host_of(url: str) -> str:
+    try:
+        return urlparse(url).netloc or url
+    except Exception:
+        return url
+
+
+def persist_findings(exchange: HttpExchange, agent_name: str, findings: list[Finding],
+                      model: str = "", prompt_version: str = "") -> None:
+    if not findings:
+        return
+    host = host_of(exchange.url)
+    now = time.time()
+    conn = _connect()
+    try:
+        rows = []
+        for f in findings:
+            fingerprint = hashlib.sha256(
+                "\x1f".join([host, exchange.method.upper(), exchange.url, f.vulnerability_class, f.summary]).encode("utf-8")
+            ).hexdigest()
+            rows.append((host, exchange.url, exchange.method, agent_name, f.vulnerability_class,
+                         f.severity, f.confidence, f.summary, f.basis, f.evidence, f.suggested_test,
+                         f.owasp_category, f.review_verdict, int(f.confirmed), fingerprint,
+                         model, prompt_version, now))
+        conn.executemany(
+            """INSERT OR IGNORE INTO findings
+               (host, url, method, agent, vulnerability_class, severity,
+                confidence, summary, basis, evidence, suggested_test, owasp_category,
+                review_verdict, confirmed, fingerprint, model, prompt_version, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", rows)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+
+def persist_test_plans(exchange: HttpExchange, plans: list[TestPlan]) -> None:
+    if not plans:
+        return
+    conn = _connect()
+    try:
+        conn.executemany(
+            """INSERT OR IGNORE INTO test_plans
+               (plan_id, host, url, capability, finding_class, category, execution_plane, status,
+                source_exchange_hash, mutation_json, success_signals_json, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            [(p.id, host_of(exchange.url), exchange.url, p.capability, p.finding_class,
+              p.category or "", p.execution_plane or "burp", "proposed",
+              p.source_exchange_hash, json.dumps(p.mutation, sort_keys=True),
+              json.dumps(p.success_signals), time.time()) for p in plans],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_test_plan(plan_id: str) -> dict | None:
+    conn = _connect()
+    try:
+        row = conn.execute(
+            """SELECT plan_id, host, url, capability, finding_class, status,
+                      source_exchange_hash, mutation_json, success_signals_json
+               FROM test_plans WHERE plan_id = ?""", (plan_id,)
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return None
+    return {"plan_id": row[0], "host": row[1], "url": row[2], "capability": row[3],
+            "finding_class": row[4], "status": row[5], "source_exchange_hash": row[6],
+            "mutation": json.loads(row[7] or "{}"), "success_signals": json.loads(row[8] or "[]")}
+
+def persist_validation_submission(submission: ValidationSubmission) -> tuple[bool, str]:
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT source_exchange_hash, status, capability, execution_plane FROM test_plans WHERE plan_id = ?",
+            (submission.plan_id,)).fetchone()
+        if not row:
+            return False, "unknown test plan"
+        if submission.source_exchange_hash != row[0]:
+            return False, "binding_mismatch"
+        # The executor prefix must match the plan's OWN execution plane,
+        # not a hardcoded "burp:" -- this previously rejected every
+        # legitimate local_tool (sqlmap) submission outright, silently,
+        # since no local_tool result could ever satisfy an executor
+        # string of the form "burp:<capability>". Caught by a test that
+        # tried to persist a real sqlmap-shaped submission and found it
+        # rejected for a reason that had nothing to do with the test's
+        # actual assertion.
+        expected_executor = f"{row[3]}:{row[2]}"
+        if submission.executor != expected_executor:
+            return False, "executor does not match the registered capability"
+        # sqlmap is a deterministic tool whose entire purpose is to
+        # independently confirm SQL injection -- excluding it here
+        # directly contradicts the project's own "known vs rediscover"
+        # principle (trust deterministic tools over LLM reasoning) for
+        # the one capability that is MOST deterministic. Verified live:
+        # sqlmap genuinely confirmed a real SQLi on OWASP Juice Shop's
+        # login endpoint in this session: excluding it from ever setting
+        # confirmed=True would have silently discarded that result.
+        confirmation_capabilities = {
+            "cross_identity_compare", "authorization_boundary_compare",
+            "sql_injection_validation",
+        }
+        if submission.confirmed and row[2] not in confirmation_capabilities:
+            return False, "this capability may provide evidence but cannot mark the vulnerability confirmed"
+        if submission.confirmed and submission.status != "confirmed":
+            return False, "confirmed result has invalid status"
+        conn.execute(
+            """INSERT INTO validation_runs
+               (plan_id, status, confidence, confirmed, summary, evidence, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (submission.plan_id, submission.status, submission.confidence, int(submission.confirmed),
+             submission.summary, submission.evidence, time.time()),
+        )
+        conn.execute("UPDATE test_plans SET status = ? WHERE plan_id = ?", (submission.status, submission.plan_id))
+        conn.commit()
+        return True, "accepted"
+    finally:
+        conn.close()
+
+
+def prior_findings_summary(url: str, exclude_url: str | None = None, limit: int = 8) -> str:
+    """
+    Compact, prompt-ready summary of what's already been found on this
+    host, most recent first. Intentionally small and lossy (a prior, not
+    a full record) -- its job is to let an agent notice "this finding is
+    more significant given what else is on this host", not to
+    reconstruct full history.
+    """
+    host = host_of(url)
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            """SELECT url, vulnerability_class, severity, confidence, summary
+               FROM findings WHERE host = ? AND url != COALESCE(?, '')
+               ORDER BY created_at DESC LIMIT ?""",
+            (host, exclude_url, limit),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    if not rows:
+        return ""
+    lines = [
+        f"- [{sev}, confidence {conf:.2f}] {vclass} at {u}: {summary}"
+        for (u, vclass, sev, conf, summary) in rows
+    ]
+    return "\n".join(lines)
+
+
+def all_host_findings(url: str, include_suppressed: bool = False) -> list[dict]:
+    """
+    Full (not summarized) finding records for a host, for chain detection
+    and report generation.
+
+    `include_suppressed`: if False (the default), findings whose
+    fingerprint has been suppressed (see `suppress_finding`) are left out
+    entirely. Each returned dict always includes `fingerprint` and
+    `suppressed` regardless of this flag, so a caller that DOES want to
+    see suppressed findings (e.g. an "show dismissed findings" view) can
+    still tell which ones they are -- this flag controls whether they're
+    in the list at all, not whether the suppressed status is visible.
+    """
+    host = host_of(url)
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            """SELECT f.url, f.vulnerability_class, f.severity, f.confidence, f.summary,
+                      f.evidence, f.suggested_test, f.owasp_category, f.basis, f.confirmed,
+                      f.agent, f.fingerprint, s.fingerprint IS NOT NULL AS suppressed
+               FROM findings f
+               LEFT JOIN finding_suppressions s ON s.fingerprint = f.fingerprint
+               WHERE f.host = ?
+               ORDER BY f.created_at ASC""",
+            (host,),
+        ).fetchall()
+    finally:
+        conn.close()
+    results = [
+        {"url": u, "vulnerability_class": vc, "severity": sev, "confidence": conf, "summary": s,
+         "evidence": ev, "suggested_test": st, "owasp_category": oc, "basis": basis,
+         "confirmed": bool(confirmed), "agent": agent, "fingerprint": fp, "suppressed": bool(suppressed)}
+        for (u, vc, sev, conf, s, ev, st, oc, basis, confirmed, agent, fp, suppressed) in rows
+    ]
+    if not include_suppressed:
+        results = [r for r in results if not r["suppressed"]]
+    return results
+
+
+def suppress_finding(fingerprint: str, reason: str = "") -> None:
+    """
+    Marks a finding fingerprint as suppressed (a false positive, or
+    otherwise not worth re-surfacing) so a future scan of the same host
+    doesn't make the analyst re-triage it from scratch. This is the
+    workflow gap named in this project's own milestones list: without
+    it, re-running the harness against a target re-surfaces every
+    previously-dismissed finding with no memory of the dismissal --
+    undercutting the tool's whole point of not making the analyst
+    re-verify things it's already told them about.
+
+    Idempotent: suppressing an already-suppressed fingerprint just
+    updates the reason/timestamp, via INSERT OR REPLACE, rather than
+    erroring on the primary key collision.
+
+    Known limitation, stated plainly rather than silently accepted:
+    `fingerprint` (computed in `persist_findings`) includes the agent's
+    free-text `summary`, not just host/method/url/category. If a re-run
+    produces a differently-worded summary for the exact same underlying
+    issue, its fingerprint won't match a previously-suppressed one, and
+    it will resurface. This suppression feature is built on the
+    fingerprint scheme that already existed for same-run deduplication,
+    not a new, more stable cross-run identity scheme -- reworking
+    fingerprint computation to be summary-independent would be a more
+    invasive change to `persist_findings`'s existing behavior and is a
+    separate, deliberately-not-bundled decision for a future session.
+    """
+    conn = _connect()
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO finding_suppressions (fingerprint, reason, suppressed_at) VALUES (?, ?, ?)",
+            (fingerprint, reason, time.time()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def unsuppress_finding(fingerprint: str) -> bool:
+    """Removes a suppression. Returns True if a row was actually removed."""
+    conn = _connect()
+    try:
+        cur = conn.execute("DELETE FROM finding_suppressions WHERE fingerprint = ?", (fingerprint,))
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def is_suppressed(fingerprint: str) -> bool:
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM finding_suppressions WHERE fingerprint = ?", (fingerprint,)
+        ).fetchone()
+        return row is not None
+    finally:
+        conn.close()
+
+
+def list_suppressions() -> list[dict]:
+    """All active suppressions, most recently suppressed first."""
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT fingerprint, reason, suppressed_at FROM finding_suppressions ORDER BY suppressed_at DESC"
+        ).fetchall()
+    finally:
+        conn.close()
+    return [{"fingerprint": fp, "reason": reason, "suppressed_at": ts} for (fp, reason, ts) in rows]
+
+
+def is_chain_already_detected(url: str, signature: str) -> bool:
+    host = host_of(url)
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM chains_detected WHERE host = ? AND chain_signature = ?",
+            (host, signature),
+        ).fetchone()
+        return row is not None
+    finally:
+        conn.close()
+
+
+def mark_chain_detected(url: str, signature: str) -> None:
+    host = host_of(url)
+    conn = _connect()
+    try:
+        conn.execute(
+            "INSERT OR IGNORE INTO chains_detected (host, chain_signature, detected_at) VALUES (?, ?, ?)",
+            (host, signature, time.time()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# --- Coverage ledger --------------------------------------------------
+#
+# A per-category status derived PURELY from stored evidence (findings,
+# test_plans, validation_runs) -- never from a free-text or LLM-settable
+# field. This is the whole point: an agent (or a careless human) writing
+# "confirmed" directly into a status column would recreate exactly the
+# checkbox-theater problem this exists to solve. The only human-settable
+# input is coverage_overrides, and it is restricted to a single value,
+# 'not_applicable', so it can be used to say "this doesn't apply here"
+# but never to assert that something was tested when it wasn't.
+#
+# Status vocabulary:
+#   confirmed       - a validation_runs row with confirmed=1 exists
+#   supported       - positive evidence exists, but nothing independently confirmed it
+#   blocked         - the only validation attempt errored out (tool missing, timeout, etc.)
+#   tested_clean    - independently tested and no evidence found
+#   not_tested      - a specialist flagged this category but no validation was ever run
+#   not_dispatched  - no exchange on this host ever triggered this specialist at all
+#   not_applicable  - analyst override; see set_coverage_override
+
+from categories import CANONICAL_CATEGORIES  # noqa: E402  (kept near point of use)
+
+_NO_ACTIVE_VALIDATOR = {"misconfig", "ai_llm", "supply_chain"}
+
+
+def set_coverage_override(host: str, category: str, reason: str) -> None:
+    """Analyst-only annotation that a category doesn't apply to this
+    target. Deliberately cannot express anything except NOT_APPLICABLE --
+    see module docstring above for why that restriction is load-bearing."""
+    if category not in CANONICAL_CATEGORIES:
+        raise ValueError(f"unknown category: {category!r}")
+    conn = _connect()
+    try:
+        conn.execute(
+            """INSERT INTO coverage_overrides (host, category, status, reason, created_at)
+               VALUES (?, ?, 'not_applicable', ?, ?)
+               ON CONFLICT(host, category) DO UPDATE SET
+                   reason = excluded.reason, created_at = excluded.created_at""",
+            (host, category, reason, time.time()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def clear_coverage_override(host: str, category: str) -> None:
+    conn = _connect()
+    try:
+        conn.execute(
+            "DELETE FROM coverage_overrides WHERE host = ? AND category = ?",
+            (host, category),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def coverage_report(host: str) -> list[dict]:
+    """Derive the per-category coverage ledger for a host. Returns a list
+    with one entry per category in categories.CANONICAL_CATEGORIES, each
+    carrying a status and (where applicable) a pointer to the specific
+    evidence row that produced it -- so the status is auditable, not just
+    asserted."""
+    conn = _connect()
+    try:
+        overrides = dict(
+            conn.execute(
+                "SELECT category, reason FROM coverage_overrides WHERE host = ?", (host,)
+            ).fetchall()
+        )
+        dispatched = {
+            row[0] for row in
+            conn.execute("SELECT DISTINCT agent FROM findings WHERE host = ?", (host,))
+        }
+        rows = conn.execute(
+            """SELECT tp.category, tp.plan_id, vr.status, vr.confirmed, vr.summary, vr.id
+               FROM test_plans tp
+               LEFT JOIN validation_runs vr ON vr.plan_id = tp.plan_id
+               WHERE tp.host = ? AND tp.category != ''
+               ORDER BY vr.created_at DESC""",
+            (host,),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    by_category: dict[str, list[tuple]] = {}
+    for category, plan_id, status, confirmed, summary, run_id in rows:
+        by_category.setdefault(category, []).append((plan_id, status, confirmed, summary, run_id))
+
+    report = []
+    for category in CANONICAL_CATEGORIES:
+        if category in overrides:
+            report.append({"category": category, "status": "not_applicable",
+                            "reason": overrides[category], "evidence": None})
+            continue
+
+        runs = by_category.get(category, [])
+        confirmed_run = next((r for r in runs if r[2]), None)
+        supported_run = next((r for r in runs if r[1] == "supported"), None)
+        error_run = next((r for r in runs if r[1] == "error"), None)
+        clean_run = next((r for r in runs if r[1] in ("rejected", "not_confirmed")), None)
+
+        if confirmed_run:
+            report.append({"category": category, "status": "confirmed", "evidence":
+                            {"plan_id": confirmed_run[0], "validation_run_id": confirmed_run[4], "summary": confirmed_run[3]}})
+        elif supported_run:
+            report.append({"category": category, "status": "supported", "evidence":
+                            {"plan_id": supported_run[0], "validation_run_id": supported_run[4], "summary": supported_run[3]}})
+        elif error_run:
+            report.append({"category": category, "status": "blocked", "reason": error_run[3], "evidence":
+                            {"plan_id": error_run[0], "validation_run_id": error_run[4]}})
+        elif clean_run:
+            report.append({"category": category, "status": "tested_clean", "evidence":
+                            {"plan_id": clean_run[0], "validation_run_id": clean_run[4], "summary": clean_run[3]}})
+        elif category in dispatched:
+            note = ("no active validation capability exists for this category yet"
+                    if category in _NO_ACTIVE_VALIDATOR else
+                    "flagged by a specialist agent but no validation was executed")
+            report.append({"category": category, "status": "not_tested", "reason": note, "evidence": None})
+        else:
+            report.append({"category": category, "status": "not_dispatched",
+                            "reason": "no exchange on this host triggered this specialist", "evidence": None})
+    return report
+
+
+def save_identity(identity) -> None:
+    """`identity` is an identity.Identity -- imported lazily by callers to
+    avoid a store<->identity circular import; store.py stays the only
+    module that knows SQL."""
+    conn = _connect()
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO identities (id, name, role, notes, created_at) VALUES (?, ?, ?, ?, ?)",
+            (
+                identity.id, identity.name,
+                # `hasattr(..., "value")` fallback: defensive, not currently
+                # load-bearing. Checked during audit -- the only production
+                # call site (server.py's POST /identities) always constructs
+                # `identity.role` via `IdentityRole(req.role)`, which raises
+                # (turned into a 400) on any value that isn't a real enum
+                # member, before an Identity object ever reaches this
+                # function. This fallback exists for callers that might
+                # someday pass a raw string directly (e.g. a future internal
+                # helper that skips the HTTP layer's validation), not because
+                # any current caller does. If you add such a caller, prefer
+                # validating at that new call site over relying on this
+                # fallback silently accepting an unvalidated string.
+                identity.role.value if hasattr(identity.role, "value") else identity.role,
+                identity.notes, identity.created_at,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def list_identities() -> list[dict]:
+    conn = _connect()
+    try:
+        rows = conn.execute("SELECT id, name, role, notes, created_at FROM identities ORDER BY created_at").fetchall()
+        return [{"id": r[0], "name": r[1], "role": r[2], "notes": r[3], "created_at": r[4]} for r in rows]
+    finally:
+        conn.close()
+
+
+def get_identity(identity_id: str) -> dict | None:
+    conn = _connect()
+    try:
+        row = conn.execute("SELECT id, name, role, notes, created_at FROM identities WHERE id = ?", (identity_id,)).fetchone()
+        if not row:
+            return None
+        return {"id": row[0], "name": row[1], "role": row[2], "notes": row[3], "created_at": row[4]}
+    finally:
+        conn.close()
+
+
+def save_session(session) -> None:
+    """`session` is an identity.Session."""
+    conn = _connect()
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO sessions (id, identity_id, host, exchange_hash, label, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (session.id, session.identity_id, session.host, session.exchange_hash, session.label, session.created_at),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def sessions_for_host(host: str) -> list[dict]:
+    """All sessions captured for a host, joined with the identity name --
+    this is what replaces manually picking a captured exchange out of a
+    JOptionPane list with no persistent identity label attached to it."""
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            """SELECT s.id, s.identity_id, i.name, i.role, s.host, s.exchange_hash, s.label, s.created_at
+               FROM sessions s JOIN identities i ON s.identity_id = i.id
+               WHERE s.host = ? ORDER BY s.created_at DESC""", (host,)
+        ).fetchall()
+        return [{"session_id": r[0], "identity_id": r[1], "identity_name": r[2], "identity_role": r[3],
+                 "host": r[4], "exchange_hash": r[5], "label": r[6], "created_at": r[7]} for r in rows]
+    finally:
+        conn.close()
