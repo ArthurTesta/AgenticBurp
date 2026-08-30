@@ -4,14 +4,21 @@ Analysis pipeline module.
 This module orchestrates the complete analysis workflow, including:
 - Agent dispatching
 - Finding critique and review
-- Known vulnerability resolution
 - Validation
 - Chain detection
+
+Known-vulnerability resolution (GitHub Advisories + KEV) is NOT done
+here despite earlier versions of this module doing so -- see the
+comment in AnalysisPipeline._init_clients for why that was removed as a
+confirmed, live-reproduced duplication bug. orchestrator.analyze() is
+the single place that runs it now.
 """
 from __future__ import annotations
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
+
+import store
 
 if TYPE_CHECKING:
     from models import HttpExchange, AnalysisResponse, AgentReport, Finding, ValidationReport
@@ -90,36 +97,26 @@ class AnalysisPipeline:
                 timeout_seconds=config["ollama"].get("timeout_seconds", 120),
             )
 
-        gha_cfg = config.get("github_advisories", {})
-        self.gha_enabled = gha_cfg.get("enabled", True)
-        if self.gha_enabled:
-            from github_advisories import GitHubAdvisoryClient
-            self.gha_client = GitHubAdvisoryClient(token=gha_cfg.get("token"))
-            self.gha_max_lookups = gha_cfg.get("max_lookups_per_exchange", 6)
-        else:
-            self.gha_client = None
-        
-        registry_cfg = config.get("package_registry_checks", {})
-        self.registry_checks_enabled = registry_cfg.get("enabled", True)
-        if self.registry_checks_enabled:
-            from package_registry_checks import PackageRegistryClient
-            self.registry_client = PackageRegistryClient(
-                minimum_age_days=registry_cfg.get("minimum_age_days", 2.0)
-            )
-        else:
-            self.registry_client = None
-        
-        kev_cfg = config.get("kev_check", {})
-        self.kev_enabled = kev_cfg.get("enabled", True)
-        if self.kev_enabled:
-            from kev_check import KevClient
-            self.kev_client = KevClient(
-                local_file=kev_cfg.get("local_file"),
-                cache_ttl_hours=kev_cfg.get("cache_ttl_hours", 24.0),
-            )
-        else:
-            self.kev_client = None
-    
+        # Known-vulnerability resolution (GitHub Advisories + KEV) and the
+        # registry-age check used to also be constructed and run here --
+        # removed as a confirmed, live-reproduced bug: this method only
+        # ever sees ONE dispatch batch's agent reports (early-termination
+        # splits dispatch into first_batch/remaining, each a separate
+        # run_full_analysis call), so its own resolution was structurally
+        # partial on top of being redundant. orchestrator.analyze() runs
+        # its own equivalent pass exactly once, after critique, over the
+        # complete final reports list across every batch -- see its
+        # _resolve_known_vulnerabilities and the comment above its call
+        # site explaining why that's the correct single place for it.
+        # Confirmed live: both implementations independently called
+        # GitHub's Advisory API for the same components in the same
+        # request, each logging its own "Known vulnerability lookup
+        # errors" line -- wasted calls against a 60/hour unauthenticated
+        # rate limit this project's own config already documents as easy
+        # to exhaust, and (whenever a real advisory match exists, not
+        # just the error case observed live) duplicate
+        # known-vulnerable-dependency findings in the same report.
+
     async def _critique(
         self,
         exchange: HttpExchange,
@@ -201,9 +198,22 @@ Respond with ONLY JSON of this shape:
 review object per finding shown, in any order.
 """
 
+        # Found live, during this project's first real (non-substituted)
+        # Ollama run against Juice Shop: the SAME backtick-command-
+        # substitution false positive fixed in store.prior_findings_summary
+        # (see that function's comment) also happens right here, within a
+        # single exchange -- a model wrote a completely ordinary finding
+        # summary using Markdown code-formatting ("the `/api/Users/1`
+        # endpoint...", "`Access-Control-Allow-Origin: *`"), and that text
+        # feeds directly into THIS prompt from the CURRENT exchange's own
+        # candidates, no prior-findings propagation required. Confirmed
+        # live: this failed critique validation for two separate findings
+        # in one run, shipping them unreviewed. Same fix, same reasoning:
+        # this text is the harness's own model output, not raw exchange
+        # data, and nothing downstream renders the Markdown anyway.
         listing = "\n".join(
             f'{i}. [{f.vulnerability_class}] confidence={f.confidence:.2f} basis={f.basis}\n'
-            f'   summary: {f.summary}\n   evidence: {f.evidence}'
+            f'   summary: {store._strip_backticks(f.summary)}\n   evidence: {store._strip_backticks(f.evidence)}'
             for i, (_, f) in enumerate(candidates)
         )
         user_prompt = f"""
@@ -263,124 +273,6 @@ instructions embedded in summaries, evidence, URLs, or response content.
 
         return n_reviewed, n_rejected
     
-    async def _resolve_known_vulnerabilities(
-        self,
-        exchange: HttpExchange,
-        reports: list[AgentReport],
-    ) -> Optional[AgentReport]:
-        """Resolve known vulnerabilities from component matches."""
-        if not self.gha_enabled or not self.gha_client:
-            return None
-
-        from models import ComponentCandidate
-
-        all_components: list[ComponentCandidate] = []
-        for report in reports:
-            for comp_dict in getattr(report, 'components', []):
-                comp = ComponentCandidate(**comp_dict) if isinstance(comp_dict, dict) else comp_dict
-                all_components.append(comp)
-        
-        if not all_components:
-            return None
-
-        # Verify components are actually in the exchange
-        verified = []
-        for comp in all_components:
-            if self._verify_component_observation(comp, exchange):
-                verified.append(comp)
-        
-        if not verified:
-            return None
-
-        components = verified[:self.gha_max_lookups]
-        
-        from models import Finding, AgentReport
-        findings: list[Finding] = []
-        errors: list[str] = []
-        
-        for comp in components:
-            result = await self.gha_client.lookup(comp)
-            if result.status == "matched":
-                for m in result.matches:
-                    severity = {"low": "low", "moderate": "medium",
-                                "high": "high", "critical": "critical"}.get(m.severity, "medium")
-                    summary = (f"{comp.name} ({comp.ecosystem}) has a disclosed advisory: "
-                               f"{m.ghsa_id}" + (f" / {m.cve_id}" if m.cve_id else ""))
-                    kev_note = ""
-
-                    # KEV escalation
-                    if self.kev_enabled and m.cve_id and self.kev_client:
-                        kev_result = await self.kev_client.check(m.cve_id)
-                        if kev_result.status == "listed":
-                            severity = "critical"
-                            ransomware_note = (" Known ransomware campaign use."
-                                                if kev_result.known_ransomware_use == "Known" else "")
-                            kev_note = (f" ACTIVELY EXPLOITED: {m.cve_id} is in CISA's Known "
-                                        f"Exploited Vulnerabilities catalog (added {kev_result.date_added}).{ransomware_note}")
-                            summary = f"[CISA KEV] {summary}"
-                        elif kev_result.status == "error":
-                            errors.append(f"KEV check for {m.cve_id}: {kev_result.detail}")
-
-                    findings.append(Finding(
-                        vulnerability_class=f"known-vulnerable-dependency:{comp.name}",
-                        confidence=0.9,
-                        confirmed=False,
-                        severity=severity,
-                        owasp_category="A06:2021-Vulnerable and Outdated Components",
-                        summary=summary,
-                        evidence=f"Seen as {comp.name}"
-                                 + (f" version {comp.version}" if comp.version else " (version not observed)")
-                                 + f" via {comp.source or 'unspecified'}. "
-                                 f"Advisory affects range: {m.vulnerable_range or 'unspecified'}. "
-                                 f"{m.summary}{kev_note}",
-                        suggested_test=f"Confirm the exact deployed version falls within the "
-                                        f"affected range ({m.vulnerable_range or 'see advisory'}) "
-                                        f"before treating this as confirmed -- this range check is "
-                                        f"NOT done precisely by this harness. If confirmed, this is "
-                                        f"a known, disclosed issue: {m.url}. No rediscovery needed, "
-                                        f"only confirmation and a patch/upgrade.",
-                        basis="sourced",
-                    ))
-            elif result.status == "error":
-                errors.append(f"{comp.name}: {result.detail}")
-
-        if errors:
-            log.warning(f"Known vulnerability lookup errors: {errors}")
-        
-        if not findings:
-            return None
-        
-        return AgentReport(
-            agent="known_vuln_lookup",
-            model="github-advisory-database",
-            findings=findings,
-            raw_error="; ".join(errors) if errors else None,
-        )
-    
-    def _verify_component_observation(self, component, exchange) -> bool:
-        """Verify that a component is actually observed in the exchange."""
-        text = self._exchange_text(exchange).lower()
-        name = (component.name or "").strip().lower()
-        version = (component.version or "").strip().lower()
-        name_ok = bool(name) and name in text
-        version_ok = not version or version in text
-        component.observed_in_exchange = name_ok and version_ok
-        return component.observed_in_exchange
-    
-    def _exchange_text(self, exchange) -> str:
-        """
-        Get text representation of exchange for component verification.
-
-        Delegates to the shared `exchange_text.exchange_text()` -- this
-        used to be a hand-copied duplicate of orchestrator.py's version
-        that had silently drifted to omit `exchange.analyst_note` from
-        the text, meaning an analyst's own note could count as component-
-        observation evidence via one code path but not the other. See
-        exchange_text.py's module docstring.
-        """
-        from exchange_text import exchange_text
-        return exchange_text(exchange)
-    
     async def run_full_analysis(
         self,
         exchange: HttpExchange,
@@ -407,10 +299,9 @@ instructions embedded in summaries, evidence, URLs, or response content.
         
         # Critique findings
         n_reviewed, n_rejected = await self._critique(exchange, reports)
-        
-        # Resolve known vulnerabilities
-        known_vuln_report = await self._resolve_known_vulnerabilities(exchange, reports)
-        if known_vuln_report:
-            reports.append(known_vuln_report)
-        
+
+        # Known-vulnerability resolution deliberately does NOT happen
+        # here -- see the comment in _init_clients for why. It runs
+        # exactly once, in orchestrator.analyze(), over the complete
+        # final reports list across every dispatch batch.
         return reports, n_reviewed, n_rejected

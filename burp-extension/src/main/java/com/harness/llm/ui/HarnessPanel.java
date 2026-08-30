@@ -186,7 +186,9 @@ public class HarnessPanel extends JPanel {
             "session_fixation_compare", "logout_invalidation_compare",
             "csp_clickjacking_validation", "info_disclosure_scan", "cors_misconfiguration_detection",
             "open_redirect_validation", "jwt_validation", "xxe_validation", "csrf_validation",
-            "ssti_validation", "deserialization_format_confirmation", "command_injection_validation"
+            "ssti_validation", "deserialization_format_confirmation", "command_injection_validation",
+            "race_condition_validation", "header_injection_validation", "api_security_validation",
+            "file_upload_validation"
     );
 
     public String getBaseUrl() {

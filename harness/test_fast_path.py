@@ -18,6 +18,7 @@ from fast_path import (
     select_agents_by_status,
     select_agents_by_response_body,
     select_agents_by_response_headers,
+    select_agents_by_csrf_signal,
     select_fast_path_agents,
     should_terminate_early,
     EarlyTerminationConfig,
@@ -45,10 +46,13 @@ class TestUrlPatterns(unittest.TestCase):
         self.assertIn("misconfig", agents)
     
     def test_login_endpoint(self):
-        """Login endpoints should select auth, business_logic."""
+        """Login endpoints should select auth, business_logic, sqli --
+        credential fields are a classic SQLi injection point, found
+        missing during a real scoring pass against testing/test-target/."""
         agents = select_agents_by_url("/login")
         self.assertIn("auth", agents)
         self.assertIn("business_logic", agents)
+        self.assertIn("sqli", agents)
     
     def test_api_endpoint(self):
         """API endpoints should select multiple agents."""
@@ -129,6 +133,17 @@ class TestQueryParamPatterns(unittest.TestCase):
         agents = select_agents_by_query_params("text=apple")
         self.assertIn("sqli", agents)
         self.assertIn("xss", agents)
+
+    def test_any_query_param_also_gets_anomaly_baseline(self):
+        """Regression test for a real scoring gap against
+        testing/test-target/: a path-traversal exchange (`?file=../app.py`)
+        dispatched 8 LLM-backed agents, none of which correctly named the
+        vulnerability, while `anomaly` -- never dispatched at all -- would
+        have matched the `../` pattern deterministically (see
+        anomaly_detector.py's suspicious_patterns) at zero additional
+        Ollama cost, since its run() bypasses the LLM pipeline entirely."""
+        agents = select_agents_by_query_params("file=../app.py")
+        self.assertIn("anomaly", agents)
 
 
 class TestMethodPatterns(unittest.TestCase):
@@ -265,6 +280,114 @@ class TestRequestHeaderPatterns(unittest.TestCase):
         self.assertIn("auth", agents)
 
 
+class TestJwtAndCsrfFastPathCoverage(unittest.TestCase):
+    """
+    Regression tests for a real gap found during the testing/test-target/
+    discovery run: jwt and csrf had ZERO fast_path entries anywhere (URL,
+    header, or body tables), so they could only be reached via the
+    coordinator -- which fast_path being confident on nearly every real
+    exchange meant essentially never happened in practice (confirmed:
+    never fired once across a full discovery run). See HANDOVER.md.
+    """
+
+    def test_jwt_shaped_bearer_token_selects_jwt_and_auth(self):
+        headers = {
+            "Authorization": "Bearer eyJhbGciOiJIUzI1NiJ9."
+                              "eyJzdWIiOiIxMjM0NTY3ODkwIn0."
+                              "dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"
+        }
+        agents = select_agents_by_request_headers(headers)
+        self.assertIn("jwt", agents)
+        self.assertIn("auth", agents)
+
+    def test_jwt_shaped_token_in_cookie_also_selects_jwt(self):
+        """A JWT can be carried in a session cookie instead of
+        Authorization -- the pattern isn't gated to one header name."""
+        headers = {
+            "Cookie": "session=eyJhbGciOiJIUzI1NiJ9."
+                      "eyJ1c2VyIjoiYWxpY2UifQ."
+                      "c2lnbmF0dXJl"
+        }
+        agents = select_agents_by_request_headers(headers)
+        self.assertIn("jwt", agents)
+
+    def test_alg_none_forged_token_with_empty_signature_still_selects_jwt(self):
+        """The single highest-value real case this pattern exists to
+        catch: an alg:none forged token has an EMPTY signature segment
+        (no signature at all), so the JWT ends immediately after the
+        second dot. A trailing `\\b` would fail to match here (confirmed
+        directly) since neither neighbor of that position is a word
+        character -- this is testing/test-target/'s real TP11 scenario."""
+        headers = {
+            "Authorization": "Bearer eyJhbGciOiJub25lIn0."
+                              "eyJ1c2VyX2lkIjozLCJyb2xlIjoiYWRtaW4ifQ."
+        }
+        agents = select_agents_by_request_headers(headers)
+        self.assertIn("jwt", agents)
+
+    def test_non_jwt_bearer_token_does_not_select_jwt(self):
+        """An opaque (non-JWT) bearer token should still select auth
+        (existing behavior) but must not falsely claim jwt."""
+        headers = {"Authorization": "Bearer opaque-session-token-abc123"}
+        agents = select_agents_by_request_headers(headers)
+        self.assertIn("auth", agents)
+        self.assertNotIn("jwt", agents)
+
+    def test_state_changing_request_with_cookie_selects_csrf(self):
+        agents = select_agents_by_csrf_signal("POST", {"Cookie": "session=abc123"})
+        self.assertEqual(agents, {"csrf"})
+
+    def test_put_with_cookie_selects_csrf(self):
+        agents = select_agents_by_csrf_signal("PUT", {"Cookie": "session=abc123"})
+        self.assertEqual(agents, {"csrf"})
+
+    def test_get_request_never_selects_csrf(self):
+        """GET is not state-changing -- CSRF doesn't apply regardless of
+        cookie presence."""
+        agents = select_agents_by_csrf_signal("GET", {"Cookie": "session=abc123"})
+        self.assertEqual(agents, set())
+
+    def test_state_changing_request_without_cookie_does_not_select_csrf(self):
+        """Bearer/API-key auth isn't cookie-based and isn't in CSRF's
+        threat model -- no Cookie header means no CSRF precondition."""
+        agents = select_agents_by_csrf_signal("POST", {"Authorization": "Bearer abc123"})
+        self.assertEqual(agents, set())
+
+    def test_full_selection_dispatches_jwt_for_jwt_shaped_auth_header(self):
+        """End-to-end: select_fast_path_agents (the real dispatch path)
+        actually includes jwt, not just the lower-level header-matching
+        function."""
+        exchange = HttpExchange(
+            url="https://example.com/api/users/3/profile",
+            method="GET",
+            request_headers={
+                "Authorization": "Bearer eyJhbGciOiJub25lIn0."
+                                  "eyJ1c2VyX2lkIjozLCJyb2xlIjoiYWRtaW4ifQ."
+            },
+            request_body="",
+            response_status=200,
+            response_headers={},
+            response_body='{"email":"admin@example.com"}',
+        )
+        selected, reason = select_fast_path_agents(exchange, {"jwt", "auth", "idor", "misconfig"})
+        self.assertIsNotNone(selected)
+        self.assertIn("jwt", selected)
+
+    def test_full_selection_dispatches_csrf_for_cookie_authenticated_post(self):
+        exchange = HttpExchange(
+            url="https://example.com/api/account/change-email",
+            method="POST",
+            request_headers={"Cookie": "session=abc123", "Content-Type": "application/json"},
+            request_body='{"email": "new@example.com"}',
+            response_status=200,
+            response_headers={},
+            response_body="",
+        )
+        selected, reason = select_fast_path_agents(exchange, {"csrf", "sqli", "xss", "idor", "business_logic"})
+        self.assertIsNotNone(selected)
+        self.assertIn("csrf", selected)
+
+
 class TestFastPathSelection(unittest.TestCase):
     """Test complete fast-path agent selection."""
     
@@ -289,7 +412,7 @@ class TestFastPathSelection(unittest.TestCase):
         self.assertIn("URL pattern", result[1])
     
     def test_login_endpoint_selection(self):
-        """Login endpoint should select auth, business_logic."""
+        """Login endpoint should select auth, business_logic, sqli."""
         exchange = HttpExchange(
             url="https://example.com/login",
             method="POST",
@@ -299,13 +422,14 @@ class TestFastPathSelection(unittest.TestCase):
             response_headers={},
             response_body="",
         )
-        
+
         available = {"sqli", "xss", "idor", "ssrf", "auth", "business_logic", "misconfig"}
         result = select_fast_path_agents(exchange, available)
-        
+
         self.assertIsNotNone(result[0])
         self.assertIn("auth", result[0])
         self.assertIn("business_logic", result[0])
+        self.assertIn("sqli", result[0])
     
     def test_sql_error_response_selection(self):
         """SQL error in response should select sqli."""

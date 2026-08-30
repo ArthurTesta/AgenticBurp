@@ -265,40 +265,50 @@ class AnomalyDetector:
         self.exchange_history.append(exchange)
     
     def detect_anomalies(self, exchange: HttpExchange) -> list[Anomaly]:
-        """Detect anomalies in a single exchange."""
+        """Detect anomalies in a single exchange.
+
+        Found live, during a real scoring pass against
+        testing/test-target/: a path-traversal exchange containing a
+        blatant `../` in a query parameter produced ZERO findings from
+        this detector, even after fast_path.py was fixed to dispatch
+        `anomaly` for it. Root cause: EVERY check here, including the
+        deterministic, baseline-independent suspicious_patterns regex
+        match (which already lists path traversal explicitly), was
+        gated behind `exchange_count >= min_exchanges` (10) for the
+        host -- a threshold that makes sense for genuinely
+        baseline-dependent statistical checks (is this response size
+        an outlier relative to history?) but has no logical connection
+        to "does this URL contain `../`", which is suspicious on the
+        very first exchange for a host just as much as the hundredth.
+        Confirmed by inspecting each check's own signature: only
+        _detect_statistical_anomalies, _detect_status_anomalies, and
+        _detect_content_type_anomalies actually take a `profile`
+        parameter -- _detect_pattern_anomalies, _detect_parameter_
+        anomalies, and _detect_header_anomalies do not, and now run
+        unconditionally below.
+        """
         anomalies = []
         host = self._get_host(exchange.url)
-        
-        # Only detect if we have a baseline
-        if host not in self.profiles or self.profiles[host].exchange_count < self.min_exchanges:
-            return anomalies
-        
-        profile = self.profiles[host]
-        
-        # 1. Statistical anomalies
-        anomalies.extend(self._detect_statistical_anomalies(exchange, profile))
-        
-        # 2. Pattern-based anomalies
+
+        # Baseline-INDEPENDENT checks: run on every exchange, from the
+        # very first one, regardless of how much history exists for
+        # this host.
         anomalies.extend(self._detect_pattern_anomalies(exchange))
-        
-        # 3. Parameter-based anomalies
         anomalies.extend(self._detect_parameter_anomalies(exchange))
-        
-        # 4. Header-based anomalies
         anomalies.extend(self._detect_header_anomalies(exchange))
-        
-        # 5. Status code anomalies
-        anomalies.extend(self._detect_status_anomalies(exchange, profile))
-        
-        # 6. Content-type anomalies
-        anomalies.extend(self._detect_content_type_anomalies(exchange, profile))
-        
-        # 7. Temporal anomalies (if we have history)
         anomalies.extend(self._detect_temporal_anomalies(exchange))
-        
+
+        # Baseline-DEPENDENT checks: genuinely need enough prior history
+        # for this host to know what "normal" looks like.
+        if host in self.profiles and self.profiles[host].exchange_count >= self.min_exchanges:
+            profile = self.profiles[host]
+            anomalies.extend(self._detect_statistical_anomalies(exchange, profile))
+            anomalies.extend(self._detect_status_anomalies(exchange, profile))
+            anomalies.extend(self._detect_content_type_anomalies(exchange, profile))
+
         # Store anomalies
         self.anomalies.extend(anomalies)
-        
+
         return anomalies
     
     def _detect_statistical_anomalies(self, exchange: HttpExchange, profile: BehaviorProfile) -> list[Anomaly]:
@@ -452,24 +462,32 @@ class AnomalyDetector:
         anomalies = []
         params = self._extract_parameters(exchange)
         
-        # Check for sensitive parameter names
+        # Check for sensitive parameter names. Found live: this used to
+        # also require `param_name in exchange.request_headers or
+        # param_name in exchange.request_body` -- a redundant, WRONG
+        # extra guard. `params` already came from _extract_parameters(),
+        # which only ever returns names genuinely present in the query
+        # string, form body, or headers -- there was never anything to
+        # double-check. Worse, the guard's own semantics only work for
+        # header keys (dict lookup) and form-body substrings (text
+        # lookup); a sensitive name appearing ONLY in the QUERY STRING
+        # (e.g. `?api_key=...`, arguably the single most common place
+        # for one) matches neither check and was silently dropped.
         for param_name, param_values in params.items():
             if any(sensitive in param_name.lower() for sensitive in self.sensitive_param_names):
-                # Check if parameter is in request (not just response)
-                if param_name in exchange.request_headers or param_name in exchange.request_body:
-                    anomalies.append(Anomaly(
-                        anomaly_type="sensitive_parameter",
-                        severity="high",
-                        confidence=0.9,
-                        description=f"Sensitive parameter name detected: {param_name}",
-                        evidence=f"Parameter '{param_name}' may contain sensitive data",
-                        exchange_fingerprint=self._fingerprint(exchange),
-                        affected_field=f"parameter_{param_name}",
-                        expected_value="No sensitive parameter names",
-                        actual_value=param_name,
-                        deviation_score=1.0
-                    ))
-        
+                anomalies.append(Anomaly(
+                    anomaly_type="sensitive_parameter",
+                    severity="high",
+                    confidence=0.9,
+                    description=f"Sensitive parameter name detected: {param_name}",
+                    evidence=f"Parameter '{param_name}' may contain sensitive data",
+                    exchange_fingerprint=self._fingerprint(exchange),
+                    affected_field=f"parameter_{param_name}",
+                    expected_value="No sensitive parameter names",
+                    actual_value=param_name,
+                    deviation_score=1.0
+                ))
+
         # Check for unusual parameter values
         for param_name, param_values in params.items():
             for param_value in param_values:
@@ -672,11 +690,34 @@ class AnomalyDetector:
         
         return anomalies
     
-    def cluster_anomalies(self) -> list[AnomalyCluster]:
-        """Cluster similar anomalies to identify new vulnerability classes."""
+    def cluster_anomalies(self, anomalies: Optional[list[Anomaly]] = None) -> list[AnomalyCluster]:
+        """Cluster similar anomalies to identify new vulnerability classes.
+
+        Found live: generate_findings() used to call this with no
+        argument, which defaulted to clustering over self.anomalies --
+        the GLOBAL, ever-growing accumulator across the entire session
+        for a host, not just the current exchange being analyzed. In
+        this harness, analyze() processes one exchange at a time with
+        no later step that ever reviews session-wide clusters, so that
+        cross-exchange accumulation provided no real value while
+        actively causing two confirmed problems: (1) a cluster reported
+        against exchange N could silently include anomaly types
+        contributed by an EARLIER, unrelated exchange, occasionally
+        landing on a (type, field) combination the vulnerability-class
+        mapping didn't cover and reporting a vague, low-information
+        'unknown_anomaly'; (2) the same accumulating cluster got
+        re-reported, with a growing count, on every subsequent exchange
+        that contributed to it, rather than being scoped to the one
+        exchange it's actually evidence for. Callers now pass the
+        current exchange's own anomaly list explicitly; `self.anomalies`
+        remains the default only for any other/future caller that
+        genuinely wants the full session history.
+        """
+        if anomalies is None:
+            anomalies = self.anomalies
         # Group anomalies by host
         by_host = defaultdict(list)
-        for anomaly in self.anomalies:
+        for anomaly in anomalies:
             host = self._get_host_from_fingerprint(anomaly.exchange_fingerprint)
             by_host[host].append(anomaly)
         
@@ -715,7 +756,26 @@ class AnomalyDetector:
         return clusters
     
     def _suggest_vulnerability_class(self, anomaly_type: str, affected_field: str) -> str:
-        """Suggest a vulnerability class based on anomaly type and field."""
+        """Suggest a vulnerability class based on anomaly type and field.
+
+        Found live: every entry below except the three `suspicious_pattern`
+        ones used `''` as a placeholder `affected_field`, which never
+        equals a REAL anomaly's affected_field (always a genuine value
+        like 'response_headers', 'parameters', 'url' -- see each
+        _detect_*_anomalies method, none of which ever sets
+        affected_field to an empty string). That meant every one of
+        those mappings was permanently unreachable: a real
+        missing_security_header cluster (affected_field=
+        'response_headers') always fell through to 'unknown_anomaly'
+        instead of the correctly-mapped 'security_misconfiguration'.
+        Fixed with a two-tier lookup: try the exact (type, field) match
+        first (still needed for suspicious_pattern, whose real
+        vulnerability class genuinely depends on WHERE the pattern
+        matched -- a `../` in the URL is path traversal, the same
+        pattern in a response body is information disclosure), then
+        fall back to (type, '') as a field-agnostic default for
+        anomaly types where the field doesn't change the classification.
+        """
         mappings = {
             ('suspicious_pattern', 'url'): 'path_traversal',
             ('suspicious_pattern', 'request_body'): 'injection',
@@ -731,19 +791,44 @@ class AnomalyDetector:
             ('json_as_plain_text', ''): 'content_type_mismatch',
             ('json_as_html', ''): 'content_type_mismatch',
             ('response_size_outlier', ''): 'information_disclosure',
+            ('parameter_count_outlier', ''): 'unusual_behavior',
+            ('url_depth_outlier', ''): 'unusual_behavior',
         }
-        
-        return mappings.get((anomaly_type, affected_field), 'unknown_anomaly')
+
+        if (anomaly_type, affected_field) in mappings:
+            return mappings[(anomaly_type, affected_field)]
+        return mappings.get((anomaly_type, ''), 'unknown_anomaly')
     
     def generate_findings(self, anomalies: list[Anomaly]) -> list[Finding]:
-        """Convert anomalies to Finding objects."""
+        """Convert anomalies to Finding objects.
+
+        Found live, on the very first real exchange this fix was tested
+        against: a path-traversal URL ALSO happened to be missing 3+
+        security headers (extremely common -- most responses are).
+        `clustered_anomalies` used to track `exchange_fingerprint`, which
+        is the SAME value for every anomaly from a single exchange
+        regardless of type. The instant ANY anomaly type from that
+        exchange clustered (here: 6 missing_security_header anomalies),
+        every OTHER anomaly from the same exchange -- including the
+        completely unrelated, specific, high-value suspicious_pattern
+        (path traversal) one -- got silently treated as "already
+        reported" and dropped, even though it was never actually part of
+        that cluster. The only finding that survived was the generic
+        cluster summary ("Multiple anomalies detected: unknown_anomaly"),
+        losing the one piece of evidence that actually mattered. Fixed
+        by tracking clustered anomalies by object identity (Anomaly is a
+        non-frozen dataclass, so not natively hashable/set-safe) instead
+        of by exchange fingerprint.
+        """
         findings = []
-        
-        # Cluster anomalies first
-        clusters = self.cluster_anomalies()
-        
+
+        # Cluster anomalies first -- scoped to just the anomalies passed
+        # in (this exchange's own), not the global session accumulator.
+        # See cluster_anomalies()'s own docstring for why.
+        clusters = self.cluster_anomalies(anomalies)
+
         # Group anomalies by cluster
-        clustered_anomalies = set()
+        clustered_anomaly_ids = set()
         for cluster in clusters:
             if len(cluster.anomalies) >= 3:
                 # Create a finding for the cluster
@@ -757,11 +842,11 @@ class AnomalyDetector:
                     basis="derived",
                     validation_hints=[]
                 ))
-                clustered_anomalies.update(a.exchange_fingerprint for a in cluster.anomalies)
-        
+                clustered_anomaly_ids.update(id(a) for a in cluster.anomalies)
+
         # Create findings for unclustered anomalies
         for anomaly in anomalies:
-            if anomaly.exchange_fingerprint not in clustered_anomalies:
+            if id(anomaly) not in clustered_anomaly_ids:
                 findings.append(Finding(
                     vulnerability_class=anomaly.anomaly_type,
                     severity=anomaly.severity,

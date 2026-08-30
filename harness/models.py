@@ -116,6 +116,19 @@ class TestPlan(BaseModel):
     rationale: str = ""
     source_exchange_hash: str = ""
     schema_version: str = "1"
+    # The ORIGINAL finding's severity/confidence, captured at plan-creation
+    # time -- not the validator's own confidence. Needed by retry_policy's
+    # is_suspicious() check (a HANDOVER_MANUAL for an unconfirmed
+    # high-severity/high-confidence original hypothesis vs. a silent
+    # STOP_INCONCLUSIVE for a low-stakes one), which has no other way to
+    # see the original finding once only plan_id comes back on a
+    # ValidationSubmission. Left at the default ("", 0.0) by every
+    # construction site that doesn't populate it -- safe, since that just
+    # means is_suspicious()'s high_prior branch never fires for that plan,
+    # not a crash or a wrong retry decision.
+    severity: str = ""
+    confidence: float = 0.0
+    escalated: bool = False
 
 
 class ValidationSubmission(BaseModel):
@@ -127,6 +140,11 @@ class ValidationSubmission(BaseModel):
     evidence: str = ""
     executor: str = ""
     source_exchange_hash: str = ""
+    # Optional hint from the execution plane about where the payload
+    # landed (e.g. "html_attribute", "js_string") -- see payload_library's
+    # context-aware selection. Empty is always safe: next_candidate()
+    # degrades to trying context-agnostic payloads first.
+    context_tags: list[str] = Field(default_factory=list)
 
 
 class ValidationReport(BaseModel):

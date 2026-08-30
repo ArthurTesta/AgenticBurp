@@ -83,29 +83,34 @@ class CorsValidator(Validator):
     def plan(self, finding: Finding, exchange: HttpExchange) -> Any:
         """Generate a test plan for CORS validation."""
         from models import TestPlan
+        from categories import canonicalize
         import hashlib
         import json
-        
-        # Create a unique plan ID
-        plan_data = f"{finding.vulnerability_class}:{exchange.url}"
-        plan_id = f"cors_test_{hashlib.sha256(plan_data.encode()).hexdigest()[:16]}"
-        
+
+        # Plan ID must incorporate the FULL exchange, not just the URL --
+        # found live, against a real Juice Shop run: two different real
+        # requests to the same URL (two separate login attempts) produced
+        # the exact same plan_id (URL + vulnerability_class only), so the
+        # second one's stored source_exchange_hash silently clobbered the
+        # first's, and the first's later validation submission was
+        # rejected as a "binding_mismatch" -- confirmed live, not
+        # hypothetical. Reusing the already-computed full-exchange hash
+        # for the plan_id too (not just source_exchange_hash) closes this.
+        exchange_hash = hashlib.sha256(
+            json.dumps(exchange.model_dump(), sort_keys=True).encode()
+        ).hexdigest()[:16]
+        plan_id = f"cors_test_{finding.vulnerability_class}_{exchange_hash}"
+
         return TestPlan(
             id=plan_id,
             capability=self.get_capability(),
+            finding_class=finding.vulnerability_class,
+            category=canonicalize(finding.vulnerability_class),
+            source_exchange_url=exchange.url,
             execution_plane=self.get_execution_plane(),
-            target_url=exchange.url,
-            target_method=exchange.method,
-            description=f"CORS misconfiguration validation for {finding.vulnerability_class}",
-            parameters={
-                "finding_class": finding.vulnerability_class,
-                "target_url": exchange.url,
-                "confidence": finding.confidence,
-            },
-            expected_outcome="Confirm CORS misconfiguration and identify specific vulnerability",
-            source_exchange_hash=hashlib.sha256(
-                json.dumps(exchange.model_dump(), sort_keys=True).encode()
-            ).hexdigest()[:16],
+            rationale=f"CORS misconfiguration validation for {finding.vulnerability_class}",
+            success_signals=["Confirm CORS misconfiguration and identify specific vulnerability"],
+            source_exchange_hash=exchange_hash,
         )
     
     async def validate(self, finding: Finding, exchange: HttpExchange) -> Any:

@@ -15,11 +15,15 @@ import com.harness.llm.logic.CorsMisconfigLogic;
 import com.harness.llm.logic.CspClickjackingLogic;
 import com.harness.llm.logic.CsrfLogic;
 import com.harness.llm.logic.DeserializationFormatLogic;
+import com.harness.llm.logic.FileUploadLogic;
+import com.harness.llm.logic.HeaderInjectionLogic;
 import com.harness.llm.logic.IdentityCompareLogic;
 import com.harness.llm.logic.IdentityLabelResolver;
 import com.harness.llm.logic.InfoDisclosureLogic;
 import com.harness.llm.logic.JwtForgeryLogic;
+import com.harness.llm.logic.MassAssignmentLogic;
 import com.harness.llm.logic.OpenRedirectLogic;
+import com.harness.llm.logic.RaceConditionLogic;
 import com.harness.llm.logic.SessionLifecycleLogic;
 import com.harness.llm.logic.SsrfCallbackLogic;
 import com.harness.llm.logic.SstiPayloadLogic;
@@ -36,6 +40,11 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.function.BiConsumer;
 
 /**
@@ -94,6 +103,10 @@ public final class ValidationExecutor {
                         case "ssti_validation" -> sstiValidation(plan, source);
                         case "deserialization_format_confirmation" -> deserializationFormatScan(plan, source);
                         case "command_injection_validation" -> commandInjectionTiming(plan, source);
+                        case "race_condition_validation" -> raceConditionBurst(plan, source);
+                        case "header_injection_validation" -> headerInjection(plan, source);
+                        case "api_security_validation" -> apiSecurityMassAssignment(plan, source);
+                        case "file_upload_validation" -> fileUploadEicarProbe(plan, source);
                         default -> submit(plan, source, "inconclusive", 0, false, "No typed executor exists for capability '"+plan.capability+"'.", "");
                     }
                 } catch (Exception e) {
@@ -753,6 +766,89 @@ public final class ValidationExecutor {
     }
 
     // ---------------------------------------------------------------
+    // header_injection_validation -- CRLF/HTTP response-header
+    // injection. Appends %0d%0a (the transport-safe ENCODED form -- a
+    // literal \r\n placed directly into an HttpParameter's value would
+    // either get percent-encoded by Montoya before it ever reaches the
+    // wire, or break the request Burp sends outright; real attackers
+    // send the encoded form for exactly this reason, relying on the
+    // TARGET SERVER's own decode-then-reflect code to be what
+    // reintroduces the raw newline unsanitized) plus a harness-chosen
+    // marker header to the same URL/redirect-shaped parameter
+    // open_redirect_validation targets -- see HeaderInjectionLogic's
+    // class doc for why that heuristic is reused rather than duplicated.
+    // ---------------------------------------------------------------
+    private static final String HEADER_INJECTION_MARKER_NAME = "X-Harness-Crlf-Test";
+    private static final String HEADER_INJECTION_MARKER_VALUE = "injected-12345";
+
+    private void headerInjection(TestPlan plan, HttpRequestResponse source) {
+        HttpRequest req = source.request();
+        HttpParameter target = null;
+        for (var p : req.parameters()) {
+            if (p.type() == HttpParameterType.COOKIE) continue;
+            if (SsrfCallbackLogic.isCallbackCandidateParam(p.name())) { target = p; break; }
+        }
+        if (target == null) {
+            statusFor(plan, source, "invalid", 0, false,
+                    "No URL/redirect-shaped parameter was available on this request for header_injection_validation to target.", "");
+            return;
+        }
+        boolean baselineHasMarker = source.response() != null && source.response().headerValue(HEADER_INJECTION_MARKER_NAME) != null;
+        String payloadValue = HeaderInjectionLogic.buildPayload(target.value(), HEADER_INJECTION_MARKER_NAME, HEADER_INJECTION_MARKER_VALUE);
+        var rr = api.http().sendRequest(req.withParameter(HttpParameter.parameter(target.name(), payloadValue, target.type())));
+        var resp = rr.response();
+        if (resp == null) {
+            statusFor(plan, source, "inconclusive", 0, false, "No response was received for the header injection probe request.", "");
+            return;
+        }
+        String mutatedMarkerValue = resp.headerValue(HEADER_INJECTION_MARKER_NAME);
+        HeaderInjectionLogic.Evidence ev = HeaderInjectionLogic.evaluate(
+                target.name(), HEADER_INJECTION_MARKER_NAME, HEADER_INJECTION_MARKER_VALUE, baselineHasMarker, mutatedMarkerValue);
+        statusFor(plan, source, ev.verdict().name().toLowerCase(Locale.ROOT), ev.confidence(), ev.confirmed(), ev.summary(), ev.detail());
+    }
+
+    // ---------------------------------------------------------------
+    // api_security_validation -- mass-assignment probe. Directly
+    // implements the api_security agent's own suggested_test: resend a
+    // create/update request with an extra unrequested field ("role":
+    // "admin") added to the JSON body and check whether the response
+    // reflects it back as accepted. See MassAssignmentLogic.
+    // ---------------------------------------------------------------
+    private static final String MASS_ASSIGNMENT_FIELD_NAME = "role";
+    private static final String MASS_ASSIGNMENT_FIELD_VALUE_JSON = "\"admin\"";
+
+    private void apiSecurityMassAssignment(TestPlan plan, HttpRequestResponse source) {
+        HttpRequest req = source.request();
+        String method = req.method();
+        if (!"POST".equalsIgnoreCase(method) && !"PUT".equalsIgnoreCase(method) && !"PATCH".equalsIgnoreCase(method)) {
+            statusFor(plan, source, "invalid", 0, false,
+                    "api_security_validation's mass-assignment probe only applies to create/update requests "
+                            + "(POST/PUT/PATCH); this request is " + method + ".", "");
+            return;
+        }
+        String originalBody = req.bodyToString();
+        boolean fieldAlreadyPresent = originalBody != null && originalBody.contains("\"" + MASS_ASSIGNMENT_FIELD_NAME + "\"");
+        String mutatedBody = MassAssignmentLogic.injectField(originalBody, MASS_ASSIGNMENT_FIELD_NAME, MASS_ASSIGNMENT_FIELD_VALUE_JSON);
+        if (mutatedBody == null) {
+            statusFor(plan, source, "invalid", 0, false,
+                    "Request body is not a JSON object ({...}) -- api_security_validation's mass-assignment "
+                            + "probe requires an object-shaped body to inject a field into.", "");
+            return;
+        }
+        var rr = api.http().sendRequest(req.withBody(mutatedBody));
+        var resp = rr.response();
+        if (resp == null) {
+            statusFor(plan, source, "inconclusive", 0, false, "No response was received for the mass-assignment probe request.", "");
+            return;
+        }
+        String baselineResponseBody = source.response() == null ? null : source.response().bodyToString();
+        MassAssignmentLogic.Evidence ev = MassAssignmentLogic.evaluate(
+                MASS_ASSIGNMENT_FIELD_NAME, MASS_ASSIGNMENT_FIELD_VALUE_JSON, fieldAlreadyPresent,
+                baselineResponseBody, resp.bodyToString());
+        statusFor(plan, source, ev.verdict().name().toLowerCase(Locale.ROOT), ev.confidence(), ev.confirmed(), ev.summary(), ev.detail());
+    }
+
+    // ---------------------------------------------------------------
     // jwt_validation -- forges an alg:none variant and a garbled-
     // signature variant of the Authorization bearer token (if present
     // and JWT-shaped) and resends each once, comparing against the
@@ -1033,6 +1129,119 @@ public final class ValidationExecutor {
                     "No timing evidence of command injection for parameter '" + target.name() + "' across "
                             + attempts + " payload(s) tried.", "");
         }
+    }
+
+    // ---------------------------------------------------------------
+    // race_condition_validation -- the ONE executor in this file that
+    // needs genuine concurrent dispatch, not sequential replay. Every
+    // other method's sendRequest() calls happen one after another
+    // (appropriately -- none of them depend on overlapping in time).
+    // A check-then-act race only opens if multiple requests are
+    // actually in flight against the server simultaneously, so this
+    // uses a real thread pool plus a two-latch start barrier: every
+    // worker thread signals "ready" and then blocks on "go", so none of
+    // them fires until all of them are lined up to fire together,
+    // rather than however the JVM happens to schedule a simple loop.
+    // See RaceConditionLogic for how the resulting status codes are
+    // interpreted.
+    // ---------------------------------------------------------------
+    private void raceConditionBurst(TestPlan plan, HttpRequestResponse source) {
+        HttpRequest req = source.request();
+        int n = MAX_BURST;
+        ExecutorService pool = Executors.newFixedThreadPool(n);
+        CountDownLatch ready = new CountDownLatch(n);
+        CountDownLatch go = new CountDownLatch(1);
+        List<Future<Integer>> futures = new ArrayList<>();
+        try {
+            for (int i = 0; i < n; i++) {
+                futures.add(pool.submit(() -> {
+                    ready.countDown();
+                    try { go.await(); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+                    var rr = api.http().sendRequest(req);
+                    return rr.response() == null ? 0 : (int) rr.response().statusCode();
+                }));
+            }
+            try { ready.await(2, TimeUnit.SECONDS); } catch (InterruptedException ignored) {}
+            go.countDown();
+
+            List<RaceConditionLogic.AttemptResult> results = new ArrayList<>();
+            for (Future<Integer> f : futures) {
+                try { results.add(new RaceConditionLogic.AttemptResult(f.get(30, TimeUnit.SECONDS))); }
+                catch (Exception e) { results.add(new RaceConditionLogic.AttemptResult(0)); }
+            }
+
+            RaceConditionLogic.Evidence ev = RaceConditionLogic.evaluate(results);
+            String status = switch (ev.verdict()) {
+                case CONFIRMED -> "confirmed";
+                case SUPPORTED -> "supported";
+                case REJECTED -> "rejected";
+            };
+            statusFor(plan, source, status, ev.confidence(), ev.confirmed(), ev.summary(), ev.detail());
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // file_upload_validation -- EICAR probe. Replaces the content of an
+    // existing multipart file part with the industry-standard EICAR
+    // antivirus test string (see FileUploadLogic's own doc comment for
+    // why EICAR specifically, and why this is deliberately narrower
+    // than the specialist agent's own suggested_test payloads), resends,
+    // then attempts to fetch the file back from a URL/path found in the
+    // upload response to confirm it's stored unscanned and accessible.
+    // ---------------------------------------------------------------
+    private void fileUploadEicarProbe(TestPlan plan, HttpRequestResponse source) {
+        HttpRequest req = source.request();
+        String contentType = null;
+        for (HttpHeader h : req.headers()) {
+            if (h.name().equalsIgnoreCase("Content-Type")) { contentType = h.value(); break; }
+        }
+        String boundary = FileUploadLogic.extractBoundary(contentType);
+        if (boundary == null) {
+            statusFor(plan, source, "invalid", 0, false,
+                    "This request is not a multipart/form-data upload -- file_upload_validation requires "
+                            + "an existing file-upload request to target.", "");
+            return;
+        }
+        String mutatedBody = FileUploadLogic.replaceFileContent(req.bodyToString(), boundary, FileUploadLogic.EICAR_STRING);
+        if (mutatedBody == null) {
+            statusFor(plan, source, "invalid", 0, false,
+                    "No file part (a Content-Disposition with filename=) was found in this multipart body to replace.", "");
+            return;
+        }
+
+        var rr = api.http().sendRequest(req.withBody(mutatedBody));
+        var resp = rr.response();
+        if (resp == null) {
+            statusFor(plan, source, "inconclusive", 0, false, "No response was received for the file-upload probe request.", "");
+            return;
+        }
+        int uploadStatus = resp.statusCode();
+        String extractedUrl = FileUploadLogic.extractUrl(resp.bodyToString());
+
+        int fetchStatus = -1;
+        boolean fetchedContainsEicar = false;
+        if (extractedUrl != null) {
+            try {
+                String path = extractedUrl.startsWith("http")
+                        ? java.net.URI.create(extractedUrl).getRawPath()
+                        : extractedUrl;
+                if (path != null && !path.isEmpty()) {
+                    var fetchRr = api.http().sendRequest(req.withPath(path).withBody(""));
+                    if (fetchRr.response() != null) {
+                        fetchStatus = fetchRr.response().statusCode();
+                        fetchedContainsEicar = fetchRr.response().bodyToString().contains(FileUploadLogic.EICAR_STRING);
+                    }
+                }
+            } catch (Exception ignored) {
+                // best-effort fetch-back only; evaluate() below already
+                // reports SUPPORTED (not CONFIRMED) when this stays inconclusive
+            }
+        }
+
+        FileUploadLogic.Evidence ev = FileUploadLogic.evaluate(uploadStatus, extractedUrl, fetchStatus, fetchedContainsEicar);
+        statusFor(plan, source, ev.verdict().name().toLowerCase(Locale.ROOT), ev.confidence(), ev.confirmed(), ev.summary(), ev.detail());
     }
 
     private void submit(TestPlan p,HttpRequestResponse source,String status,double confidence,boolean confirmed,String summary,String evidence){

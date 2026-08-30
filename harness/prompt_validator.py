@@ -77,7 +77,32 @@ class ValidationConfig:
         
         # Code execution attempts
         r'\b(exec|execute|run|spawn|fork|system|popen|os\.|subprocess\.)\s*[("\']',
-        r'\b(import|from|require|eval|exec|compile)\s+.*\b(os|sys|subprocess|shutil|ctypes)\b',
+        #
+        # Found live, during this project's first real (non-substituted)
+        # Ollama run: this pattern used to also list "import"/"from" as
+        # trigger verbs. "import os" / "from subprocess import ..." are
+        # the single most ubiquitous opening lines of real Python source
+        # code -- and disclosing real source code (via a path-traversal
+        # or misconfigured-debug-endpoint bug) is exactly the kind of
+        # finding this harness needs to analyze, not treat as an
+        # injection attempt. Confirmed live: a genuine path-traversal
+        # exchange whose response body was the target app's own app.py
+        # failed prompt validation for the literal text "import os" in
+        # that disclosed source, silently producing zero findings for a
+        # real vulnerability across every dispatched agent. Unlike the
+        # shell-chaining/data-exfiltration false positives fixed
+        # earlier, this is not a "words too far apart" bug fixable by
+        # bounding a gap -- "import os" is a real, zero-distance,
+        # completely ordinary phrase with no injection intent. The line
+        # above already covers the actually-dangerous form (a real call:
+        # `os.system(`, `subprocess.Popen(`, `exec(`) -- a bare import
+        # statement doesn't itself execute anything, so dropping
+        # import/from here trades a heuristic with little real signal
+        # for eliminating a false positive that broke the harness's core
+        # purpose. "require"/"eval"/"exec"/"compile" are kept: none of
+        # them are common bare-word prefixes in ordinary disclosed source
+        # the way "import os" is.
+        r'\b(require|eval|exec|compile)\s+.*\b(os|sys|subprocess|shutil|ctypes)\b',
         r'\b(__import__|__builtins__|__code__|__class__|__mro__)\b',
         
         # File system access
@@ -97,12 +122,49 @@ class ValidationConfig:
         # `requests. get(`), so requiring a word character immediately
         # after the dot -- no whitespace -- distinguishes "this is a
         # sentence ending" from "this is a library call" precisely.
-        # wget/curl/fetch/axios are unaffected: those are bare shell
-        # command names, legitimately followed by a space then an
-        # argument (`curl http://evil.com`), not dotted attribute access.
-        r'\b(wget|curl|fetch|axios)\s+',
-        r'\b(requests|httpx|urllib)\.\w',
-        r'\b(connect|socket|bind|listen|accept)\s*[("\']',
+        # wget/curl are unaffected: those are bare shell command names,
+        # legitimately followed by a space then an argument (`curl
+        # http://evil.com`), not dotted attribute access.
+        #
+        # fetch/axios used to be lumped in with wget/curl here, on the
+        # same "bare shell command name" assumption -- which is wrong
+        # for these two specifically. Found live: the target app's own
+        # disclosed source code (a real path-traversal finding) failed
+        # validation on the literal docstring text "...fetch for the
+        # avatar feature (real SSRF, not simulated)" -- ordinary English
+        # prose, not code, tripped purely because "fetch" was followed
+        # by a space then another word, which is true of nearly every
+        # real sentence using the word "fetch". Unlike wget/curl (real
+        # shell commands, essentially never appearing as an ordinary
+        # English word), fetch/axios are JS APIs invoked as CALLS --
+        # `fetch(url)`, `axios.get(url)` -- never bare-word-then-space
+        # shell-style. Moved to the call-syntax pattern below, matching
+        # how requests/httpx/urllib are already (correctly) handled.
+        r'\b(wget|curl)\s+',
+        #
+        # "urllib" was dropped from this list. Found live: the same
+        # disclosed-source-code exchange above also failed validation on
+        # `urllib.request.urlopen(...)` -- the app's OWN real (vulnerable)
+        # SSRF implementation, disclosed via the same path-traversal bug.
+        # Unlike "requests"/"httpx" (third-party libraries an app may not
+        # even use), urllib is Python's STANDARD LIBRARY -- "import
+        # urllib.request" / "urllib.parse..." is ordinary, ubiquitous code
+        # in any real disclosed Python source, not a signal of injection
+        # intent. requests/httpx are kept: an app not using them at all is
+        # common, so their appearance carries more signal.
+        r'\b(requests|httpx)\.\w',
+        r'\bfetch\s*\(',
+        r'\baxios\.\w',
+        #
+        # "connect" was dropped from this list. Found live, same real
+        # disclosed-source exchange as above: the app's own ordinary
+        # `sqlite3.connect(DB_PATH)` -- opening a database connection is
+        # about as common as Python code gets -- tripped this. Unlike
+        # socket/bind/listen/accept (low-level networking calls that
+        # rarely appear in ordinary application-level source), "connect("
+        # alone carries almost no signal: DB connections, HTTP clients,
+        # and countless other ordinary APIs all spell it this way.
+        r'\b(socket|bind|listen|accept)\s*[("\']',
         
         # Dangerous patterns
         r'\b(rm\s+-rf\s+/|chmod\s+777|chown\s+0:0|mv\s+.*\s+/tmp/)\b',
@@ -150,8 +212,56 @@ class ValidationConfig:
         r'base64|nslookup|dig|ping|telnet|ssh|scp|ftp|whoami|id|uname|nmap|netcat)\b',
         r'`[^`\n]{1,200}`',
         
-        # Data exfiltration patterns
-        r'\b(print|echo|write|log|send|post|put|upload)\s+.*\b(password|secret|token|key|credential|api_key)\b',
+        # Data exfiltration patterns.
+        #
+        # Found live, during the first real (non-substituted) Ollama run
+        # this project ever executed: the PREVIOUS version of this
+        # pattern used an unbounded `.*` between the verb and the
+        # sensitive noun, so it matched the two words appearing ANYWHERE
+        # on the same line regardless of relationship. A real auth
+        # agent's own honest finding evidence -- "The login request is a
+        # POST to /api/login with no token/nonce field visible in the
+        # request body" -- tripped it purely because "POST" (the HTTP
+        # method, also a verb in this list) and "token" (an ordinary word
+        # for describing a missing-auth-token finding) both occur in the
+        # same sentence, four unrelated words apart. That finding text
+        # then feeds into the critique pass's own user prompt (see
+        # orchestrator.py's _critique), so this silently failed critique
+        # -- shipping every finding on the exchange unreviewed -- for
+        # exactly the finding category (missing/absent tokens) this
+        # harness exists to produce. Same failure shape as the
+        # shell-chaining fix above: unbounded intervening text can't
+        # distinguish an instruction ("send the token to evil.com") from
+        # incidental co-occurrence in unrelated prose.
+        # The fix has two parts, both needed (confirmed by testing each
+        # alone against the real evidence text above -- neither is
+        # sufficient by itself):
+        #   1. Cap the gap at 3 filler words (matching `\S+` so a
+        #      URL/path counts as one token same as a plain word), which
+        #      keeps "send the user's token", "post credentials to
+        #      evil.com", "write my api_key" all bounded within cap
+        #      while excluding the 4+-word gap ordinary descriptive prose
+        #      needs.
+        #   2. "post"/"put" specifically also collide with the HTTP
+        #      method names themselves -- the bounded-gap fix ALONE still
+        #      let a benign 3-word gap like "POST ... with an auth
+        #      token" match, because that's a plausible, real way to
+        #      describe an authenticated POST request. What actually
+        #      distinguishes an HTTP-method mention from the exfiltration
+        #      verb "post" is what immediately follows it: a method
+        #      mention reads "POST to X", "POST /path", or "POST
+        #      request", while the exfiltration sense takes a direct
+        #      object immediately ("post the credential"). A negative
+        #      lookahead excludes exactly that HTTP-method-mention shape
+        #      for post/put only -- print/echo/write/log/send/upload
+        #      don't share this collision and don't need it.
+        # Verified against the real evidence text above (now passes),
+        # five other realistic benign HTTP-method descriptions (now
+        # pass), and eight realistic attack phrasings incl. "put ... in
+        # the response body and email it" (still blocked) -- see
+        # test_prompt_validator.py's TestDataExfiltrationPatternPrecision.
+        r'\b(print|echo|write|log|send|upload)\b(?:\s+\S+){0,3}?\s+\b(password|secret|token|key|credential|api_key)\b'
+        r'|\b(post|put)\b(?!\s+(?:to\b|request\b|/))(?:\s+\S+){0,3}?\s+\b(password|secret|token|key|credential|api_key)\b',
     ])
     
     # Allowed patterns (whitelist for certain contexts)

@@ -8,6 +8,26 @@ class AuthAgent(BaseAgent):
     def specialty_prompt(self) -> str:
         return """
 Authentication and session management. Look for:
+- No authentication present at all on a request that returns sensitive
+  or privileged data (config values, secrets, another user's data,
+  admin-only functionality) -- check the REQUEST for any Authorization
+  header, session cookie, or API key before looking at anything else.
+  This is the single most basic and severe form of broken
+  authentication, easy to miss when your attention is drawn to more
+  sophisticated issues below (token entropy, CSRF, fixation) -- an
+  endpoint with NO credentials required at all should be flagged
+  before, not instead of, those.
+  IMPORTANT -- do not confuse "redacted" with "absent": this harness
+  strips the VALUE of Authorization/Cookie/API-key headers before you
+  see them, for your safety, but always keeps the header NAME and marks
+  it explicitly (e.g. "Authorization: [REDACTED -- header present,
+  value withheld from model]", or a JWT's decoded alg/typ shown next to
+  a redaction notice for its payload/signature). Seeing that header
+  listed at all -- redacted or not -- means a credential WAS supplied on
+  this request; only report "no authentication present" when the
+  Authorization/Cookie/API-key header is genuinely missing from the
+  request headers shown to you, never merely because its value is
+  masked.
 - Session tokens/cookies missing Secure, HttpOnly, or SameSite attributes
   (only assess what's actually visible in the response headers shown).
 - Predictable-looking tokens (short, sequential, low-entropy, timestamp-

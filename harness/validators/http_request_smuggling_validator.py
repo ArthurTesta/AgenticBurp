@@ -96,28 +96,30 @@ class HttpRequestSmugglingValidator(Validator):
     def plan(self, finding: Finding, exchange: HttpExchange) -> Any:
         """Generate a test plan for HRS validation."""
         from models import TestPlan
+        from categories import canonicalize
         import hashlib
         import json
-        
-        plan_data = f"{finding.vulnerability_class}:{exchange.url}"
-        plan_id = f"hrs_{hashlib.sha256(plan_data.encode()).hexdigest()[:16]}"
-        
+
+        # Plan ID must incorporate the FULL exchange, not just the URL --
+        # see cors_validator.py's plan() for the real, live-reproduced
+        # collision this fixes (two different real requests to the same
+        # URL producing the same plan_id and clobbering each other).
+        exchange_hash = hashlib.sha256(
+            json.dumps(exchange.model_dump(), sort_keys=True).encode()
+        ).hexdigest()[:16]
+        plan_id = f"hrs_{finding.vulnerability_class}_{exchange_hash}"
+
         return TestPlan(
             id=plan_id,
             capability=self.get_capability(),
+            finding_class=finding.vulnerability_class,
+            category=canonicalize(finding.vulnerability_class),
+            source_exchange_url=exchange.url,
             execution_plane=self.get_execution_plane(),
-            target_url=exchange.url,
-            target_method="POST",  # smuggling technique requires a body-bearing method; never replay the captured method
-            description=f"HTTP Request Smuggling detection for {exchange.url}",
-            parameters={
-                "target_url": exchange.url,
-                "test_types": ["cl_te", "te_cl", "te_te"],
-                "confidence": finding.confidence,
-            },
-            expected_outcome="Detect CL.TE, TE.CL, or TE.TE request smuggling vulnerabilities",
-            source_exchange_hash=hashlib.sha256(
-                json.dumps(exchange.model_dump(), sort_keys=True).encode()
-            ).hexdigest()[:16],
+            # smuggling technique requires a body-bearing method; never replay the captured method verbatim
+            rationale=f"HTTP Request Smuggling detection for {exchange.url} (test_types: cl_te, te_cl, te_te)",
+            success_signals=["Detect CL.TE, TE.CL, or TE.TE request smuggling vulnerabilities"],
+            source_exchange_hash=exchange_hash,
         )
     
     async def validate(self, finding: Finding, exchange: HttpExchange) -> ValidationResult:

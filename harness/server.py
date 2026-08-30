@@ -4,10 +4,11 @@ import os
 import secrets
 import yaml
 import store
+import active_verification
 from pathlib import Path
 
 from fastapi import FastAPI, Header, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 from models import (AnalysisRequest, AnalysisResponse, ValidationSubmission, EstimateRequest, EffortStatus,
                      IdentityCreateRequest, SessionCreateRequest, SuppressFindingRequest)
@@ -59,6 +60,27 @@ async def health():
              "agents": list(orchestrator.agent_manager.get_enabled_agents())}
 
 
+@app.get("/report")
+async def report(url: str, authorization: str | None = Header(default=None)):
+    """
+    Analyst-facing Markdown writeup of everything found for `url`'s host
+    so far -- report_generator.py, wired here for the first time. The
+    module was fully built and tested (test_report_generator.py) but had
+    no caller anywhere: no endpoint, no CLI hook, nothing -- found during
+    a dead-code audit prompted by the same pattern already found and
+    fixed once this session for retry_policy.py/payload_library.py.
+    Passing the live orchestrator's effort ledger (not omitted, unlike
+    the module's own standalone-script default) gets cost-aware ordering
+    of unconfirmed findings for real, in-session token-spend data.
+    """
+    _require_auth(authorization)
+    import report_generator
+    markdown = await __import__("asyncio").to_thread(
+        report_generator.generate_report_for_host, url, orchestrator.effort_budget.ledger,
+    )
+    return PlainTextResponse(markdown, media_type="text/markdown")
+
+
 @app.get("/test-plans/{plan_id}")
 async def test_plan(plan_id: str, authorization: str | None = Header(default=None)):
     _require_auth(authorization)
@@ -79,7 +101,26 @@ async def validation_result(submission: ValidationSubmission, authorization: str
         raise HTTPException(status_code=400 if reason == "binding_mismatch" else 404, detail=reason)
     log.info("Validation result received plan=%s status=%s confirmed=%s",
              submission.plan_id, submission.status, submission.confirmed)
-    return {"accepted": True, "plan_id": submission.plan_id}
+
+    # Not confirmed on a retryable (xss/ssrf/business_logic, Burp-plane)
+    # capability: decide whether another attempt with a genuinely
+    # different payload is warranted -- see active_verification.py for
+    # why this exists (retry_policy.py and payload_library.py were fully
+    # built but never wired to any caller before this).
+    response: dict = {"accepted": True, "plan_id": submission.plan_id}
+    plan = await __import__("asyncio").to_thread(store.get_test_plan, submission.plan_id)
+    if plan is not None:
+        step = await active_verification.decide_next_step(
+            plan, submission, ollama_client=orchestrator.ollama,
+        )
+        if step.next_plan is not None:
+            await __import__("asyncio").to_thread(store.persist_retry_plan, step.next_plan)
+            response["next_plan"] = step.next_plan.model_dump()
+        if step.handover_required:
+            response["handover_required"] = True
+        if step.note:
+            response["note"] = step.note
+    return response
 
 
 @app.post("/analyze", response_model=AnalysisResponse)

@@ -147,5 +147,7 @@ def plans_for_findings(exchange: HttpExchange, findings: list[Finding]) -> list[
                 execution_plane=plane,
                 rationale=finding.suggested_test,
                 source_exchange_hash=exchange_fingerprint(exchange),
+                severity=finding.severity,
+                confidence=finding.confidence,
             ))
     return plans

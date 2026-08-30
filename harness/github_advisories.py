@@ -14,9 +14,24 @@ _API_BASE = "https://api.github.com"
 
 # GitHub's advisory ecosystem values differ slightly from common package-
 # manager names -- this is the mapping actually documented by GitHub's
-# REST API for GET /advisories?ecosystem=. Anything not in here is passed
-# through as-is (lets an agent's "generic" guess still attempt a lookup;
-# it'll just return nothing if the value isn't one GitHub recognizes).
+# REST API for GET /advisories?ecosystem=. GitHub's own enum (confirmed
+# live, from a real 422 response body) is exactly: rubygems, npm, pip,
+# maven, nuget, composer, go, rust, erlang, actions, pub, other, swift.
+#
+# Found live, during this project's first real (non-substituted) Ollama
+# run: the previous version of this comment assumed passing an
+# unrecognized value through as-is would just "return nothing" -- it
+# doesn't. GitHub validates `ecosystem` server-side as a strict enum and
+# rejects anything outside it with HTTP 422, so EVERY lookup for a
+# component tagged with a free-text ecosystem guess the map didn't
+# happen to cover (confirmed: real agent output tagged "generic" for
+# Werkzeug/Flask/PixelMart, extracted from passive Server/X-Powered-By
+# banner text with no way to know the real package-manager ecosystem)
+# failed outright, every single time -- not an occasional empty result.
+# The fix: fall back to GitHub's own documented catch-all value "other"
+# instead of the raw unmapped string, so an ecosystem guess that isn't
+# one of the specific values below still produces a valid API call (an
+# honestly-scoped "other" search) rather than a guaranteed error.
 _ECOSYSTEM_MAP = {
     "npm": "npm", "node": "npm", "javascript": "npm",
     "pypi": "pip", "python": "pip",
@@ -28,7 +43,10 @@ _ECOSYSTEM_MAP = {
     "rust": "rust", "cargo": "rust",
     "swift": "swift",
     "actions": "actions", "github-actions": "actions",
+    "erlang": "erlang", "elixir": "erlang",
+    "pub": "pub", "dart": "pub", "flutter": "pub",
 }
+_FALLBACK_ECOSYSTEM = "other"
 
 
 @dataclass
@@ -84,7 +102,7 @@ class GitHubAdvisoryClient:
         if not component.name:
             return LookupResult(component=component, status="skipped_no_name")
 
-        ecosystem = _ECOSYSTEM_MAP.get(component.ecosystem.lower().strip(), component.ecosystem)
+        ecosystem = _ECOSYSTEM_MAP.get(component.ecosystem.lower().strip(), _FALLBACK_ECOSYSTEM)
         params = {"ecosystem": ecosystem, "affects": component.name, "per_page": "10"}
 
         try:

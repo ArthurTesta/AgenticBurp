@@ -195,5 +195,51 @@ class TestFindingSuppression(unittest.TestCase):
         self.assertNotIn("open_redirect", classes)
 
 
+class TestPriorFindingsSummaryStripsBackticks(unittest.TestCase):
+    """
+    Regression test for a real, severe bug found during this project's
+    first real (non-substituted) Ollama run: a model wrote a completely
+    ordinary finding summary using Markdown code-formatting for a path
+    -- "The `/api/avatar` endpoint returns potentially sensitive data
+    ...". prior_findings_summary() embedded that text VERBATIM into
+    every subsequent exchange's prompt for the same host, where
+    prompt_validator.py's backtick-command-substitution pattern (which
+    matches ANY backtick-enclosed span, by design -- see its own
+    comment) then failed prompt validation for every agent on every
+    remaining exchange for that host, for the rest of the run. Unlike
+    raw exchange data, this text is the harness's own prior model
+    output, and nothing downstream renders the Markdown anyway -- so
+    stripping backticks here breaks the propagation at its source.
+    """
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self._original_db_path = store._DB_PATH
+        store._DB_PATH = Path(self._tmpdir.name) / "test_harness_state.db"
+
+    def tearDown(self):
+        store._DB_PATH = self._original_db_path
+        self._tmpdir.cleanup()
+
+    def test_backtick_quoted_path_in_summary_does_not_survive_into_prior_context(self):
+        exchange = HttpExchange(
+            url="https://example.com/api/avatar", method="POST",
+            request_headers={}, request_body="",
+            response_status=200, response_headers={}, response_body="",
+        )
+        finding = Finding(
+            vulnerability_class="excessive_data_exposure", confidence=0.6,
+            summary="The `/api/avatar` endpoint returns potentially sensitive data.",
+            evidence="e", suggested_test="t", basis="derived",
+        )
+        store.persist_findings(exchange, "api_security", [finding])
+
+        summary = store.prior_findings_summary(
+            "https://example.com/api/other", exclude_url="https://example.com/api/other"
+        )
+        self.assertNotIn("`", summary)
+        self.assertIn("/api/avatar", summary)
+
+
 if __name__ == "__main__":
     unittest.main()

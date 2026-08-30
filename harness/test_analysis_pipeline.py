@@ -12,7 +12,7 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock
 
 from analysis_pipeline import AnalysisPipeline
-from models import Finding, HttpExchange
+from models import AgentReport, ComponentCandidate, Finding, HttpExchange
 
 
 def _make_pipeline(ollama_client=None) -> AnalysisPipeline:
@@ -109,6 +109,95 @@ class CritiqueUsesInjectedClientTests(unittest.IsolatedAsyncioTestCase):
         with unittest.mock.patch("ollama_client.OllamaClient") as mock_cls:
             await pipeline._critique(exchange, reports)
             mock_cls.assert_not_called()
+
+
+class CritiquePromptStripsBackticksTests(unittest.IsolatedAsyncioTestCase):
+    """
+    Regression test for a real bug found during this project's first
+    real (non-substituted) Ollama run against Juice Shop:
+    AnalysisPipeline._critique() -- the ONE that actually runs in the
+    real analyze() flow (orchestrator.py used to have its own dead
+    duplicate; removed, see its own note) -- embedded finding summary/
+    evidence text VERBATIM into the critique prompt. A model wrote a
+    completely ordinary finding summary using Markdown code-formatting
+    ("the `/api/Users/1` endpoint...", "`Access-Control-Allow-Origin:
+    *`"), which tripped prompt_validator.py's backtick-command-
+    substitution pattern (deliberately broad by design), failing
+    critique validation and shipping those findings unreviewed. Same
+    fix and reasoning as store.prior_findings_summary(): this text is
+    the harness's own model output, not raw exchange data.
+    """
+
+    async def test_backtick_in_finding_summary_does_not_reach_the_critique_prompt(self):
+        fake_client = MagicMock()
+        fake_result = MagicMock()
+        fake_result.data = {"reviews": []}
+        fake_client.chat_json_metered = AsyncMock(return_value=fake_result)
+
+        pipeline = _make_pipeline(ollama_client=fake_client)
+        pipeline.config = {
+            "critique": {"enabled": True, "confidence_threshold": 0.5, "max_findings": 12},
+            "coordinator": {"model": "test-model"},
+        }
+
+        exchange = HttpExchange(url="https://example.com/api/Users/1", method="GET")
+        finding = Finding(
+            vulnerability_class="cors", confidence=0.9,
+            summary="The `/api/Users/1` endpoint reflects `Access-Control-Allow-Origin: *`.",
+            evidence="e", suggested_test="t", basis="derived",
+        )
+        reports = [_make_report(finding)]
+
+        await pipeline._critique(exchange, reports)
+
+        sent_prompt = fake_client.chat_json_metered.call_args.kwargs["user_prompt"]
+        self.assertNotIn("`", sent_prompt)
+        self.assertIn("/api/Users/1", sent_prompt)
+
+
+class NoDuplicateKnownVulnerabilityResolutionTests(unittest.IsolatedAsyncioTestCase):
+    """
+    Regression tests for a real, live-reproduced bug: AnalysisPipeline
+    used to run its own GitHub Advisory + KEV resolution pass inside
+    run_full_analysis, duplicating orchestrator.analyze()'s own
+    equivalent pass over the same components -- confirmed live during
+    this project's first real (non-substituted) Ollama run, where both
+    independently called GitHub's Advisory API for the same components
+    in the same request and each logged its own "Known vulnerability
+    lookup errors" line. See HANDOVER.md and the comment in
+    AnalysisPipeline._init_clients.
+    """
+
+    def test_pipeline_no_longer_constructs_advisory_or_kev_clients(self):
+        """The whole point of the fix: this class shouldn't even own
+        these clients any more, since it never calls them."""
+        pipeline = _make_pipeline()
+        self.assertFalse(hasattr(pipeline, "gha_client"))
+        self.assertFalse(hasattr(pipeline, "kev_client"))
+        self.assertFalse(hasattr(pipeline, "registry_client"))
+
+    async def test_run_full_analysis_never_appends_a_known_vuln_report(self):
+        """Even with a component candidate present in an agent's report
+        (the exact input that used to trigger a real, redundant GitHub
+        API call), run_full_analysis must not produce a
+        known_vuln_lookup report -- that's orchestrator.analyze()'s job
+        now, exactly once, over the complete final list."""
+        fake_client = MagicMock()
+        pipeline = _make_pipeline(ollama_client=fake_client)
+        pipeline.config = {"critique": {"enabled": False}}
+
+        component = ComponentCandidate(ecosystem="pypi", name="Werkzeug", version="3.1.7", source="Server header")
+        report_with_component = AgentReport(agent="misconfig", model="m", components=[component])
+        pipeline.agent_manager.run_multiple_agents = AsyncMock(return_value=[report_with_component])
+
+        exchange = HttpExchange(
+            url="https://example.com/x", method="GET",
+            response_headers={"Server": "Werkzeug/3.1.7"},
+        )
+        reports, _, _ = await pipeline.run_full_analysis(exchange, ["misconfig"], "", 6000)
+
+        self.assertEqual([r.agent for r in reports], ["misconfig"])
+        self.assertNotIn("known_vuln_lookup", [r.agent for r in reports])
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from models import Finding, HttpExchange
+from models import Finding, HttpExchange, TestPlan
 from validators.sqlmap import SqlmapValidator
 from validators.registry import ValidatorRegistry
 
@@ -111,6 +111,118 @@ class ValidatorTests(unittest.TestCase):
             result = asyncio.run(validator.validate(self.finding, self.exchange))
         self.assertEqual(result.status, "error")
         self.assertEqual(result.evidence, "\n")
+
+
+class EveryActiveValidatorPlanMethodWorksTests(unittest.TestCase):
+    """
+    Regression test for a severe, previously-undiscovered bug found the
+    first time this project ever actually flipped
+    validators.active_enabled=True in a real run (against a live Juice
+    Shop instance): 12 of the 13 active validators' plan() methods
+    constructed a TestPlan using fields that don't exist on that model
+    at all (target_url, target_method, description, parameters,
+    expected_outcome -- all silently ignored by pydantic's default
+    extra="ignore") while never setting the two REQUIRED fields
+    (finding_class, source_exchange_url) -- crashing with a
+    ValidationError the instant orchestrator._validate_findings() tried
+    to build a plan for any finding any of them applied to. Only
+    sqlmap.py's plan() was ever written against the real schema. No
+    existing test constructed a real ValidatorRegistry with
+    active_enabled=True and called plan() on every validator it
+    produces -- which is exactly why this went unnoticed. This test
+    exists to close that blind spot for good.
+    """
+
+    def setUp(self):
+        self.exchange = HttpExchange(
+            url="https://example.test/item?id=7", method="GET",
+            request_headers={"User-Agent": "test"}, response_status=200, response_body="item",
+        )
+        self.finding = Finding(
+            vulnerability_class="sqli", confidence=0.8, severity="high",
+            summary="possible SQL injection in id", evidence="id parameter",
+            suggested_test="test id", basis="derived",
+        )
+
+    def test_every_active_validators_plan_method_builds_a_valid_test_plan(self):
+        registry = ValidatorRegistry({"validators": {"active_enabled": True}})
+        active_validators = [v for v in registry.validators.values() if v.active]
+        # 13 as of this writing (see registry.py) -- sqlmap, cors, recon,
+        # http_request_smuggling, web_cache_poisoning, oauth,
+        # subdomain_takeover, crypto, csp, header_injection,
+        # api_security, websocket, race_condition.
+        self.assertGreaterEqual(len(active_validators), 13)
+
+        failures = []
+        for validator in active_validators:
+            try:
+                plan = validator.plan(self.finding, self.exchange)
+            except Exception as e:
+                failures.append(f"{validator.name}: raised {type(e).__name__}: {e}")
+                continue
+            if plan is None:
+                continue  # a validator may legitimately decline to plan for this finding
+            if not isinstance(plan, TestPlan):
+                failures.append(f"{validator.name}: plan() returned {type(plan).__name__}, not a TestPlan")
+                continue
+            if not plan.finding_class:
+                failures.append(f"{validator.name}: TestPlan.finding_class is empty")
+            if not plan.source_exchange_url:
+                failures.append(f"{validator.name}: TestPlan.source_exchange_url is empty")
+
+        self.assertEqual(
+            failures, [],
+            "One or more active validators' plan() method is broken "
+            "(this is exactly the bug class this test exists to catch):\n" + "\n".join(failures),
+        )
+
+    def test_different_exchanges_to_the_same_url_get_different_plan_ids(self):
+        """
+        Regression test for a second real bug found in the same live
+        Juice Shop run that motivated the test above: all 12 validators'
+        plan_id generation used only (vulnerability_class, exchange.url),
+        ignoring the rest of the exchange. Two real, different login
+        attempts to the same /rest/user/login URL produced the EXACT
+        SAME plan_id, so the second one's persist_test_plans() call
+        silently clobbered (or was ignored against) the first's stored
+        source_exchange_hash -- and the first request's later validation
+        submission was then rejected with "binding_mismatch". Confirmed
+        live, not hypothetical. The fix reuses the already-computed
+        full-exchange hash for the plan_id too, not just
+        source_exchange_hash.
+        """
+        registry = ValidatorRegistry({"validators": {"active_enabled": True}})
+        active_validators = [v for v in registry.validators.values() if v.active]
+
+        exchange_a = HttpExchange(
+            url="https://example.test/rest/user/login", method="POST",
+            request_headers={"Content-Type": "application/json"},
+            request_body='{"email": "admin@example.test", "password": "a"}',
+            response_status=200, response_body='{"ok": true}',
+        )
+        exchange_b = HttpExchange(
+            url="https://example.test/rest/user/login", method="POST",
+            request_headers={"Content-Type": "application/json"},
+            request_body='{"email": "admin@example.test\' -- ", "password": "anything"}',
+            response_status=200, response_body='{"ok": true, "admin": true}',
+        )
+
+        failures = []
+        for validator in active_validators:
+            plan_a = validator.plan(self.finding, exchange_a)
+            plan_b = validator.plan(self.finding, exchange_b)
+            if plan_a is None or plan_b is None:
+                continue
+            if plan_a.id == plan_b.id:
+                failures.append(f"{validator.name}: same plan_id for two different exchanges to the same URL")
+            if plan_a.source_exchange_hash == plan_b.source_exchange_hash:
+                failures.append(f"{validator.name}: same source_exchange_hash for two different exchanges")
+
+        self.assertEqual(
+            failures, [],
+            "One or more active validators still collide plan_ids across different exchanges "
+            "to the same URL:\n" + "\n".join(failures),
+        )
 
 
 if __name__ == "__main__":

@@ -58,9 +58,18 @@ _URL_PATTERNS: list[tuple[re.Pattern, list[str]]] = [
     (re.compile(r'/admin|/administrator|/manage|/console|/panel', re.IGNORECASE), 
      ['auth', 'idor', 'misconfig']),
     
-    # Login/authentication endpoints
-    (re.compile(r'/login|/logins|/auth|/authenticate|/signin|/sign_in|/sessions', re.IGNORECASE), 
-     ['auth', 'business_logic']),
+    # Login/authentication endpoints. Includes sqli: credential fields
+    # (username/email/password) flowing into a login query are one of
+    # the single most classic SQL-injection points there is. Found
+    # missing during the testing/test-target/ scoring pass: a real
+    # SQLi auth-bypass exchange (`{"username": "admin' -- ", ...}`)
+    # dispatched auth/business_logic but never sqli, so the one agent
+    # actually equipped to recognize the injection syntax never saw the
+    # exchange at all -- confirmed live against both PixelMart's TP1
+    # and (separately, earlier this session) a real Juice Shop
+    # `admin@juice-sh.op' -- ` login bypass.
+    (re.compile(r'/login|/logins|/auth|/authenticate|/signin|/sign_in|/sessions', re.IGNORECASE),
+     ['auth', 'business_logic', 'sqli']),
     
     # Registration endpoints
     (re.compile(r'/register|/registration|/signup|/sign_up|/create_account', re.IGNORECASE), 
@@ -166,10 +175,40 @@ _REQUEST_HEADER_PATTERNS: list[tuple[re.Pattern, list[str]]] = [
     (re.compile(r'application/graphql', re.IGNORECASE), 
      ['graphql', 'sqli', 'idor']),
     
+    # JWT-shaped token (three dot-separated base64url segments, header
+    # segment starting "eyJ" -- base64 of the literal `{"` that opens
+    # every JWT header JSON object). Specific enough to carry very low
+    # false-positive risk on its own. Found missing during the
+    # testing/test-target/ discovery run: jwt had ZERO fast_path entries
+    # anywhere, in the URL, header, or body tables -- it could only be
+    # reached via the coordinator, which fast_path being confident on
+    # nearly every real exchange meant essentially never happened in
+    # practice (confirmed: never fired once across a full discovery
+    # run). This can appear in an Authorization header OR a session
+    # cookie, so it's checked against header values generically rather
+    # than gated to one specific header name.
+    #
+    # MUST come before the generic bearer/basic/digest/token pattern
+    # below: select_agents_by_request_headers stops at the first
+    # matching pattern per header (see its own `break`), and a JWT
+    # Authorization header always also contains the literal word
+    # "bearer" -- so if the generic pattern were checked first, jwt
+    # would never be reached even though this pattern also matches.
+    #
+    # Trailing boundary is a negative lookahead, not `\b`: an alg:none
+    # forged token -- the single highest-value real case this pattern
+    # exists to catch (see security.py's JWT-header-disclosure fix and
+    # testing/test-target/'s TP11) -- has an EMPTY signature segment, so
+    # the match ends immediately after a `.` with nothing following.
+    # `\b` requires a word/non-word transition and fails there (both
+    # neighbors are non-word); confirmed directly before landing this.
+    (re.compile(r'\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*(?![A-Za-z0-9_-])'),
+     ['jwt', 'auth']),
+
     # Authorization headers (auth issues)
-    (re.compile(r'bearer|basic|digest|token', re.IGNORECASE), 
+    (re.compile(r'bearer|basic|digest|token', re.IGNORECASE),
      ['auth']),
-    
+
     # HTTP Request Smuggling - conflicting headers
     (re.compile(r'Content-Length|Transfer-Encoding', re.IGNORECASE), ['http_request_smuggling']),
 
@@ -343,7 +382,17 @@ def select_agents_by_query_params(query_string: str) -> set[str]:
 
     # Baseline: any parameter value is untrusted input and a potential
     # injection point, independent of what the parameter is named.
-    agents.update({'sqli', 'xss'})
+    # `anomaly` is included here too -- unlike every other agent in this
+    # file, it costs nothing extra to dispatch: its run() bypasses the
+    # LLM pipeline entirely and runs a deterministic regex pass (see
+    # anomaly_detector.py's suspicious_patterns, which already lists
+    # path-traversal markers among others). Found missing during a real
+    # scoring pass against testing/test-target/: a path-traversal
+    # exchange (`?file=../app.py`) dispatched 8 LLM-backed agents, none
+    # of which correctly named the vulnerability, while `anomaly` --
+    # never dispatched at all -- would have matched `\.\./ ` in the URL
+    # deterministically, at zero additional Ollama cost.
+    agents.update({'sqli', 'xss', 'anomaly'})
 
     for param in params:
         for pattern, agent_list in _QUERY_PARAM_PATTERNS:
@@ -444,6 +493,30 @@ def _has_negative_money_or_quantity_field(text: str) -> bool:
 
     walk(data)
     return found
+
+
+# State-changing HTTP methods -- the precondition for CSRF being
+# possible at all is that the request both (a) changes state and (b) is
+# authenticated via a cookie the browser attaches automatically (bearer/
+# API-key auth isn't cookie-based and isn't in CSRF's threat model --
+# see the Burp extension's CsrfLogic, which scopes itself the same way).
+_STATE_CHANGING_METHODS = {'POST', 'PUT', 'DELETE', 'PATCH'}
+
+
+def select_agents_by_csrf_signal(method: str, request_headers: dict[str, str]) -> set[str]:
+    """CSRF has no text signature to match the way injection classes do
+    -- the exposure IS the absence of a token, not the presence of any
+    string. What's observable instead is the precondition: a
+    state-changing request carrying a Cookie header. Found missing
+    during the testing/test-target/ discovery run: csrf had ZERO
+    fast_path entries anywhere (same gap as jwt, see
+    _REQUEST_HEADER_PATTERNS above) and could only be reached via the
+    coordinator, which never actually fired in a full discovery run."""
+    if method.upper() not in _STATE_CHANGING_METHODS:
+        return set()
+    if any(name.lower() == 'cookie' for name in request_headers):
+        return {'csrf'}
+    return set()
 
 
 def select_agents_by_body_anomalies(request_body: str, response_body: str) -> set[str]:
@@ -549,7 +622,14 @@ def select_fast_path_agents(exchange: HttpExchange, available_agents: set[str]) 
         selected.update(anomaly_agents & available_agents)
         reasons.append("Body anomaly: negative money/quantity field")
         has_strong_signal = True
-    
+
+    # 7. Check for CSRF precondition -- state-changing method + cookie auth
+    csrf_agents = select_agents_by_csrf_signal(exchange.method, exchange.request_headers)
+    if csrf_agents:
+        selected.update(csrf_agents & available_agents)
+        reasons.append("State-changing request with cookie auth")
+        has_strong_signal = True
+
     # If we have a strong signal, add method and status agents (weak signals)
     # These expand the selection but don't provide confidence on their own
     if has_strong_signal:

@@ -49,6 +49,9 @@ CREATE TABLE IF NOT EXISTS test_plans (
     source_exchange_hash TEXT NOT NULL DEFAULT '',
     mutation_json TEXT NOT NULL DEFAULT '{}',
     success_signals_json TEXT NOT NULL DEFAULT '[]',
+    severity TEXT NOT NULL DEFAULT '',
+    confidence REAL NOT NULL DEFAULT 0.0,
+    escalated INTEGER NOT NULL DEFAULT 0,
     created_at REAL NOT NULL
 );
 CREATE TABLE IF NOT EXISTS validation_runs (
@@ -124,6 +127,9 @@ def _connect() -> sqlite3.Connection:
         ("success_signals_json", "ALTER TABLE test_plans ADD COLUMN success_signals_json TEXT NOT NULL DEFAULT '[]'"),
         ("category", "ALTER TABLE test_plans ADD COLUMN category TEXT NOT NULL DEFAULT ''"),
         ("execution_plane", "ALTER TABLE test_plans ADD COLUMN execution_plane TEXT NOT NULL DEFAULT 'burp'"),
+        ("severity", "ALTER TABLE test_plans ADD COLUMN severity TEXT NOT NULL DEFAULT ''"),
+        ("confidence", "ALTER TABLE test_plans ADD COLUMN confidence REAL NOT NULL DEFAULT 0.0"),
+        ("escalated", "ALTER TABLE test_plans ADD COLUMN escalated INTEGER NOT NULL DEFAULT 0"),
     ]:
         if col not in plan_cols:
             conn.execute(ddl)
@@ -203,7 +209,7 @@ def persist_findings(exchange: HttpExchange, agent_name: str, findings: list[Fin
 
 
 
-def persist_test_plans(exchange: HttpExchange, plans: list[TestPlan]) -> None:
+def _persist_test_plans_for(host: str, url: str, plans: list[TestPlan]) -> None:
     if not plans:
         return
     conn = _connect()
@@ -211,16 +217,30 @@ def persist_test_plans(exchange: HttpExchange, plans: list[TestPlan]) -> None:
         conn.executemany(
             """INSERT OR IGNORE INTO test_plans
                (plan_id, host, url, capability, finding_class, category, execution_plane, status,
-                source_exchange_hash, mutation_json, success_signals_json, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            [(p.id, host_of(exchange.url), exchange.url, p.capability, p.finding_class,
+                source_exchange_hash, mutation_json, success_signals_json, severity, confidence,
+                escalated, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            [(p.id, host, url, p.capability, p.finding_class,
               p.category or "", p.execution_plane or "burp", "proposed",
               p.source_exchange_hash, json.dumps(p.mutation, sort_keys=True),
-              json.dumps(p.success_signals), time.time()) for p in plans],
+              json.dumps(p.success_signals), p.severity, p.confidence,
+              int(p.escalated), time.time()) for p in plans],
         )
         conn.commit()
     finally:
         conn.close()
+
+
+def persist_test_plans(exchange: HttpExchange, plans: list[TestPlan]) -> None:
+    _persist_test_plans_for(host_of(exchange.url), exchange.url, plans)
+
+
+def persist_retry_plan(plan: TestPlan) -> None:
+    """Persist a single follow-up TestPlan built by active_verification.py.
+    Unlike persist_test_plans, there is no original HttpExchange in hand at
+    this call site (only the plan itself, built from a stored plan row) --
+    host is derived the same way persist_test_plans derives it."""
+    _persist_test_plans_for(host_of(plan.source_exchange_url), plan.source_exchange_url, [plan])
 
 
 def get_test_plan(plan_id: str) -> dict | None:
@@ -228,7 +248,8 @@ def get_test_plan(plan_id: str) -> dict | None:
     try:
         row = conn.execute(
             """SELECT plan_id, host, url, capability, finding_class, status,
-                      source_exchange_hash, mutation_json, success_signals_json
+                      source_exchange_hash, mutation_json, success_signals_json,
+                      category, execution_plane, severity, confidence, escalated
                FROM test_plans WHERE plan_id = ?""", (plan_id,)
         ).fetchone()
     finally:
@@ -237,7 +258,42 @@ def get_test_plan(plan_id: str) -> dict | None:
         return None
     return {"plan_id": row[0], "host": row[1], "url": row[2], "capability": row[3],
             "finding_class": row[4], "status": row[5], "source_exchange_hash": row[6],
-            "mutation": json.loads(row[7] or "{}"), "success_signals": json.loads(row[8] or "[]")}
+            "mutation": json.loads(row[7] or "{}"), "success_signals": json.loads(row[8] or "[]"),
+            "category": row[9], "execution_plane": row[10], "severity": row[11],
+            "confidence": row[12], "escalated": bool(row[13])}
+
+
+def get_lineage_attempts(category: str, source_exchange_hash: str) -> list[dict]:
+    """
+    Every plan in the same retry lineage -- same category, same captured
+    exchange -- that has an observed result, ordered oldest first, plus
+    the plan-level fields (severity/confidence/escalated/mutation) needed
+    to reconstruct retry_policy.Attempt objects and to know which payload
+    values have already been tried (see payload_library.next_candidate's
+    `tried` argument). Plans with no validation_runs row yet (proposed but
+    not yet executed by the Burp extension) are excluded on purpose: an
+    outstanding plan is not a completed attempt, and counting it would let
+    a slow/never-responding execution plane silently exhaust the retry
+    budget without ever supplying real evidence.
+    """
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            """SELECT tp.mutation_json, tp.severity, tp.confidence, tp.escalated,
+                      vr.status, vr.confidence, vr.confirmed
+               FROM test_plans tp
+               JOIN validation_runs vr ON vr.plan_id = tp.plan_id
+               WHERE tp.category = ? AND tp.source_exchange_hash = ?
+               ORDER BY vr.created_at ASC""",
+            (category, source_exchange_hash),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [
+        {"mutation": json.loads(r[0] or "{}"), "severity": r[1], "confidence": r[2],
+         "escalated": bool(r[3]), "status": r[4], "result_confidence": r[5], "confirmed": bool(r[6])}
+        for r in rows
+    ]
 
 def persist_validation_submission(submission: ValidationSubmission) -> tuple[bool, str]:
     conn = _connect()
@@ -290,6 +346,10 @@ def persist_validation_submission(submission: ValidationSubmission) -> tuple[boo
         conn.close()
 
 
+def _strip_backticks(text: str) -> str:
+    return text.replace("`", "'")
+
+
 def prior_findings_summary(url: str, exclude_url: str | None = None, limit: int = 8) -> str:
     """
     Compact, prompt-ready summary of what's already been found on this
@@ -312,8 +372,24 @@ def prior_findings_summary(url: str, exclude_url: str | None = None, limit: int 
 
     if not rows:
         return ""
+    # Found live, during this project's first real (non-substituted)
+    # Ollama run: a model wrote a completely ordinary finding summary
+    # using Markdown code-formatting for a path -- "The `/api/avatar`
+    # endpoint returns potentially sensitive data..." -- which got
+    # persisted, then fed back verbatim into every SUBSEQUENT exchange's
+    # prompt for the same host via this function. prompt_validator.py's
+    # backtick-command-substitution pattern (`` `[^`\n]{1,200}` ``,
+    # deliberately broad -- see its own comment) matched the backtick-
+    # quoted path, failing prompt validation for every agent on every
+    # remaining exchange for that host for the rest of the run. Unlike
+    # raw exchange data (genuinely untrusted, and validated for good
+    # reason), this text is the harness's OWN prior model output; the
+    # only value backticks add here is Markdown styling, which nothing
+    # downstream renders anyway. Stripping them breaks the propagation
+    # at its source rather than trying to special-case every blocked
+    # pattern this text might one day happen to also contain.
     lines = [
-        f"- [{sev}, confidence {conf:.2f}] {vclass} at {u}: {summary}"
+        f"- [{sev}, confidence {conf:.2f}] {vclass} at {u}: {_strip_backticks(summary)}"
         for (u, vclass, sev, conf, summary) in rows
     ]
     return "\n".join(lines)

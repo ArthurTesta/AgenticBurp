@@ -84,28 +84,29 @@ class OAuthValidator(Validator):
 
     def plan(self, finding: Finding, exchange: HttpExchange) -> Any:
         from models import TestPlan
+        from categories import canonicalize
         import hashlib
         import json
 
-        plan_data = f"{finding.vulnerability_class}:{exchange.url}"
-        plan_id = f"oauth_test_{hashlib.sha256(plan_data.encode()).hexdigest()[:16]}"
+        # Plan ID must incorporate the FULL exchange, not just the URL --
+        # see cors_validator.py's plan() for the real, live-reproduced
+        # collision this fixes (two different real requests to the same
+        # URL producing the same plan_id and clobbering each other).
+        exchange_hash = hashlib.sha256(
+            json.dumps(exchange.model_dump(), sort_keys=True).encode()
+        ).hexdigest()[:16]
+        plan_id = f"oauth_test_{finding.vulnerability_class}_{exchange_hash}"
 
         return TestPlan(
             id=plan_id,
             capability=self.get_capability(),
+            finding_class=finding.vulnerability_class,
+            category=canonicalize(finding.vulnerability_class),
+            source_exchange_url=exchange.url,
             execution_plane=self.get_execution_plane(),
-            target_url=exchange.url,
-            target_method=exchange.method,
-            description=f"OAuth/OIDC flow validation for {finding.vulnerability_class}",
-            parameters={
-                "finding_class": finding.vulnerability_class,
-                "target_url": exchange.url,
-                "confidence": finding.confidence,
-            },
-            expected_outcome="Confirm missing state/PKCE, token exposure, or redirect_uri validation gap",
-            source_exchange_hash=hashlib.sha256(
-                json.dumps(exchange.model_dump(), sort_keys=True).encode()
-            ).hexdigest()[:16],
+            rationale=f"OAuth/OIDC flow validation for {finding.vulnerability_class}",
+            success_signals=["Confirm missing state/PKCE, token exposure, or redirect_uri validation gap"],
+            source_exchange_hash=exchange_hash,
         )
 
     async def validate(self, finding: Finding, exchange: HttpExchange) -> Any:

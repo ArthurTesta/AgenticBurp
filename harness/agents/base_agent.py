@@ -13,6 +13,18 @@ if _harness_dir not in sys.path:
     sys.path.insert(0, _harness_dir)
 
 import security
+from prompt_validator import ValidationConfig
+
+# Per-body-field line budget for _user_prompt's trunc() helper, derived
+# from (not duplicating) the prompt validator's own max_user_prompt_lines
+# so the two stay coordinated -- see trunc()'s comment for the live bug
+# this exists to prevent. Reserves a generous fixed allowance for the
+# template's own markup/labels, redacted headers, and prior-findings/
+# knowledge-retrieval blocks when present, and splits what's left evenly
+# between request_body and response_body (the two fields that can
+# actually be arbitrarily long).
+_PROMPT_OVERHEAD_LINES = 60
+_MAX_BODY_LINES = max(10, (ValidationConfig().max_user_prompt_lines - _PROMPT_OVERHEAD_LINES) // 2)
 
 
 # Shared instructions every specialist agent gets, on top of its own
@@ -112,9 +124,36 @@ class BaseAgent(ABC):
 
     def _user_prompt(self, exchange: HttpExchange, max_body_chars: int, prior_context: str = "") -> str:
         def trunc(s: str) -> str:
-            if len(s) <= max_body_chars:
+            # Two independent caps, both enforced: max_body_chars (config-
+            # driven, keeps context windows sane) and _MAX_BODY_LINES
+            # (fixed, keeps this field from blowing the prompt validator's
+            # own line-count ceiling -- see its definition for why these
+            # two limits don't otherwise coordinate). Line-count is
+            # checked AFTER char truncation, not instead of it: found
+            # live, a source-code response body (path traversal reading
+            # the app's own .py file) truncated cleanly to max_body_chars
+            # (6000) but that slice alone was still 218 lines -- source
+            # code runs far more lines-per-char than prose -- which blew
+            # the validator's 200-line cap and failed EVERY dispatched
+            # agent's prompt validation for that exchange, silently
+            # producing zero findings for a real, live vulnerability.
+            char_truncated = len(s) > max_body_chars
+            if char_truncated:
+                s = s[:max_body_chars]
+
+            lines = s.split("\n")
+            line_truncated = len(lines) > _MAX_BODY_LINES
+            if line_truncated:
+                s = "\n".join(lines[:_MAX_BODY_LINES])
+
+            if not char_truncated and not line_truncated:
                 return s
-            return s[:max_body_chars] + f"\n...[truncated, {len(s) - max_body_chars} more chars]"
+            notes = []
+            if char_truncated:
+                notes.append("truncated by character limit")
+            if line_truncated:
+                notes.append(f"truncated, {len(lines) - _MAX_BODY_LINES} more lines")
+            return s + "\n...[" + "; ".join(notes) + "]"
 
         headers_req = "\n".join(f"{k}: {v}" for k, v in security.redact_headers(exchange.request_headers).items())
         headers_resp = "\n".join(f"{k}: {v}" for k, v in security.redact_headers(exchange.response_headers).items())

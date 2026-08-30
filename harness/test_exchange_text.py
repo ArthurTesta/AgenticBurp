@@ -2,7 +2,12 @@
 Tests for exchange_text.py -- the shared helper extracted to fix a real,
 silently-diverged duplicate found during audit: orchestrator.py's
 _exchange_text() included exchange.analyst_note; analysis_pipeline.py's
-copy of the same logic did not. Both now delegate to this one function.
+copy of the same logic did not. orchestrator.py delegates to this one
+function; analysis_pipeline.py's own copy (and the known-vulnerability
+resolution code that was its only caller) was removed entirely as a
+separate, later fix -- see HANDOVER.md and the comment in
+AnalysisPipeline._init_clients -- so there is no longer a second
+implementation for this one to drift from.
 """
 import unittest
 
@@ -41,30 +46,25 @@ class ExchangeTextIncludesEverythingTests(unittest.TestCase):
             self.assertIn(expected, text)
 
 
-class BothCallersProduceIdenticalTextTests(unittest.TestCase):
+class OrchestratorDelegatesToSharedFunctionTests(unittest.TestCase):
     """
-    Confirms orchestrator.py and analysis_pipeline.py now genuinely agree,
-    not just that each individually calls the shared function -- a
-    regression here would mean one of them started passing extra/fewer
-    fields, silently reintroducing exactly the divergence this file
-    exists to prevent.
+    Confirms orchestrator.py's _exchange_text() genuinely delegates to
+    the shared function rather than reintroducing its own copy -- a
+    regression here would mean it started passing extra/fewer fields,
+    silently reintroducing exactly the divergence this file exists to
+    prevent. This used to compare against analysis_pipeline.py's own
+    copy of the same method too, but that copy (and its only caller,
+    the known-vulnerability resolution code) was removed entirely as a
+    separate fix -- see HANDOVER.md -- so there is no second
+    implementation left to compare against.
     """
 
-    def test_orchestrator_and_analysis_pipeline_agree(self):
+    def test_orchestrator_matches_the_shared_function_directly(self):
         import orchestrator
-        from analysis_pipeline import AnalysisPipeline
 
         ex = _exchange_with_note("some analyst note with a version string 4.17.21")
 
-        orchestrator_text = orchestrator._exchange_text(ex)
-
-        # AnalysisPipeline._exchange_text is an instance method but does
-        # not touch `self` beyond delegating -- call it unbound-style on
-        # a bare object to avoid constructing the full pipeline (which
-        # needs a config dict and several sub-clients) just for this.
-        pipeline_text = AnalysisPipeline._exchange_text(object(), ex)
-
-        self.assertEqual(orchestrator_text, pipeline_text)
+        self.assertEqual(orchestrator._exchange_text(ex), exchange_text(ex))
 
 
 if __name__ == "__main__":
