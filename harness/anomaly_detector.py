@@ -15,6 +15,7 @@ The detector works by:
 
 from __future__ import annotations
 import re
+from urllib.parse import urlsplit as _urlsplit
 import json
 import hashlib
 import statistics
@@ -158,10 +159,7 @@ class AnomalyDetector:
             # NoSQL
             r'\$\w+',
             r'\b(ne|gt|lt|gte|lte|in|nin|regex|where)\b',
-            
-            # JWT
-            r'eyJ[A-Za-z0-9-_]+\.eyJ[A-Za-z0-9-_]+\.[A-Za-z0-9-_.+/=]+',
-            
+
             # File upload
             r'\.(php|asp|aspx|jsp|js|py|pl|rb|sh|bat|cmd|exe|dll|so)$',
             r'Content-Type:\s*application/octet-stream',
@@ -174,7 +172,27 @@ class AnomalyDetector:
             r'Warning\s*:',
             r'Fatal\s*:',
         ]
-        
+
+        # Patterns safe to match against a RESPONSE (evidence of a successful
+        # attack or a real disclosure). The attack-INPUT syntax above
+        # (command/SQL/NoSQL injection, SSRF URLs, upload extensions) is
+        # deliberately NOT here: matching it against response text flagged
+        # nearly every benign response as suspicious -- a "Server: Werkzeug
+        # Python" header (the command-injection word list matches "Python"),
+        # the English words "in"/"where" (NoSQL operators), an ordinary
+        # "Error:" string. Request fields still scan the full
+        # suspicious_patterns list; only responses use this narrower set, which
+        # keeps genuine evidence (disclosed files/config, stack traces,
+        # reflected/stored XSS) while dropping the input-syntax noise.
+        self.response_evidence_patterns = [
+            r'\.\./', r'\.\.\\', r'/etc/passwd', r'/etc/shadow',
+            r'\.git/', r'\.svn/', r'\.hg/', r'\.env', r'config\.(json|yml|yaml|ini)',
+            r'<script[^>]*>', r'on\w+\s*=', r'javascript:', r'data:text/html',
+            r'<iframe[^>]*>', r'<img[^>]*src\s*=\s*["\']?\s*data:',
+            r'stack\s*trace', r'at\s+\w+\.\w+\s*\(', r'Exception\s*:',
+            r'Error\s*:', r'Warning\s*:', r'Fatal\s*:',
+        ]
+
         # Header-based anomalies
         self.suspicious_headers = [
             'server',
@@ -383,10 +401,18 @@ class AnomalyDetector:
         """Detect suspicious patterns in request/response."""
         anomalies = []
         
-        # Check request URL
+        # Check request URL PATH + QUERY only -- NOT scheme/host/port, which is
+        # the target you are testing, not attacker-controlled surface. Found
+        # live: scanning the full URL flagged the harness's own target host
+        # (e.g. http://127.0.0.1:5001) against the localhost/SSRF pattern on
+        # EVERY exchange -- a systematic false positive. Path and query, where
+        # real path-traversal / injection payloads live, are unchanged, so this
+        # costs no recall.
+        _split = _urlsplit(exchange.url)
+        _url_scan = _split.path + (("?" + _split.query) if _split.query else "")
         anomalies.extend(self._check_patterns(
-            exchange.url, 
-            "url", 
+            _url_scan,
+            "url",
             exchange,
             severity="high"
         ))
@@ -434,10 +460,20 @@ class AnomalyDetector:
     
     def _check_patterns(self, text: str, field: str, exchange: HttpExchange, 
                         severity: str = "medium") -> list[Anomaly]:
-        """Check text against suspicious patterns."""
+        """Check text against suspicious patterns.
+
+        Request fields (url, request_body, request headers) are scanned with the
+        full attack-input pattern list. Response fields are scanned only with
+        response_evidence_patterns -- attack-INPUT syntax is meaningless in a
+        response and matching it there produced a false positive on nearly every
+        benign exchange (see response_evidence_patterns' comment).
+        """
         anomalies = []
-        
-        for pattern in self.suspicious_patterns:
+        request_side = (field == "url" or field == "request_body"
+                        or field.startswith("request_header"))
+        patterns = self.suspicious_patterns if request_side else self.response_evidence_patterns
+
+        for pattern in patterns:
             if re.search(pattern, text, re.IGNORECASE):
                 # Calculate confidence based on pattern specificity
                 confidence = 0.8 if any(c.isalpha() for c in pattern) else 0.6
@@ -462,18 +498,19 @@ class AnomalyDetector:
         anomalies = []
         params = self._extract_parameters(exchange)
         
-        # Check for sensitive parameter names. Found live: this used to
-        # also require `param_name in exchange.request_headers or
-        # param_name in exchange.request_body` -- a redundant, WRONG
-        # extra guard. `params` already came from _extract_parameters(),
-        # which only ever returns names genuinely present in the query
-        # string, form body, or headers -- there was never anything to
-        # double-check. Worse, the guard's own semantics only work for
-        # header keys (dict lookup) and form-body substrings (text
-        # lookup); a sensitive name appearing ONLY in the QUERY STRING
-        # (e.g. `?api_key=...`, arguably the single most common place
-        # for one) matches neither check and was silently dropped.
+        # Check for sensitive parameter names -- but only for names in the URL
+        # QUERY STRING or request BODY. Credentials belong in the
+        # Authorization/Cookie (and similar) request HEADERS: that is the
+        # correct transport, not a vulnerability. The real exposure this check
+        # exists for is a sensitive name in the query/body (e.g. `?api_key=...`,
+        # `?password=...`), where it gets logged, cached, and referer-leaked.
+        # Found live via fp_benchmark.py: scanning header names too flagged the
+        # normal `Authorization` header as a high-severity finding on every
+        # authenticated request (TN3/TN5) -- a systematic false positive.
+        request_side_names = self._query_and_body_param_names(exchange)
         for param_name, param_values in params.items():
+            if param_name not in request_side_names:
+                continue
             if any(sensitive in param_name.lower() for sensitive in self.sensitive_param_names):
                 anomalies.append(Anomaly(
                     anomaly_type="sensitive_parameter",
@@ -535,9 +572,15 @@ class AnomalyDetector:
         for header_name, header_value in exchange.response_headers.items():
             if header_name.lower() in self.suspicious_headers:
                 anomalies.append(Anomaly(
+                    # A version/technology banner (Server, X-Powered-By, ...) is
+                    # a real but minor, universally-info-level disclosure -- and
+                    # it fires on EVERY response from a given server. Kept as a
+                    # low-confidence, info-severity note so it sits below the
+                    # reporting gate instead of reading as a medium finding on
+                    # every single exchange (found live via fp_benchmark.py).
                     anomaly_type="information_disclosure_header",
-                    severity="medium",
-                    confidence=0.8,
+                    severity="info",
+                    confidence=0.3,
                     description=f"Information disclosure in header: {header_name}",
                     evidence=f"Header '{header_name}': {header_value}",
                     exchange_fingerprint=self._fingerprint(exchange),
@@ -831,10 +874,24 @@ class AnomalyDetector:
         clustered_anomaly_ids = set()
         for cluster in clusters:
             if len(cluster.anomalies) >= 3:
+                # A cluster's severity is capped at its strongest MEMBER's
+                # severity. Clustering many low-severity observations (e.g. 6
+                # missing security headers -- true of almost every response)
+                # does not create a high-severity vulnerability; a real
+                # multi-signal attack (whose members are themselves high) still
+                # clusters to high. Without this cap the count-based confidence
+                # (min(0.9, 0.5 + n*0.1)) alone pushed every 4+-item cluster to
+                # "high" -- a high-severity false positive on every benign
+                # exchange (found live via fp_benchmark.py).
+                _sev_rank = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
+                _sev_name = ["info", "low", "medium", "high", "critical"]
+                _member_max = max((_sev_rank.get(a.severity, 2) for a in cluster.anomalies), default=2)
+                _proposed = 3 if cluster.confidence > 0.8 else 2
+                _cluster_severity = _sev_name[min(_proposed, _member_max)]
                 # Create a finding for the cluster
                 findings.append(Finding(
                     vulnerability_class=cluster.suggested_vulnerability_class,
-                    severity="high" if cluster.confidence > 0.8 else "medium",
+                    severity=_cluster_severity,
                     confidence=cluster.confidence,
                     summary=f"Multiple anomalies detected: {cluster.suggested_vulnerability_class}",
                     evidence=f"Cluster of {len(cluster.anomalies)} similar anomalies on {cluster.host}",
@@ -877,6 +934,23 @@ class AnomalyDetector:
                 return self._get_host(exchange.url)
         return "unknown"
     
+    def _query_and_body_param_names(self, exchange: HttpExchange) -> set[str]:
+        """Parameter names present in the URL query string or (form) request
+        body -- i.e. NOT request headers. A credential in a header is correct
+        transport; a credential here is the actual exposure the sensitive-name
+        check exists to catch."""
+        names: set[str] = set()
+        try:
+            names.update(parse_qs(urlparse(exchange.url).query).keys())
+        except Exception:
+            pass
+        if exchange.request_body and 'application/x-www-form-urlencoded' in exchange.request_headers.get('content-type', ''):
+            try:
+                names.update(parse_qs(exchange.request_body).keys())
+            except Exception:
+                pass
+        return names
+
     def _extract_parameters(self, exchange: HttpExchange) -> dict[str, list[str]]:
         """Extract all parameters from an exchange."""
         params = defaultdict(list)

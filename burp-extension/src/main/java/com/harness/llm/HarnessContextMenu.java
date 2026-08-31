@@ -23,7 +23,15 @@ import java.util.Map;
  */
 public class HarnessContextMenu implements ContextMenuItemsProvider {
 
-    private static final String[] AGENT_NAMES = {"sqli", "xss", "idor", "ssrf", "auth", "business_logic", "misconfig", "ai_llm", "rate_limit", "supply_chain"};
+    // Fallback only -- the picker fetches the live list from /health first.
+    private static final String[] ALL_AGENTS = {
+        "ai_llm","ai_security","anomaly","api_security","auth","business_logic",
+        "business_logic_enhanced","command_injection","cors","crypto","csp","csrf",
+        "deserialization","file_upload","graphql","header_injection","http_request_smuggling",
+        "idor","info_disclosure","jwt","misconfig","nosql","oauth","open_redirect",
+        "race_condition","rate_limit","recon","sqli","ssrf","ssti","subdomain_takeover",
+        "supply_chain","web_cache_poisoning","websocket","xss","xxe"
+    };
 
     private final MontoyaApi api;
     private final AnalysisRunner runner;
@@ -33,10 +41,65 @@ public class HarnessContextMenu implements ContextMenuItemsProvider {
         this.runner = runner;
     }
 
+    /** Multi-select agent picker. The agent list is fetched live from the
+     * harness's /health OFF the UI thread (in a SwingWorker) so a slow or
+     * unreachable harness never freezes Burp; falls back to the built-in
+     * ALL_AGENTS list if the fetch returns nothing. The dialog is built and
+     * shown in done() (which runs on the event thread), and the analyst's
+     * choice is delivered to `onChosen` (null if they cancel). */
+    private void promptForAgents(java.util.function.Consumer<java.util.List<String>> onChosen) {
+        new SwingWorker<java.util.List<String>, Void>() {
+            @Override
+            protected java.util.List<String> doInBackground() {
+                java.util.List<String> agents = runner.availableAgents();
+                if (agents == null || agents.isEmpty()) {
+                    return java.util.Arrays.asList(ALL_AGENTS);
+                }
+                return agents;
+            }
+
+            @Override
+            protected void done() {
+                java.util.List<String> agents;
+                try {
+                    agents = get();
+                } catch (Exception ex) {
+                    agents = java.util.Arrays.asList(ALL_AGENTS);
+                }
+                JPanel panel = new JPanel(new GridLayout(0, 3, 8, 2));
+                java.util.List<JCheckBox> boxes = new ArrayList<>();
+                for (String a : agents) {
+                    JCheckBox cb = new JCheckBox(a);
+                    boxes.add(cb);
+                    panel.add(cb);
+                }
+                JScrollPane scroll = new JScrollPane(panel);
+                scroll.setPreferredSize(new Dimension(520, 320));
+                int res = JOptionPane.showConfirmDialog(null, scroll,
+                        "Choose agents to dispatch", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+                if (res != JOptionPane.OK_OPTION) {
+                    onChosen.accept(null);
+                    return;
+                }
+                java.util.List<String> chosen = new ArrayList<>();
+                for (JCheckBox cb : boxes) if (cb.isSelected()) chosen.add(cb.getText());
+                onChosen.accept(chosen);
+            }
+        }.execute();
+    }
+
     @Override
     public List<Component> provideMenuItems(ContextMenuEvent event) {
-        List<HttpRequestResponse> selected = event.selectedRequestResponses();
-        if (selected == null || selected.isEmpty()) {
+        List<HttpRequestResponse> selected = new ArrayList<>(event.selectedRequestResponses());
+        // When the user right-clicks INSIDE a message editor (Repeater,
+        // Intercept, or a single-item viewer), selectedRequestResponses() is
+        // empty and the request lives in messageEditorRequestResponse()
+        // instead. Without this the menu silently disappears in exactly those
+        // panes -- the "works sometimes, not others" bug.
+        event.messageEditorRequestResponse()
+             .map(m -> m.requestResponse())
+             .ifPresent(selected::add);
+        if (selected.isEmpty()) {
             return List.of();
         }
 
@@ -46,13 +109,13 @@ public class HarnessContextMenu implements ContextMenuItemsProvider {
         sendAll.addActionListener(e -> selected.forEach(rr -> runner.submit(rr, List.of())));
         items.add(sendAll);
 
-        JMenu chooseMenu = new JMenu("Send to LLM Harness (choose agents)");
-        for (String agent : AGENT_NAMES) {
-            JMenuItem item = new JMenuItem(agent);
-            item.addActionListener(e -> selected.forEach(rr -> runner.submit(rr, List.of(agent))));
-            chooseMenu.add(item);
-        }
-        items.add(chooseMenu);
+        JMenuItem chooseItem = new JMenuItem("Send to LLM Harness (choose agents)...");
+        chooseItem.addActionListener(e -> promptForAgents(chosen -> {
+            if (chosen != null && !chosen.isEmpty()) {
+                selected.forEach(rr -> runner.submit(rr, chosen));
+            }
+        }));
+        items.add(chooseItem);
 
         // Only offered for a single selected request -- registering a
         // session links ONE specific captured exchange to ONE identity;
@@ -111,6 +174,10 @@ public class HarnessContextMenu implements ContextMenuItemsProvider {
 
         public void setValidationExecutor(ValidationExecutor executor) {
             this.validationExecutor = executor;
+        }
+
+        public java.util.List<String> availableAgents() {
+            return client.listAgentNames();
         }
 
         /**

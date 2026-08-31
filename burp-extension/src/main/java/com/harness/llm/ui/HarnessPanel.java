@@ -34,6 +34,11 @@ public class HarnessPanel extends JPanel {
     private Supplier<String> lastConnectionError = () -> null;
 
     private final AnalysisTracker analysisTracker;
+    private JButton executePlan;
+    /** Findings below this confidence still show in the detail view but do NOT
+     * drive the list's headline count or severity badge -- they are
+     * low-confidence hypotheses, not confident findings. */
+    private static final double MIN_REPORT_CONFIDENCE = 0.5;
 
     public HarnessPanel(Supplier<Boolean> onTestConnection, Supplier<String> lastConnectionError,
                          AnalysisTracker analysisTracker) {
@@ -83,7 +88,11 @@ public class HarnessPanel extends JPanel {
         // --- main split: exchange list | detail view ---
         resultList.setCellRenderer(new ResultCellRenderer());
         resultList.addListSelectionListener(e -> {
-            if (!e.getValueIsAdjusting()) showDetail(resultList.getSelectedValue());
+            if (!e.getValueIsAdjusting()) {
+                ResultEntry sel = resultList.getSelectedValue();
+                showDetail(sel);
+                if (executePlan != null) executePlan.setEnabled(hasRunnablePlan(sel));
+            }
         });
         JScrollPane listScroll = new JScrollPane(resultList);
         listScroll.setPreferredSize(new Dimension(320, 400));
@@ -99,7 +108,8 @@ public class HarnessPanel extends JPanel {
         // Proposed validation plans are intentionally analyst-triggered.
         // The button never appears as "confirm" because a plan is not evidence.
         JPanel planBar = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        JButton executePlan = new JButton("Execute selected test plan");
+        executePlan = new JButton("Execute selected test plan");
+        executePlan.setEnabled(false);
         executePlan.setToolTipText("Runs only an approved, declarative validation plan; the LLM cannot supply an arbitrary command or URL. This never calls the LLM/GPU -- it sends real HTTP requests via Burp's own client and checks the response deterministically.");
         executePlan.addActionListener(e -> {
             ResultEntry entry = resultList.getSelectedValue();
@@ -114,7 +124,7 @@ public class HarnessPanel extends JPanel {
                                 + "This may generate active traffic. The plan does not grant the LLM arbitrary request or shell access.",
                         "Approve Security Test", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
                 if (answer == JOptionPane.YES_OPTION) {
-                    validationResultArea.setText("Running '" + selected.capability + "' ...");
+                    validationResultArea.append("[" + java.time.LocalTime.now().withNano(0) + "] Running '" + selected.capability + "' ...\n");
                     planExecutor.accept(selected);
                 }
             }
@@ -126,9 +136,9 @@ public class HarnessPanel extends JPanel {
         validationResultArea.setEditable(false);
         validationResultArea.setLineWrap(true);
         validationResultArea.setWrapStyleWord(true);
-        validationResultArea.setRows(3);
+        validationResultArea.setRows(8);
         validationResultArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
-        validationResultArea.setBorder(BorderFactory.createTitledBorder("Last test plan execution result"));
+        validationResultArea.setBorder(BorderFactory.createTitledBorder("Test plan execution results (newest last)"));
         planSection.add(new JScrollPane(validationResultArea), BorderLayout.CENTER);
         add(planSection, BorderLayout.SOUTH);
     }
@@ -143,34 +153,45 @@ public class HarnessPanel extends JPanel {
      * SwingUtilities.invokeLater from a background callback).
      */
     public void showValidationResult(String capability, String status, String detail) {
-        validationResultArea.setText("[" + capability + "] " + status + ": " + detail);
-        validationResultArea.setCaretPosition(0);
+        validationResultArea.append("[" + java.time.LocalTime.now().withNano(0) + "] ["
+                + capability + "] " + status + ": " + detail + "\n");
+        validationResultArea.setCaretPosition(validationResultArea.getDocument().getLength());
     }
 
     public void setPlanExecutor(Consumer<TestPlan> executor) {
         this.planExecutor = executor == null ? plan -> {} : executor;
     }
 
+    /** True iff this plan can actually be run from the Execute button
+     * (burp execution plane AND a real typed executor exists for it). */
+    private static boolean runnableHere(TestPlan p) {
+        return "burp".equalsIgnoreCase(p.execution_plane)
+                && IMPLEMENTED_BURP_CAPABILITIES.contains(p.capability);
+    }
+
+    private static boolean hasRunnablePlan(ResultEntry entry) {
+        if (entry == null || entry.response() == null || entry.response().test_plans == null) return false;
+        for (TestPlan p : entry.response().test_plans) if (runnableHere(p)) return true;
+        return false;
+    }
+
     private TestPlan choosePlan(List<TestPlan> plans) {
-        String[] labels = plans.stream().map(p -> {
+        // Runnable-here plans first, so the analyst isn't led to click a plan
+        // that can only ever report inconclusive.
+        java.util.List<TestPlan> ordered = new java.util.ArrayList<>(plans);
+        ordered.sort((a, b) -> Boolean.compare(runnableHere(b), runnableHere(a)));
+        String[] labels = ordered.stream().map(p -> {
             String suffix;
             if ("burp".equalsIgnoreCase(p.execution_plane)) {
                 suffix = IMPLEMENTED_BURP_CAPABILITIES.contains(p.capability) ? "" : " (not yet implemented)";
             } else {
-                // local_tool plans (e.g. sql_injection_validation/sqlmap) can
-                // never be run from this button -- ValidationExecutor.execute()
-                // rejects anything whose execution_plane isn't "burp" outright
-                // ("Plan is not assigned to Burp."). Say so here, before the
-                // analyst spends an approval click on a guaranteed failure,
-                // not after -- same reasoning as the "(not yet implemented)"
-                // suffix above, for a different reason a plan can't run here.
                 suffix = " (runs via the harness's active validators, not this button)";
             }
             return p.capability + " [" + p.execution_plane + "]" + suffix;
         }).toArray(String[]::new);
         int idx = JOptionPane.showOptionDialog(this, "Choose a proposed validation:", "Validation plan",
                 JOptionPane.DEFAULT_OPTION, JOptionPane.PLAIN_MESSAGE, null, labels, labels[0]);
-        return idx >= 0 ? plans.get(idx) : null;
+        return idx >= 0 ? ordered.get(idx) : null;
     }
 
     /**
@@ -381,12 +402,21 @@ public class HarnessPanel extends JPanel {
                 for (AgentReport ar : entry.response().agent_reports) {
                     if (ar.findings == null) continue;
                     for (Finding f : ar.findings) {
+                        if (f.confidence < MIN_REPORT_CONFIDENCE) continue;
                         n++;
                         FindingSeverity sev = FindingSeverity.fromString(f.severity);
                         if (sev.isAtLeast(highest)) highest = sev;
                     }
                 }
-                label.setText(String.format("[%d] %s", n, entry.label()));
+                int runnable = 0;
+                if (entry.response().test_plans != null) {
+                    for (TestPlan p : entry.response().test_plans) {
+                        if (runnableHere(p)) runnable++;
+                    }
+                }
+                label.setText(runnable > 0
+                        ? String.format("[%d ▸%d] %s", n, runnable, entry.label())
+                        : String.format("[%d] %s", n, entry.label()));
                 if (n == 0) return label;
 
                 JPanel row = new JPanel(new BorderLayout(6, 0));

@@ -1,5 +1,6 @@
 from __future__ import annotations
 import json
+import re
 import httpx
 from dataclasses import dataclass
 
@@ -27,6 +28,12 @@ class OllamaModelNotFoundError(OllamaError):
     pass
 
 
+class OllamaInvalidJSONError(OllamaError):
+    """Model returned non-JSON / fenced output. A formatting fault, not a
+    service outage -- excluded from the circuit breaker."""
+    pass
+
+
 @dataclass
 class OllamaResult:
     """Parsed response body plus real token usage from the same call --
@@ -37,6 +44,14 @@ class OllamaResult:
     data: dict
     prompt_tokens: int
     completion_tokens: int
+
+
+def _strip_json_fence(s: str) -> str:
+    s = s.strip()
+    s = re.sub(r"^```(?:json)?\s*", "", s)
+    s = re.sub(r"\s*```$", "", s)
+    m = re.search(r"\{.*\}", s, re.DOTALL)
+    return m.group(0) if m else s
 
 
 class OllamaClient:
@@ -71,7 +86,7 @@ class OllamaClient:
                 success_threshold=2,
                 timeout_seconds=60.0,
                 half_open_max_requests=1,
-                excluded_exceptions=(OllamaModelNotFoundError,),
+                excluded_exceptions=(OllamaModelNotFoundError, OllamaInvalidJSONError),
                 enabled=True,
             ),
         )
@@ -195,7 +210,7 @@ class OllamaClient:
                     raise OllamaError(f"Ollama returned an empty message body: {data}")
 
                 try:
-                    parsed = json.loads(content)
+                    parsed = json.loads(_strip_json_fence(content))
                     
                     # Log the response
                     prompt_tokens = data.get("prompt_eval_count", 0) or 0
@@ -216,7 +231,7 @@ class OllamaClient:
                         model=model,
                         error=e,
                     )
-                    raise OllamaError(
+                    raise OllamaInvalidJSONError(
                         f"Model '{model}' did not return valid JSON. "
                         f"Raw content (truncated): {content[:500]}"
                     ) from e

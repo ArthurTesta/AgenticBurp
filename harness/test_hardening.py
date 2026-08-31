@@ -87,6 +87,58 @@ def test_fabricated_component_cannot_reach_advisory_lookup():
     assert result.raw_error and "rejected from deterministic lookup" in result.raw_error
 
 
+def test_known_vuln_lookup_dedups_same_advisory_for_same_host():
+    """Regression test: the same disclosed advisory (matched via the real
+    version banner present in EVERY response from a host) used to be reported
+    again on every single exchange for that host -- found live via
+    fp_benchmark.py, where one target's Werkzeug/Flask CVEs were reported
+    20-60 times. A second lookup for the same (host, advisory) must be
+    suppressed; a different host must still get its own report."""
+    import orchestrator
+    from github_advisories import AdvisoryMatch, LookupResult
+    from models import AgentReport
+
+    class FakeGHA:
+        def __init__(self):
+            self.calls = 0
+
+        async def lookup(self, component):
+            self.calls += 1
+            return LookupResult(
+                component=component, status="matched",
+                matches=[AdvisoryMatch(
+                    ghsa_id="GHSA-xxxx-yyyy-zzzz", cve_id="CVE-2024-0001",
+                    summary="test advisory", severity="high",
+                    vulnerable_range="<9.9.9", url="https://example.test/advisory",
+                    version_string_appears_in_range=True,
+                )],
+            )
+
+    o = object.__new__(orchestrator.Orchestrator)
+    o.gha_enabled = True
+    o.gha_max_lookups = 6
+    o.gha_client = FakeGHA()
+    o.kev_enabled = False
+    o._reported_advisories = set()
+
+    comp = ComponentCandidate(ecosystem="pypi", name="Werkzeug", version="1.0", source="response headers")
+    report = AgentReport(agent="supply_chain", model="test", components=[comp])
+    ex1 = HttpExchange(url="https://target.test/a", method="GET", response_body="Werkzeug 1.0")
+
+    first = asyncio.run(o._resolve_known_vulnerabilities(ex1, [report]))
+    assert first is not None and len(first.findings) == 1
+
+    ex2 = HttpExchange(url="https://target.test/b", method="GET", response_body="Werkzeug 1.0")
+    second = asyncio.run(o._resolve_known_vulnerabilities(ex2, [report]))
+    assert second is not None
+    assert len(second.findings) == 0, "same host/advisory must be suppressed on the next exchange"
+    assert second.raw_error and "suppressed as duplicates" in second.raw_error
+
+    ex3 = HttpExchange(url="https://other-target.test/a", method="GET", response_body="Werkzeug 1.0")
+    third = asyncio.run(o._resolve_known_vulnerabilities(ex3, [report]))
+    assert third is not None and len(third.findings) == 1, "a different host must still be reported"
+
+
 def test_non_loopback_auth_guard():
     import server
     old_host, old_token = server._SERVER_HOST, server._BEARER_TOKEN

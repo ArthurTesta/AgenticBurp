@@ -198,6 +198,75 @@ class TestClusteringIsScopedPerExchange(unittest.TestCase):
         self.assertNotIn("unknown_anomaly", classes)
 
 
+class TestUrlPatternScanExcludesTargetHost(unittest.TestCase):
+    """Regression test: _detect_pattern_anomalies used to scan the FULL
+    exchange.url (scheme://host:port included), which flagged the
+    target's own host (e.g. http://127.0.0.1:5001) against the
+    localhost/SSRF pattern on every single exchange -- a systematic
+    false positive found live via fp_benchmark.py. Fixed by scanning
+    only the URL path + query, where real payloads actually live."""
+
+    def test_target_host_not_flagged_but_path_payload_still_is(self):
+        detector = AnomalyDetector()
+        # benign request to a localhost target -- must NOT flag the host itself
+        benign = _exchange(url="http://127.0.0.1:5001/api/products", response_body="[]")
+        a1 = detector._detect_pattern_anomalies(benign)
+        self.assertFalse(
+            any(a.anomaly_type == "suspicious_pattern" for a in a1),
+            f"The target's own host should never be flagged, got: {a1}",
+        )
+        # a real path-traversal payload in the path MUST still be flagged
+        evil = _exchange(
+            url="http://127.0.0.1:5001/download?file=../../etc/passwd",
+            response_body="root:x:0:0",
+        )
+        a2 = detector._detect_pattern_anomalies(evil)
+        self.assertTrue(
+            any(a.anomaly_type == "suspicious_pattern" for a in a2),
+            f"Expected a path-traversal pattern match in the URL path/query, got: {a2}",
+        )
+
+
+class TestResponseScanExcludesAttackInputSyntax(unittest.TestCase):
+    """Regression test: _check_patterns used to scan RESPONSE bodies/headers
+    with the full attack-INPUT pattern list (command/SQL/NoSQL injection). That
+    matched ordinary response text -- a 'Server: Werkzeug Python' header (the
+    command-injection word list matches 'Python'), the words 'in'/'where'
+    (NoSQL operators) -- as suspicious on nearly every benign exchange, a
+    systematic false positive found live. Fixed by scanning responses only with
+    response_evidence_patterns. Request-side scanning and genuine response
+    evidence (XSS output, disclosure) are unchanged."""
+
+    def test_python_server_header_no_longer_flagged(self):
+        detector = AnomalyDetector()
+        ex = _exchange(url="http://127.0.0.1:5001/api/products", response_body="[]",
+                       response_headers={"Server": "Werkzeug/3.1.7 Python/3.12.3"})
+        a = detector._detect_pattern_anomalies(ex)
+        self.assertFalse(
+            any(x.anomaly_type == "suspicious_pattern" for x in a),
+            f"A benign 'Server: ... Python' header must not be a suspicious pattern, got: {a}",
+        )
+
+    def test_command_injection_in_request_still_flagged(self):
+        detector = AnomalyDetector()
+        ex = _exchange(url="http://127.0.0.1:5001/run?cmd=;bash")
+        a = detector._detect_pattern_anomalies(ex)
+        self.assertTrue(
+            any(x.anomaly_type == "suspicious_pattern" for x in a),
+            "A command-injection payload in the request URL must still be flagged.",
+        )
+
+    def test_xss_evidence_in_response_still_flagged(self):
+        detector = AnomalyDetector()
+        ex = _exchange(url="http://127.0.0.1:5001/comments",
+                       response_body="<div><script>alert(1)</script></div>")
+        a = detector._detect_pattern_anomalies(ex)
+        self.assertTrue(
+            any(x.anomaly_type == "suspicious_pattern" for x in a),
+            "Reflected/stored <script> in the response is real evidence and must still be flagged.",
+        )
+
+
 class TestAnomalyAgentEndToEnd(unittest.IsolatedAsyncioTestCase):
     """Exercises the real dispatch path (AnomalyAgent.run(), which
     bypasses the LLM entirely) rather than the detector in isolation --

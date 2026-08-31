@@ -139,6 +139,26 @@ public class HarnessClient {
         }
     }
 
+    /** GET /health returns {"agents": [...]}. Returns the live enabled agent
+     * names, or an empty list on any error -- so the "choose agents" menu can
+     * offer exactly what this harness actually runs instead of a hardcoded
+     * list that drifts out of sync. */
+    public List<String> listAgentNames() {
+        try {
+            HttpRequest req = newRequestBuilder("/health", Duration.ofSeconds(5)).GET().build();
+            HttpResponse<String> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
+            if (resp.statusCode() != 200) return List.of();
+            com.google.gson.JsonObject obj = com.google.gson.JsonParser.parseString(resp.body()).getAsJsonObject();
+            List<String> out = new java.util.ArrayList<>();
+            if (obj.has("agents") && obj.get("agents").isJsonArray()) {
+                obj.getAsJsonArray("agents").forEach(el -> out.add(el.getAsString()));
+            }
+            return out;
+        } catch (Exception e) {
+            return List.of();
+        }
+    }
+
     /** Posts an independently observed validation result back to the control plane. */
     public void submitValidationResult(ValidationSubmission submission) throws HarnessException {
         String body = gson.toJson(submission);
