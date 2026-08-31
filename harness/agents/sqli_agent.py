@@ -21,6 +21,19 @@ more evidence):
   that -- say so and propose the boundary test that would).
 - ORDER BY / sort parameters, which are commonly injectable and commonly
   missed by naive filters.
+- CHECK THIS FIRST, ESPECIALLY ON A LOGIN/AUTH ENDPOINT: does a
+  username/email/password field itself already contain SQL comment or
+  boolean-injection syntax (`' --`, `'--`, `' OR '1'='1`, `' OR 1=1--`,
+  `admin'#`)? This is the single most classic SQL injection pattern there
+  is, and it produces NO error and NO unusual-looking response by design
+  -- a blind auth-bypass succeeds by returning an ordinary-looking
+  successful response (HTTP 200, a normal-shaped session token) for
+  credentials that should not have matched anything. Do not wait for an
+  error message or a visible anomaly here: the confirming signal is that
+  the request's own credential field is syntactically a query-breaking
+  payload, correlated with a response that looks like a successful
+  authentication despite the password not plausibly matching. This is
+  exactly as high-confidence as an error-based signal, not a "maybe."
 
 For suggested_test, name the specific parameter and a standard boundary
 probe (e.g. append a single quote, or a numeric offset like id-0, or a

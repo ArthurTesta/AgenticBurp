@@ -2086,6 +2086,211 @@ real Gradle run isn't available.
 
 ---
 
+## 5o. MILESTONE: first genuine, live, multi-category run against a real
+running Juice Shop, with real challenges solved and independently
+verified via Juice Shop's own tracker — and the root cause of why
+detection had looked broken was found: "thinking" mode
+
+This session's user pivoted from the identity-compare work above to
+live-testing the full harness against a real, running local OWASP Juice
+Shop instance, on a machine where the coordinator AND every specialist
+agent had been reconfigured to `qwen3:8b` (not just the coordinator, as
+earlier sections of this document assumed). What looked like a badly
+broken harness (near-zero findings, constant "Circuit breaker OPEN"
+errors, `Ollama request timed out after 120s` on `auth`/`business_logic`)
+had one dominant root cause, found by direct measurement, not
+inspection:
+
+### Root cause: Ollama's `think` option was never set, so a "thinking"-capable model defaults to thinking ON
+
+Verified directly against the live local Ollama instance: the exact same
+trivial one-word prompt (`"Say hi in one word."`) against `qwen3:8b`
+timed out at >130s with the default request shape this harness sends,
+and completed in 6s (5.2s of that being one-time model load) the moment
+`"think": false` was added to the request body. Confirmed harmless for
+non-thinking models (`llama3.1:8b`): identical output and latency with or
+without the field. Since `agent_defaults`/every per-agent override in
+`config.yaml` now point at `qwen3:8b`, this single omission was silently
+starving the ENTIRE harness, not just the coordinator — every specialist
+agent call was subject to the same failure mode.
+
+**Fixed**: `ollama_client.py`'s `_chat()` now always sends `"think":
+False` — every call site in this harness wants fast, structured JSON
+classification, never a reasoning trace. New `ThinkingModeDisabledTests`
+in `test_ollama_client.py` (captures the real request body via
+`httpx.MockTransport`, asserts `think: false` is present). This also
+retroactively explains most of the earlier "Circuit breaker OPEN"
+incidents blamed (in §5n) on a broken coordinator model: those were very
+likely genuine repeated thinking-mode timeouts, not model-not-found
+404s -- the OllamaModelNotFoundError fix from §5n is still independently
+correct and worth having, it just wasn't the dominant cause once the
+user had moved on to a real, existing model.
+
+A related, real transient-vs-permanent gap was also found and fixed at
+the same time: `circuit_breaker.py`'s `half_open_max_requests` is
+hardcoded to 1, but this harness dispatches up to
+`concurrency.max_parallel_agents` (3) agents concurrently -- so the
+moment the shared breaker transitions from OPEN to HALF_OPEN while
+multiple agents are already in flight, only the first concurrent call
+gets through as the "recovery trial" and the rest are rejected outright
+with `Circuit breaker 'ollama' is HALF_OPEN with max requests exceeded`,
+even on a perfectly healthy model. Observed live: `cors` lost this race
+on an otherwise-clean run. **Left open, not fixed this pass** (see §6) --
+noting it here because it directly explains a real symptom seen live and
+should not be re-diagnosed as a mystery next time.
+
+### A systematic fast_path.py coverage audit found 10 of 36 agents had ZERO dispatch coverage -- the same disease as jwt/csrf (§5h), just never audited for the rest of the roster
+
+Triggered by a live miss: a real Juice Shop `GET /redirect?to=<url>` request
+-- the textbook open-redirect shape -- never dispatched `open_redirect`
+at all, because fast_path was confident enough on other grounds
+(`ssrf`/`misconfig` fired from unrelated patterns) that the coordinator
+was never even consulted, and no fast_path rule anywhere ever names
+`open_redirect` as a dispatch target. A one-line audit
+(`"'agent_name'" in open('fast_path.py').read()` for each of the 36
+registered agents) found this was not an isolated gap:
+
+```
+Agents with ZERO fast_path dispatch coverage (before this pass):
+business_logic_enhanced, command_injection, file_upload, header_injection,
+info_disclosure, nosql, open_redirect, rate_limit, ssti, xxe
+```
+
+**8 of 10 closed this pass**, each by adding the agent to an existing,
+already-firing rule (not inventing new pattern tables) plus a live-fixture
+regression test in `test_fast_path.py`'s new `TestClosedDispatchCoverageGaps`:
+
+| Agent | Trigger added to | Real-world evidence |
+|---|---|---|
+| `open_redirect`, `header_injection` | Query-param name pattern (already existed for ssrf/misconfig) -- also expanded the regex itself: `to`, `dest`, `return`, `return_to`, `returnurl`, `continue`, `goto`, `out`, `redir`, `forward` were not covered at all (Juice Shop's own real parameter is literally `to`, not one of the old 8 words) | Live Juice Shop `/redirect?to=<url>` |
+| `xxe` | Existing `application/xml`/`text/xml` Content-Type rule (previously only xss/misconfig) | XXE's textbook precondition was already being matched and ignored |
+| `file_upload` | New `multipart/form-data` Content-Type rule; also added to the existing `/upload|/file|...` URL rule | Live Juice Shop `POST /file-upload` |
+| `command_injection` | Existing `action|cmd|command|exec|run|do` query-param rule (previously only misconfig/business_logic) | Live `?cmd=` probe -- confirmed detected post-fix |
+| `info_disclosure` | Existing recon-discovery-file response pattern (robots.txt/.git/.env/README) and existing stack-trace response pattern | — |
+| `rate_limit` | Existing `/login`-shaped URL rule | — |
+| `nosql` | Existing `application/json` Content-Type rule | — |
+
+Two new gaps found in the SAME audit style, live, after the batch run
+below: `/rest/basket/<id>` (a textbook per-user-owned, sequential-ID
+IDOR shape, same category as the already-fixed order/invoice/booking
+pattern, just a different noun) and `/file-upload`'s own URL shape
+(already matched an existing rule, just never included `file_upload`
+itself) -- both fixed the same way, both with new regression tests.
+
+**Deliberately left uncovered**: `business_logic_enhanced` (no
+precondition distinct from `business_logic` itself was identified --
+piggybacking it onto every `business_logic` trigger would double-dispatch
+a heavier duplicate agent everywhere for unclear benefit) and `ssti` (no
+sufficiently low-false-positive heuristic identified; Juice Shop has no
+native SSTI challenge to calibrate against either).
+
+### `sqli_agent.py`'s prompt had no explicit guidance for the single most classic SQL injection pattern in existence
+
+Live case: `{"email": "admin@juice-sh.op' --", "password": "x"}` against
+Juice Shop's real login endpoint returns a genuine admin session (this is
+Juice Shop's own "Login Admin" challenge) -- a classic blind
+auth-bypass injection that produces NO error and NO visible anomaly in
+the response by design; the only confirming signal is "the response
+looks like a successful login for credentials that shouldn't have
+matched." The prompt's existing signal list was entirely error/
+behavioral-difference-shaped ("error responses", "behavioral differences
+implied by the response") and never told the model to recognize
+injection SYNTAX in a credential field as high-confidence evidence on its
+own. Fixed with an explicit bullet (mirroring how `auth_agent.py`'s
+"check for no authentication at all" gap was fixed in §5j) naming the
+exact pattern and telling the model not to wait for an error message.
+
+**Verified directly, repeatedly, isolating variables one at a time**
+(`force_agents` bypasses fast_path/coordinator, letting a single agent or
+small group be re-run against the identical real exchange in seconds
+instead of the ~3 minutes a full 9-10-agent dispatch costs on this
+hardware):
+- `force_agents=["sqli"]` alone against the real login exchange: correctly
+  identified 3/3 times (confidence 0.45-0.5) after the prompt fix.
+- `force_agents=["sqli","business_logic"]` (exercises the same real
+  critique pass as the full pipeline): survived critique as "downgraded"
+  (not rejected) 3/3 times.
+- Yet the SAME exchange run through the FULL fast_path-triggered 10-agent
+  dispatch produced zero `sqli` output at least once (§5n... see the
+  batch table below). Given the isolated/small-group form is reliably
+  correct, the full-dispatch miss is best explained by resource
+  contention under this hardware's concurrent qwen3:8b load (the same
+  class of issue `think:false` and the half-open fix above address, not
+  a defect in the prompt fix itself) -- flagged here rather than chased
+  further, consistent with this project's own established practice of
+  not over-fitting single-pass LLM stochasticity (see §5j/§5k).
+
+### The actual live batch run, and real Juice Shop challenges solved
+
+Per explicit, scoped user authorization ("this is a local instance of
+Juice Shop that can be trashed and re-created... only run it on this
+instance") -- NOT a decision made unilaterally -- `validators.active_enabled`
+and `validators.allow_mutating_replay` were turned on, and
+`server.allowed_hosts` was set to `["localhost"]` to technically enforce
+the stated scope (with the real, documented limitation that this checks
+`urlparse(url).hostname` only, not host:port -- see the config comment
+added alongside it). **Revert all three once done testing.**
+
+A batch of real, hand-verified exploits (not hypothetical payloads) was
+sent through the real, fixed pipeline. Juice Shop's OWN built-in
+challenge tracker (`GET /api/Challenges/`, a real, external,
+harness-independent ground truth) went from 5 to 8 solved as a direct,
+verified result:
+
+```
+New challenges solved this session (confirmed via /api/Challenges/, not
+self-reported): Admin Registration, Upload Type, View Basket
+(Login Admin, Error Handling, Password Strength, Payback Time, Score
+Board were already solved earlier in the same session's testing.)
+```
+
+**Important, deliberate distinction**: these were solved by a human/agent
+manually crafting and sending the exploit request -- the harness has NO
+autonomous exploitation or crawling capability today (see the "next step"
+section immediately below). What was being tested here is the harness's
+ANALYSIS layer: given a real captured exchange, does it dispatch the
+right agents and correctly characterize the vulnerability. Per-exchange
+results from the batch run (`C:\tmp\juice_batch_results.json` on the test
+machine):
+
+| Exchange | Dispatched (relevant) | Result |
+|---|---|---|
+| `GET /redirect?to=<url>` (open redirect) | open_redirect, ssrf, header_injection | CONFIRMED cors + correct open_redirect finding + a real cross-agent `open_redirect+ssrf` chain detection |
+| `POST /rest/user/login` (SQLi bypass) | sqli, auth, business_logic, rate_limit, nosql | business_logic caught the access-control angle; sqli intermittently silent in full dispatch (see above); CONFIRMED cors |
+| `GET /rest/user/whoami` (sensitive data) | auth, jwt, misconfig | jwt correctly fired (Authorization-header JWT pattern) with 2 real findings; CONFIRMED cors |
+| `GET /ftp/` (exposed directory listing) | cors, csp, misconfig | Correct misconfig finding; CONFIRMED cors. `info_disclosure` did NOT fire -- the new response-pattern fix only matches specific filenames (`.git`, `.env`, `README`, ...), not a generic directory-listing shape. Real, narrower residual gap, not fixed this pass. |
+| `POST /api/Users/` with `role: admin` (mass assignment) | api_security, graphql, auth, recon | 12 findings, api_security AND graphql both independently and correctly called it mass assignment/BOPLA; CONFIRMED cors. Real challenge "Admin Registration" solved. |
+| `POST /file-upload` (wrong file type) | auth, jwt, misconfig | `file_upload` itself did not fire in this run -- traced to the TEST SCRIPT, not the harness: the captured exchange never included the real `multipart/form-data` Content-Type header the live request actually carried. Real challenge "Upload Type" solved regardless (Juice Shop's own detection is independent of the harness's). |
+| `GET /rest/basket/1` as a different user (IDOR) | auth, jwt | `idor` itself did not fire -- this is the `/basket` gap found and fixed above (fix landed after this specific run; not yet re-verified against a live re-run). Real challenge "View Basket" solved regardless. |
+| `?cmd=;ls` (command injection probe) | command_injection, business_logic, sqli, xss | command_injection correctly fired post-fix; anomaly independently flagged the same request as suspicious |
+| `POST /api/Feedbacks/` with XSS/XXE payloads | (Juice Shop itself returned HTTP 500 -- malformed request body, not a harness issue) | No usable signal; would need the request schema fixed to retest |
+
+### Next step (named explicitly, per direct user request): the harness has no autonomous action capability
+
+Every real exploit in this section was crafted and sent by a human/agent,
+not discovered by the harness itself. The user named the actual gap
+directly: **the orchestrator should notice when a request or response
+indicates newly-unlocked scope (a successful login, a privilege-escalating
+SQLi/mass-assignment result, a newly-visible admin token) and
+proactively go probe what's now reachable**, rather than only ever
+analyzing whatever a human happened to capture and send it. This is the
+same architectural gap REVIEW.md's #3/#8 already named as the single
+largest item in this whole project (this session's earlier §5n work --
+headless cross-identity comparison -- is one narrow slice of it, not the
+whole thing) -- now independently arrived at from the demand side by a
+live user, not just from the audit side. It was deliberately NOT built
+this session (explicitly scoped down to a "prove the value first" live
+test, per an in-session discussion of the tradeoff) but should be
+treated as the single highest-priority next architectural item: it
+requires (a) detecting "scope changed" from a response (new identity in
+a token, a 200 where 401 was expected, a role field flipping), (b) the
+harness sending its OWN exploratory requests to a target for the first
+time in its history (today it is purely passive/analytical), and (c)
+feeding what it discovers back into the same analysis pipeline
+recursively.
+
+---
+
 ## 6. Still open — consolidated, current status noted
 
 1. ~~`coordinator.py`'s fail-open-to-all-36-agents fallback, unverified

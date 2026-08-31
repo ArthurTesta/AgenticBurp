@@ -129,6 +129,19 @@ class OllamaClient:
             "format": "json",
             "stream": False,
             "options": {"temperature": temperature},
+            # Every call site here wants fast, structured JSON classification
+            # output, never a reasoning trace -- but a "thinking"-capable
+            # model (Qwen3, Gemma 4, etc.) defaults to thinking ON when this
+            # is omitted, silently generating a full hidden chain-of-thought
+            # before ever producing content. Confirmed directly, live: the
+            # exact same trivial one-word prompt against qwen3:8b on this
+            # machine went from >130s (timed out) to 6s the moment this was
+            # added -- previously misdiagnosed as a circuit-breaker /
+            # model-config bug, when the real cause was thinking mode never
+            # being disabled. Harmless no-op for non-thinking models
+            # (llama3.1:8b, gemma2:9b) -- verified directly too, identical
+            # output and latency with or without it.
+            "think": False,
         }
         url = f"{self.base_url}/api/chat"
         

@@ -388,6 +388,91 @@ class TestJwtAndCsrfFastPathCoverage(unittest.TestCase):
         self.assertIn("csrf", selected)
 
 
+class TestClosedDispatchCoverageGaps(unittest.TestCase):
+    """
+    Regression tests for a real, live-observed gap: a systematic audit of
+    all 36 registered agents against every fast_path dispatch table found
+    10 with ZERO entries anywhere -- same disease as jwt/csrf (see
+    TestJwtAndCsrfFastPathCoverage above), just never audited for the rest
+    of the roster. Found live against a real Juice Shop
+    `/redirect?to=<url>` request (the textbook open-redirect shape): fast
+    path was confident enough on other grounds (ssrf/misconfig) that the
+    coordinator was never even consulted, so open_redirect -- and
+    header_injection, file_upload, xxe, command_injection, info_disclosure,
+    rate_limit, nosql -- had no chance regardless of what the coordinator
+    would have picked. business_logic_enhanced and ssti remain open
+    (see HANDOVER.md): the former has no distinct precondition from
+    business_logic to trigger on, and the latter has no sufficiently
+    low-false-positive heuristic identified yet.
+    """
+
+    def test_redirect_target_query_param_selects_open_redirect_and_header_injection(self):
+        """The actual real-world case: Juice Shop's own `to=` parameter,
+        which the old pattern (file|path|url|uri|link|redirect|next|target)
+        did not match at all."""
+        agents = select_agents_by_query_params("to=https://github.com/juice-shop/juice-shop")
+        self.assertIn("open_redirect", agents)
+        self.assertIn("header_injection", agents)
+        self.assertIn("ssrf", agents)
+
+    def test_other_common_redirect_param_names_also_select_open_redirect(self):
+        for query in ("return_to=/dashboard", "returnurl=/dashboard", "dest=/dashboard",
+                      "continue=/dashboard", "goto=/dashboard", "redir=/dashboard",
+                      "out=/dashboard", "forward=/dashboard"):
+            agents = select_agents_by_query_params(query)
+            self.assertIn("open_redirect", agents, f"expected open_redirect for {query!r}")
+
+    def test_short_param_names_do_not_false_positive_on_unrelated_words(self):
+        """'to'/'out' are common substrings of unrelated words -- must be
+        boundary-matched, not bare substrings, or e.g. 'token'/'checkout'
+        would falsely trigger open_redirect."""
+        agents = select_agents_by_query_params("token=abc123&checkout=1&custom=x")
+        self.assertNotIn("open_redirect", agents)
+
+    def test_multipart_form_data_selects_file_upload(self):
+        agents = select_agents_by_request_headers({"Content-Type": "multipart/form-data; boundary=----X"})
+        self.assertIn("file_upload", agents)
+
+    def test_xml_content_type_selects_xxe(self):
+        agents = select_agents_by_request_headers({"Content-Type": "application/xml"})
+        self.assertIn("xxe", agents)
+
+    def test_command_param_name_selects_command_injection(self):
+        agents = select_agents_by_query_params("cmd=ls")
+        self.assertIn("command_injection", agents)
+
+    def test_discovery_file_response_selects_info_disclosure(self):
+        agents = select_agents_by_response_body("# Project\n\nSee .env for config, .git/ for history")
+        self.assertIn("info_disclosure", agents)
+
+    def test_stack_trace_response_selects_info_disclosure(self):
+        agents = select_agents_by_response_body('Traceback (most recent call last):\n  File "app.py", line 42')
+        self.assertIn("info_disclosure", agents)
+
+    def test_login_endpoint_selects_rate_limit(self):
+        agents = select_agents_by_url("/login")
+        self.assertIn("rate_limit", agents)
+
+    def test_json_content_type_selects_nosql(self):
+        agents = select_agents_by_request_headers({"Content-Type": "application/json"})
+        self.assertIn("nosql", agents)
+
+    def test_basket_shaped_url_dispatches_idor(self):
+        """Found live against a real Juice Shop GET /rest/basket/<id>
+        request -- exactly the same per-user-owned, sequential-id-in-URL
+        shape as order/invoice/booking (already covered), just a
+        different noun. idor was not dispatched at all for it."""
+        agents = select_agents_by_url("/rest/basket/1")
+        self.assertIn("idor", agents)
+
+    def test_file_upload_url_selects_file_upload_agent(self):
+        """Found live against a real Juice Shop POST /file-upload request:
+        this URL pattern already matched (xss/misconfig/supply_chain
+        fired), but never included the one agent built to test uploads."""
+        agents = select_agents_by_url("/file-upload")
+        self.assertIn("file_upload", agents)
+
+
 class TestFastPathSelection(unittest.TestCase):
     """Test complete fast-path agent selection."""
     

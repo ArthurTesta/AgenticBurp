@@ -68,8 +68,12 @@ _URL_PATTERNS: list[tuple[re.Pattern, list[str]]] = [
     # exchange at all -- confirmed live against both PixelMart's TP1
     # and (separately, earlier this session) a real Juice Shop
     # `admin@juice-sh.op' -- ` login bypass.
+    # rate_limit added: a login/authentication endpoint with no
+    # brute-force throttling is one of the most classic, universally
+    # relevant checks there is here -- rate_limit had zero fast_path
+    # entries anywhere in this file.
     (re.compile(r'/login|/logins|/auth|/authenticate|/signin|/sign_in|/sessions', re.IGNORECASE),
-     ['auth', 'business_logic', 'sqli']),
+     ['auth', 'business_logic', 'sqli', 'rate_limit']),
     
     # Registration endpoints
     (re.compile(r'/register|/registration|/signup|/sign_up|/create_account', re.IGNORECASE), 
@@ -83,9 +87,12 @@ _URL_PATTERNS: list[tuple[re.Pattern, list[str]]] = [
     (re.compile(r'/api/v\d+|/rest/v\d+|/v\d+/api', re.IGNORECASE), 
      ['sqli', 'xss', 'idor', 'misconfig']),
     
-    # File upload endpoints
-    (re.compile(r'/upload|/uploads|/file|/files|/import|/export', re.IGNORECASE), 
-     ['xss', 'misconfig', 'supply_chain']),
+    # File upload endpoints. file_upload added: found missing live against
+    # a real Juice Shop /file-upload request -- this URL pattern already
+    # matched (hence xss/misconfig/supply_chain firing), but never included
+    # the one agent actually built to test file uploads.
+    (re.compile(r'/upload|/uploads|/file|/files|/import|/export', re.IGNORECASE),
+     ['xss', 'misconfig', 'supply_chain', 'file_upload']),
     
     # User/profile endpoints
     (re.compile(r'/user|/users|/profile|/account|/me', re.IGNORECASE), 
@@ -95,10 +102,15 @@ _URL_PATTERNS: list[tuple[re.Pattern, list[str]]] = [
     # PixelMart discovery run: /api/orders/<id> is a textbook IDOR
     # target -- sequential resource ids owned per-user -- but had no
     # matching URL pattern at all, so idor was never dispatched for it
-    # unless something else incidentally fired. See DISCOVERY_RUN_RESULTS.md.)
+    # unless something else incidentally fired. See DISCOVERY_RUN_RESULTS.md.
+    # basket/cart added: found missing live against a real Juice Shop
+    # `GET /rest/basket/<id>` request -- exactly the same per-user-owned,
+    # sequential-id-in-the-URL shape as order/invoice/booking, just a
+    # different noun. idor was not dispatched at all for it.)
     (re.compile(r'/order|/orders|/invoice|/invoices|/booking|/bookings|'
                 r'/ticket|/tickets|/transaction|/transactions|'
-                r'/reservation|/reservations|/appointment|/appointments',
+                r'/reservation|/reservations|/appointment|/appointments|'
+                r'/basket|/baskets|/cart|/carts',
                 re.IGNORECASE),
      ['idor', 'auth', 'misconfig']),
     
@@ -137,9 +149,24 @@ _QUERY_PARAM_PATTERNS: list[tuple[re.Pattern, list[str]]] = [
     (re.compile(r'q|query|search|keyword|term|filter', re.IGNORECASE), 
      ['sqli', 'xss']),
     
-    # File/path parameters (path traversal, SSRF)
-    (re.compile(r'file|path|url|uri|link|redirect|next|target', re.IGNORECASE), 
-     ['ssrf', 'misconfig']),
+    # File/path/redirect-target parameters (path traversal, SSRF, open
+    # redirect, header/response-splitting injection). Found missing during
+    # a live audit against a real Juice Shop `/redirect?to=<url>` request
+    # -- the textbook open-redirect shape -- which dispatched neither
+    # open_redirect nor header_injection at all (both had ZERO fast_path
+    # entries anywhere in this file), and fast_path was confident enough
+    # on OTHER grounds (ssrf/misconfig still matched) that the coordinator
+    # was never even consulted, so open_redirect had no chance regardless
+    # of whether the coordinator would have picked it. `to` itself -- the
+    # actual real-world parameter name here -- wasn't even in the old
+    # regex; added alongside the other common redirect-target names.
+    # header_injection is bundled at the same trigger because CRLF/
+    # response-splitting into a Location header is the classic mechanism
+    # BEHIND a redirect endpoint, not a separately-signaled precondition.
+    (re.compile(r'file|path|url|uri|link|redirect|next|target|'
+                r'\bto\b|\bout\b|dest|destination|return|return_to|returnurl|continue|goto|redir|forward',
+                re.IGNORECASE),
+     ['ssrf', 'misconfig', 'open_redirect', 'header_injection']),
     
     # Authentication tokens (sensitive, but also injection vectors)
     (re.compile(r'token|api_key|apikey|key|secret|password|credential', re.IGNORECASE), 
@@ -149,9 +176,12 @@ _QUERY_PARAM_PATTERNS: list[tuple[re.Pattern, list[str]]] = [
     (re.compile(r'sort|order|page|limit|offset|per_page', re.IGNORECASE), 
      ['business_logic', 'sqli']),
     
-    # Action/command parameters (command injection)
-    (re.compile(r'action|cmd|command|exec|run|do', re.IGNORECASE), 
-     ['misconfig', 'business_logic']),
+    # Action/command parameters (command injection). Found missing during
+    # a live audit: command_injection had zero fast_path entries anywhere
+    # in this file, despite this exact parameter-name shape (cmd/exec/run)
+    # being the textbook precondition for it.
+    (re.compile(r'action|cmd|command|exec|run|do', re.IGNORECASE),
+     ['misconfig', 'business_logic', 'command_injection']),
 ]
 
 # Request header patterns
@@ -159,17 +189,34 @@ _REQUEST_HEADER_PATTERNS: list[tuple[re.Pattern, list[str]]] = [
     # CORS headers in requests
     (re.compile(r'Origin|Access-Control-Request-Method|Access-Control-Request-Headers', re.IGNORECASE), ['cors']),
 
-    # JSON content type
-    (re.compile(r'application/json', re.IGNORECASE), 
-     ['sqli', 'xss', 'idor', 'business_logic']),
+    # JSON content type. nosql added: a JSON-bodied request is the
+    # precondition for MongoDB-operator-style injection the same way a
+    # SQL-shaped query string is for sqli -- nosql had zero fast_path
+    # entries anywhere in this file.
+    (re.compile(r'application/json', re.IGNORECASE),
+     ['sqli', 'xss', 'idor', 'business_logic', 'nosql']),
     
     # Form data
-    (re.compile(r'application/x-www-form-urlencoded', re.IGNORECASE), 
+    (re.compile(r'application/x-www-form-urlencoded', re.IGNORECASE),
      ['sqli', 'xss', 'idor']),
+
+    # Multipart file uploads. Found missing during a live audit: this is
+    # the single most reliable, near-zero-false-positive signal in this
+    # entire file for a whole vulnerability class -- a request either IS
+    # or ISN'T a file upload, and file_upload had zero fast_path entries
+    # anywhere (URL, header, or body), reachable only via the coordinator.
+    (re.compile(r'multipart/form-data', re.IGNORECASE),
+     ['file_upload']),
     
-    # XML content (XXE, injection)
-    (re.compile(r'application/xml|text/xml', re.IGNORECASE), 
-     ['xss', 'misconfig']),
+    # XML content (XXE, injection). Found missing during a live audit:
+    # an XML Content-Type is THE textbook precondition for XXE, yet xxe
+    # was never in this list at all -- only xss/misconfig, so the one
+    # agent actually equipped to test for XXE never saw XML-bodied
+    # requests unless the coordinator happened to pick it (see fast_path's
+    # own design principle: a confident fast_path match must be a
+    # SUPERSET of what the coordinator would pick, not a narrower one).
+    (re.compile(r'application/xml|text/xml', re.IGNORECASE),
+     ['xss', 'misconfig', 'xxe']),
     
     # GraphQL
     (re.compile(r'application/graphql', re.IGNORECASE), 
@@ -228,8 +275,8 @@ _RESPONSE_PATTERNS: list[tuple[re.Pattern, list[str]]] = [
      ['sqli']),
     
     # Stack traces (information disclosure)
-    (re.compile(r'at com\.|at org\.|File "|line \d+|Traceback|Stack Trace', re.IGNORECASE), 
-     ['misconfig', 'supply_chain']),
+    (re.compile(r'at com\.|at org\.|File "|line \d+|Traceback|Stack Trace', re.IGNORECASE),
+     ['misconfig', 'supply_chain', 'info_disclosure']),
     
     # Version banners
     (re.compile(r'Apache/|nginx/|Node\.js|Python/|PHP/|Tomcat|JBoss|IHS', re.IGNORECASE), 
@@ -260,8 +307,11 @@ _RESPONSE_PATTERNS: list[tuple[re.Pattern, list[str]]] = [
     (re.compile(r'Access-Control-Allow-Origin|Access-Control-Allow-Credentials|Access-Control-Allow-Headers|Access-Control-Allow-Methods|Access-Control-Expose-Headers|Access-Control-Max-Age|Vary: Origin', re.IGNORECASE), ['cors']),
     (re.compile(r'origin.*\*|allow-origin.*null|credentials.*true', re.IGNORECASE), ['cors']),
     
-    # Recon patterns - discovery files and endpoints
-    (re.compile(r'robots\.txt|sitemap\.xml|\.git/|\.env|README|CHANGELOG|package\.json|pom\.xml|build\.gradle', re.IGNORECASE), ['recon']),
+    # Recon patterns - discovery files and endpoints. info_disclosure added
+    # alongside recon: an exposed .git/.env/README isn't just "attack
+    # surface to map", it's itself a real information-disclosure finding
+    # -- info_disclosure had zero fast_path entries anywhere in this file.
+    (re.compile(r'robots\.txt|sitemap\.xml|\.git/|\.env|README|CHANGELOG|package\.json|pom\.xml|build\.gradle', re.IGNORECASE), ['recon', 'info_disclosure']),
     (re.compile(r'/api|/swagger|/openapi|/redoc|/graphql|/admin|/login|/auth|/administrator', re.IGNORECASE), ['recon']),
 
     # Web Cache Poisoning - caching layer indicators (matches header

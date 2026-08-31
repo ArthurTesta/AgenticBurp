@@ -77,6 +77,35 @@ class ChatJsonMeteredTests(unittest.IsolatedAsyncioTestCase):
             await client.chat_json_metered(model="m", system_prompt="s", user_prompt="u")
 
 
+class ThinkingModeDisabledTests(unittest.IsolatedAsyncioTestCase):
+    """
+    Live bug found this session: a "thinking"-capable model (Qwen3, Gemma 4)
+    defaults to thinking ON when the request never sets a `think` option,
+    generating a full hidden chain-of-thought before any content -- confirmed
+    directly against a real Ollama instance: the identical trivial prompt
+    against qwen3:8b went from >130s (timed out) to 6s the moment `think:
+    false` was added. This had been misdiagnosed as a circuit-breaker/model-
+    config problem before the real cause was found. Every call site in this
+    harness wants fast, structured JSON classification output, never a
+    reasoning trace, so this must always be sent, not made conditional on
+    which model is configured.
+    """
+
+    async def test_think_false_is_always_sent(self):
+        captured = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured["body"] = json.loads(request.content)
+            return httpx.Response(200, json={
+                "message": {"content": json.dumps({"ok": True})},
+                "done": True,
+            })
+        client = _make_client(handler)
+        await client.chat_json_metered(model="m", system_prompt="s", user_prompt="u")
+        self.assertIn("think", captured["body"])
+        self.assertFalse(captured["body"]["think"])
+
+
 class ModelNotFoundDoesNotTripSharedBreakerTests(unittest.IsolatedAsyncioTestCase):
     """
     Regression test for a live bug found this session: a nonexistent model

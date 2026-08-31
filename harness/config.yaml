@@ -34,7 +34,7 @@ concurrency:
 # so a weak coordinator model is the single biggest risk of a finding
 # never being generated at all.
 coordinator:
-  model: "llama3.1:8b"
+  model: "qwen3:8b"
   temperature: 0.1
 
 # Default model for any specialist agent that doesn't set its own "model"
@@ -49,7 +49,7 @@ coordinator:
 # in Ollama (`ollama pull gemma2:9b`, or substitute any model you prefer).
 # Per-agent overrides below always take precedence over this.
 agent_defaults:
-  model: "gemma2:9b"
+  model: "qwen3:8b"
   temperature: 0.1
 
 # Each agent can use a different model, overriding agent_defaults above.
@@ -59,44 +59,44 @@ agent_defaults:
 agents:
   sqli:
     enabled: true
-    model: "llama3.1:8b"
+    model: "qwen3:8b"
     temperature: 0.1
   xss:
     enabled: true
-    model: "llama3.1:8b"
+    model: "qwen3:8b"
     temperature: 0.1
   idor:
     enabled: true
-    model: "llama3.1:8b"
+    model: "qwen3:8b"
     temperature: 0.1
   ssrf:
     enabled: true
-    model: "llama3.1:8b"
+    model: "qwen3:8b"
     temperature: 0.1
   auth:
     enabled: true
-    model: "llama3.1:8b"
+    model: "qwen3:8b"
     temperature: 0.1
   # Added: rising per 2021-2025 bug bounty/CVE data (see README).
   business_logic:
     enabled: true
-    model: "llama3.1:8b"
+    model: "qwen3:8b"
     temperature: 0.1
   misconfig:
     enabled: true
-    model: "llama3.1:8b"
+    model: "qwen3:8b"
     temperature: 0.1
   ai_llm:
     enabled: true
-    model: "llama3.1:8b"
+    model: "qwen3:8b"
     temperature: 0.1
   rate_limit:
     enabled: true
-    model: "llama3.1:8b"
+    model: "qwen3:8b"
     temperature: 0.1
   supply_chain:
     enabled: true
-    model: "llama3.1:8b"
+    model: "qwen3:8b"
     temperature: 0.1
 
 # Deterministic lookup against GitHub's public Security Advisory
@@ -150,7 +150,7 @@ kev_check:
 # labeled as guesses and don't need the extra model call.
 critique:
   enabled: true
-  model: "llama3.1:8b"
+  model: "qwen3:8b"
   temperature: 0.1
   confidence_threshold: 0.5
   max_findings: 12
@@ -183,7 +183,18 @@ server:
   auth_token: null
   # Optional engagement scope. If non-empty, only these hostnames and their
   # subdomains may be analyzed. Empty means no application-level scope file.
-  allowed_hosts: []
+  #
+  # Scoped to the local Juice Shop instance only, per explicit user
+  # authorization, while validators.active_enabled/allow_mutating_replay
+  # are also on below -- this is the actual enforcement of that scope, not
+  # just a verbal agreement. Note the real limitation: orchestrator.py's
+  # check compares urlparse(url).hostname only (port is stripped), so this
+  # restricts to "localhost" as a HOST, not specifically to port 3000 --
+  # anything else also listening on localhost (the harness itself on 8787,
+  # Ollama on 11434, PixelMart on 5001, etc.) is technically still in
+  # scope by this check alone. Revert to [] once done testing against
+  # Juice Shop.
+  allowed_hosts: ["localhost"]
   # Cap on request/response body bytes sent into prompts, to keep local
   # context windows sane. Bodies are truncated, not dropped, with a marker.
   max_body_chars: 6000
@@ -194,7 +205,10 @@ server:
 # exchange and inherit the server.allowed_hosts scope.
 validators:
   enabled: true
-  active_enabled: false
+  # Turned on per explicit user authorization: this is a disposable local
+  # Juice Shop instance that can be trashed and recreated, scoped via
+  # server.allowed_hosts above. Revert to false once done testing.
+  active_enabled: true
   # Separate, stricter opt-in required for the small set of techniques that
   # legitimately need to send a mutating (state-changing) request replay:
   # API security's mass-assignment probe and the race-condition burst.
@@ -204,8 +218,9 @@ validators:
   # update, or the same real mutating action fired multiple times
   # concurrently). Everything else in this harness never needs this flag,
   # by design, regardless of what method the originally captured
-  # exchange used.
-  allow_mutating_replay: false
+  # exchange used. Turned on for the same reason/scope as active_enabled
+  # above.
+  allow_mutating_replay: true
   # Ceiling on how many times the race-condition validator repeats a
   # mutating request concurrently. This can only lower the effective
   # limit below safety_gate.py's own hard ceiling (20) -- it cannot raise

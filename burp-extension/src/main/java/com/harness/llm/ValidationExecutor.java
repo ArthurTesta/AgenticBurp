@@ -25,6 +25,7 @@ import com.harness.llm.logic.InfoDisclosureLogic;
 import com.harness.llm.logic.JwtForgeryLogic;
 import com.harness.llm.logic.MassAssignmentLogic;
 import com.harness.llm.logic.OpenRedirectLogic;
+import com.harness.llm.logic.PoolCandidateResolver;
 import com.harness.llm.logic.RaceConditionLogic;
 import com.harness.llm.logic.SessionLifecycleLogic;
 import com.harness.llm.logic.SsrfCallbackLogic;
@@ -357,42 +358,63 @@ public final class ValidationExecutor {
      * wrong pick is visible and correctable, not silently wrong.
      */
     private void sessionFixationCompare(TestPlan plan, HttpRequestResponse source) {
-        List<HttpRequestResponse> candidates = new ArrayList<>();
-        String sourceFingerprint = exchangeFingerprint(source);
-        for (HttpRequestResponse rr : exchangePool.values()) {
-            if (rr == null || rr == source) continue;
-            try {
-                if (exchangeFingerprint(rr).equals(sourceFingerprint)) continue;
-                if (!extractSetCookiePairs(rr).isEmpty()) candidates.add(rr);
-            } catch (Exception ignored) {}
-        }
-        if (candidates.isEmpty()) {
-            statusFor(plan, source, "inconclusive", 0, false,
-                    "No other captured exchange with a Set-Cookie header is available to compare against. "
-                            + "Capture the pre-login response (the one that first sets the session cookie) and retry.", "");
-            return;
-        }
+        sessionFixationCompareInternal(plan, source, null);
+    }
 
-        String[] labels = new String[candidates.size()];
-        for (int i = 0; i < candidates.size(); i++) {
-            HttpRequestResponse rr = candidates.get(i);
-            labels[i] = rr.request().method() + " " + rr.request().url() + " [" + exchangeFingerprint(rr).substring(0, 8) + "]";
-        }
-        int selected;
-        try {
-            selected = JOptionPane.showOptionDialog(null,
-                    "Select the OTHER captured exchange to compare session cookies against\n"
-                            + "(pick the pre-login response if 'source' is post-login, or vice versa).\n\n"
-                            + "This assertion is analyst-controlled; the harness will not guess which is which.",
-                    "Select comparison exchange", JOptionPane.DEFAULT_OPTION, JOptionPane.PLAIN_MESSAGE, null, labels, labels[0]);
-        } catch (Exception e) {
-            statusFor(plan, source, "inconclusive", 0, false, "No comparison exchange was selected.", "");
+    /** Headless entry point: resolve the candidate by fingerprint instead of
+     * prompting. Null falls through to the dialog; a non-null fingerprint
+     * with no exchangePool match is its own distinct "inconclusive". */
+    public void sessionFixationCompare(TestPlan plan, HttpRequestResponse source, String candidateFingerprint) {
+        if (candidateFingerprint == null) { sessionFixationCompareInternal(plan, source, null); return; }
+        HttpRequestResponse explicit = exchangePool.get(candidateFingerprint);
+        if (explicit == null) {
+            statusFor(plan, source, "inconclusive", 0, false,
+                    "No captured exchange in the pool matches the supplied candidate fingerprint '" + candidateFingerprint + "'.", "");
             return;
         }
-        if (selected < 0) { statusFor(plan, source, "inconclusive", 0, false, "Comparison cancelled.", ""); return; }
+        sessionFixationCompareInternal(plan, source, explicit);
+    }
+
+    private void sessionFixationCompareInternal(TestPlan plan, HttpRequestResponse source, HttpRequestResponse explicitCandidate) {
+        PoolCandidateResolver.Resolution r = PoolCandidateResolver.resolve(
+                source, exchangePool,
+                rr -> { try { return !extractSetCookiePairs(rr).isEmpty(); } catch (Exception e) { return false; } },
+                explicitCandidate);
+
+        HttpRequestResponse candidate;
+        switch (r.outcome) {
+            case NO_CANDIDATES -> {
+                statusFor(plan, source, "inconclusive", 0, false,
+                        "No other captured exchange with a Set-Cookie header is available to compare against. "
+                                + "Capture the pre-login response (the one that first sets the session cookie) and retry.", "");
+                return;
+            }
+            case NEEDS_PICKER -> {
+                List<HttpRequestResponse> candidates = r.pickerCandidates;
+                String[] labels = new String[candidates.size()];
+                for (int i = 0; i < candidates.size(); i++) {
+                    HttpRequestResponse rr = candidates.get(i);
+                    labels[i] = rr.request().method() + " " + rr.request().url() + " [" + exchangeFingerprint(rr).substring(0, 8) + "]";
+                }
+                int selected;
+                try {
+                    selected = JOptionPane.showOptionDialog(null,
+                            "Select the OTHER captured exchange to compare session cookies against\n"
+                                    + "(pick the pre-login response if 'source' is post-login, or vice versa).\n\n"
+                                    + "This assertion is analyst-controlled; the harness will not guess which is which.",
+                            "Select comparison exchange", JOptionPane.DEFAULT_OPTION, JOptionPane.PLAIN_MESSAGE, null, labels, labels[0]);
+                } catch (Exception e) {
+                    statusFor(plan, source, "inconclusive", 0, false, "No comparison exchange was selected.", "");
+                    return;
+                }
+                if (selected < 0) { statusFor(plan, source, "inconclusive", 0, false, "Comparison cancelled.", ""); return; }
+                candidate = candidates.get(selected);
+            }
+            default -> candidate = r.candidate; // RESOLVED
+        }
 
         Map<String, String> sourceCookies = extractSetCookiePairs(source);
-        Map<String, String> otherCookies = extractSetCookiePairs(candidates.get(selected));
+        Map<String, String> otherCookies = extractSetCookiePairs(candidate);
         String cookieName = pickSessionCookieName(sourceCookies.keySet(), otherCookies.keySet());
         if (cookieName == null) {
             statusFor(plan, source, "inconclusive", 0, false,
@@ -415,41 +437,59 @@ public final class ValidationExecutor {
      * and checks whether the old session still works.
      */
     private void logoutInvalidationCompare(TestPlan plan, HttpRequestResponse source) {
-        List<HttpRequestResponse> candidates = new ArrayList<>();
-        String sourceFingerprint = exchangeFingerprint(source);
-        for (HttpRequestResponse rr : exchangePool.values()) {
-            if (rr == null || rr == source) continue;
-            try {
-                if (exchangeFingerprint(rr).equals(sourceFingerprint)) continue;
-                candidates.add(rr);
-            } catch (Exception ignored) {}
-        }
-        if (candidates.isEmpty()) {
+        logoutInvalidationCompareInternal(plan, source, null);
+    }
+
+    /** Headless entry point: resolve the candidate by fingerprint instead of
+     * prompting. Null falls through to the dialog; a non-null fingerprint
+     * with no exchangePool match is its own distinct "inconclusive". */
+    public void logoutInvalidationCompare(TestPlan plan, HttpRequestResponse source, String candidateFingerprint) {
+        if (candidateFingerprint == null) { logoutInvalidationCompareInternal(plan, source, null); return; }
+        HttpRequestResponse explicit = exchangePool.get(candidateFingerprint);
+        if (explicit == null) {
             statusFor(plan, source, "inconclusive", 0, false,
-                    "No other captured exchange is available. Capture a request to a protected resource "
-                            + "made BEFORE this logout, using the same session, and retry.", "");
+                    "No captured exchange in the pool matches the supplied candidate fingerprint '" + candidateFingerprint + "'.", "");
             return;
         }
+        logoutInvalidationCompareInternal(plan, source, explicit);
+    }
 
-        String[] labels = new String[candidates.size()];
-        for (int i = 0; i < candidates.size(); i++) {
-            HttpRequestResponse rr = candidates.get(i);
-            labels[i] = rr.request().method() + " " + rr.request().url() + " [" + exchangeFingerprint(rr).substring(0, 8) + "]";
-        }
-        int selected;
-        try {
-            selected = JOptionPane.showOptionDialog(null,
-                    "Select the pre-logout request to a PROTECTED resource, made with the SAME session "
-                            + "as the logout request being validated.\n\n"
-                            + "This assertion is analyst-controlled; the harness will not guess which request that is.",
-                    "Select pre-logout protected request", JOptionPane.DEFAULT_OPTION, JOptionPane.PLAIN_MESSAGE, null, labels, labels[0]);
-        } catch (Exception e) {
-            statusFor(plan, source, "inconclusive", 0, false, "No comparison exchange was selected.", "");
-            return;
-        }
-        if (selected < 0) { statusFor(plan, source, "inconclusive", 0, false, "Comparison cancelled.", ""); return; }
+    private void logoutInvalidationCompareInternal(TestPlan plan, HttpRequestResponse source, HttpRequestResponse explicitCandidate) {
+        PoolCandidateResolver.Resolution r = PoolCandidateResolver.resolve(
+                source, exchangePool, rr -> true, explicitCandidate);
 
-        HttpRequestResponse protectedResource = candidates.get(selected);
+        HttpRequestResponse protectedResource;
+        switch (r.outcome) {
+            case NO_CANDIDATES -> {
+                statusFor(plan, source, "inconclusive", 0, false,
+                        "No other captured exchange is available. Capture a request to a protected resource "
+                                + "made BEFORE this logout, using the same session, and retry.", "");
+                return;
+            }
+            case NEEDS_PICKER -> {
+                List<HttpRequestResponse> candidates = r.pickerCandidates;
+                String[] labels = new String[candidates.size()];
+                for (int i = 0; i < candidates.size(); i++) {
+                    HttpRequestResponse rr = candidates.get(i);
+                    labels[i] = rr.request().method() + " " + rr.request().url() + " [" + exchangeFingerprint(rr).substring(0, 8) + "]";
+                }
+                int selected;
+                try {
+                    selected = JOptionPane.showOptionDialog(null,
+                            "Select the pre-logout request to a PROTECTED resource, made with the SAME session "
+                                    + "as the logout request being validated.\n\n"
+                                    + "This assertion is analyst-controlled; the harness will not guess which request that is.",
+                            "Select pre-logout protected request", JOptionPane.DEFAULT_OPTION, JOptionPane.PLAIN_MESSAGE, null, labels, labels[0]);
+                } catch (Exception e) {
+                    statusFor(plan, source, "inconclusive", 0, false, "No comparison exchange was selected.", "");
+                    return;
+                }
+                if (selected < 0) { statusFor(plan, source, "inconclusive", 0, false, "Comparison cancelled.", ""); return; }
+                protectedResource = candidates.get(selected);
+            }
+            default -> protectedResource = r.candidate; // RESOLVED
+        }
+
         var reuseReplay = api.http().sendRequest(protectedResource.request());
         if (reuseReplay.response() == null) {
             statusFor(plan, source, "inconclusive", 0, false,
