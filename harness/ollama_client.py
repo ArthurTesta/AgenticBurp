@@ -12,6 +12,21 @@ class OllamaError(RuntimeError):
     pass
 
 
+class OllamaModelNotFoundError(OllamaError):
+    """The requested model tag doesn't exist (Ollama's real, verified
+    behavior: HTTP 404 with {"error": "model '<name>' not found"} --
+    confirmed directly against a live local Ollama instance, not assumed).
+    This is a permanent, config-level problem -- retrying or waiting won't
+    fix it -- unlike a real outage/timeout, which the shared circuit
+    breaker below is meant to protect against. Deliberately excluded from
+    that breaker's failure count (see OllamaClient.__init__): a coordinator
+    or agent misconfigured with a nonexistent model tag would otherwise
+    3-strike the SAME shared breaker every other agent uses, and start
+    rejecting every unrelated, correctly-configured agent's calls too --
+    found live, this session, tracing exactly that symptom."""
+    pass
+
+
 @dataclass
 class OllamaResult:
     """Parsed response body plus real token usage from the same call --
@@ -42,7 +57,24 @@ class OllamaClient:
         # failures and the breaker can never trip for that call site,
         # even while a long-lived client's breaker is open. See
         # circuit_breaker.get_ollama_circuit_breaker's docstring.
-        self.circuit_breaker = circuit_breaker.get_ollama_circuit_breaker("ollama")
+        self.circuit_breaker = circuit_breaker.get_ollama_circuit_breaker(
+            "ollama",
+            # Every field spelled out explicitly, matching OllamaCircuitBreaker's
+            # own hardcoded defaults exactly -- its merge logic uses `x or default`,
+            # so passing a config with any field left at CircuitBreakerConfig's
+            # own generic defaults (5/3/30.0/1) would silently override the
+            # Ollama-specific ones (3/2/60.0/1) for THOSE fields too, not just
+            # excluded_exceptions. Only real change here: exclude
+            # OllamaModelNotFoundError, see its own docstring for why.
+            circuit_breaker.CircuitBreakerConfig(
+                failure_threshold=3,
+                success_threshold=2,
+                timeout_seconds=60.0,
+                half_open_max_requests=1,
+                excluded_exceptions=(OllamaModelNotFoundError,),
+                enabled=True,
+            ),
+        )
         
         # Initialize rate limiter
         self.rate_limiter = rate_limiter.get_token_limiter("ollama")
@@ -121,6 +153,17 @@ class OllamaClient:
                         error=e,
                     )
                     raise OllamaError(f"Ollama request timed out after {self.timeout_seconds}s") from e
+
+                if resp.status_code == 404:
+                    # Verified directly against a live Ollama instance: this
+                    # is specifically "model tag doesn't exist" -- see
+                    # OllamaModelNotFoundError's own docstring for why this
+                    # must not count as a circuit-breaker failure.
+                    err = OllamaModelNotFoundError(
+                        f"Model '{model}' not found on this Ollama instance: {resp.text[:500]}"
+                    )
+                    self.audit_logger.log_llm_error(model=model, error=err)
+                    raise err
 
                 if resp.status_code != 200:
                     self.audit_logger.log_llm_error(

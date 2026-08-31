@@ -85,4 +85,35 @@ class PlannerTests(unittest.TestCase):
         plans = plans_for_findings(self.exchange, [f])
         self.assertEqual([p.capability for p in plans], ["sql_injection_validation"])
 
+    def test_literal_burp_capability_hints_do_not_get_mislabeled_local_tool(self):
+        """Live bug: a model writing "validation_hints": ["jwt_validation"]
+        directly (a natural thing to write, and not itself wrong) used to
+        reach the tuple-match branch in plans_for_findings and get
+        execution_plane="local_tool" -- even though jwt_validation (and its
+        siblings below) have a real Burp executor (see HarnessPanel.java's
+        IMPLEMENTED_BURP_CAPABILITIES). Clicking "Execute selected test
+        plan" on the resulting plan then failed with Burp's generic
+        "Plan is not assigned to Burp." error. Only sql_injection_validation
+        (sqlmap, a genuine external binary) should ever come out local_tool.
+        """
+        for cap in ("jwt_validation", "xxe_validation", "csrf_validation",
+                    "file_upload_validation", "nosql_validation",
+                    "command_injection_validation", "ssti_validation",
+                    "open_redirect_validation"):
+            f = Finding(vulnerability_class="something_unresolved", confidence=.6,
+                        severity="medium", summary="x", evidence="y", suggested_test="z",
+                        basis="derived", validation_hints=[cap])
+            plans = plans_for_findings(self.exchange, [f])
+            matching = [p for p in plans if p.capability == cap]
+            self.assertEqual(len(matching), 1, f"expected exactly one {cap} plan, got {plans}")
+            self.assertEqual(matching[0].execution_plane, "burp",
+                              f"{cap} must be execution_plane=burp, not local_tool")
+
+        f_sqlmap = Finding(vulnerability_class="something_unresolved", confidence=.6,
+                            severity="medium", summary="x", evidence="y", suggested_test="z",
+                            basis="derived", validation_hints=["sql_injection_validation"])
+        plans_sqlmap = plans_for_findings(self.exchange, [f_sqlmap])
+        self.assertEqual([p.capability for p in plans_sqlmap], ["sql_injection_validation"])
+        self.assertEqual(plans_sqlmap[0].execution_plane, "local_tool")
+
 if __name__ == "__main__": unittest.main()

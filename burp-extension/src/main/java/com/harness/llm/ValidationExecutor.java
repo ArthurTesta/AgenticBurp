@@ -15,8 +15,10 @@ import com.harness.llm.logic.CorsMisconfigLogic;
 import com.harness.llm.logic.CspClickjackingLogic;
 import com.harness.llm.logic.CsrfLogic;
 import com.harness.llm.logic.DeserializationFormatLogic;
+import com.harness.llm.logic.ExchangeFingerprint;
 import com.harness.llm.logic.FileUploadLogic;
 import com.harness.llm.logic.HeaderInjectionLogic;
+import com.harness.llm.logic.IdentityCandidateResolver;
 import com.harness.llm.logic.IdentityCompareLogic;
 import com.harness.llm.logic.IdentityLabelResolver;
 import com.harness.llm.logic.InfoDisclosureLogic;
@@ -227,58 +229,83 @@ public final class ValidationExecutor {
      * A's own request replayed as-is.
      */
     private void identityCompare(TestPlan plan, HttpRequestResponse source) {
+        identityCompareInternal(plan, source, null);
+    }
+
+    /**
+     * Headless entry point: resolve the candidate by fingerprint instead of
+     * prompting. A null fingerprint falls through to the dialog (identical
+     * to identityCompare(plan, source) above); a non-null fingerprint with
+     * no exchangePool match is its own distinct "inconclusive" outcome, not
+     * silently treated as "no explicit candidate supplied".
+     */
+    public void identityCompare(TestPlan plan, HttpRequestResponse source, String candidateFingerprint) {
+        if (candidateFingerprint == null) { identityCompareInternal(plan, source, null); return; }
+        HttpRequestResponse explicit = exchangePool.get(candidateFingerprint);
+        if (explicit == null) {
+            statusFor(plan, source, "inconclusive", 0, false,
+                    "No captured exchange in the pool matches the supplied candidate fingerprint '" + candidateFingerprint + "'.", "");
+            return;
+        }
+        identityCompareInternal(plan, source, explicit);
+    }
+
+    /** Headless entry point for a caller that already holds the candidate HttpRequestResponse. */
+    public void identityCompare(TestPlan plan, HttpRequestResponse source, HttpRequestResponse explicitCandidate) {
+        identityCompareInternal(plan, source, explicitCandidate);
+    }
+
+    private void identityCompareInternal(TestPlan plan, HttpRequestResponse source, HttpRequestResponse explicitCandidate) {
         boolean isIdor = "cross_identity_compare".equals(plan.capability);
 
-        List<HttpRequestResponse> candidates = new ArrayList<>();
-        List<UrlIdentifierDiff.Diff> diffs = new ArrayList<>();
-        String sourceFingerprint = exchangeFingerprint(source);
-        for (HttpRequestResponse rr : exchangePool.values()) {
-            if (rr == null || rr == source) continue;
-            try {
-                if (exchangeFingerprint(rr).equals(sourceFingerprint)) continue;
-                if (isIdor) {
-                    Optional<UrlIdentifierDiff.Diff> d =
-                            UrlIdentifierDiff.singleDifferingIdentifier(source.request().url(), rr.request().url());
-                    if (d.isPresent()) { candidates.add(rr); diffs.add(d.get()); }
-                } else if (rr.request().url().equals(source.request().url())) {
-                    candidates.add(rr); diffs.add(null);
+        IdentityCandidateResolver.Resolution r =
+                IdentityCandidateResolver.resolve(source, exchangePool, isIdor, explicitCandidate);
+
+        HttpRequestResponse candidate;
+        UrlIdentifierDiff.Diff diff;
+        switch (r.outcome) {
+            case NO_CANDIDATES -> {
+                String need = isIdor
+                        ? "No second captured request referencing a different object identifier for the same endpoint shape is available. Capture the same operation for a second identity with a different object id and retry."
+                        : "No second captured request for the same URL from a different identity is available. Capture the same operation as a second identity and retry.";
+                statusFor(plan, source, "inconclusive", 0, false, need, "");
+                return;
+            }
+            case NEEDS_PICKER -> {
+                List<HttpRequestResponse> candidates = r.pickerCandidates;
+                List<UrlIdentifierDiff.Diff> diffs = r.pickerDiffs;
+
+                String host = netloc(source.request().url());
+                Map<String, String> sessionLabelsByFingerprint = fetchSessionLookup(host);
+
+                String[] labels = new String[candidates.size()];
+                for (int i = 0; i < candidates.size(); i++) {
+                    HttpRequestResponse rr = candidates.get(i);
+                    String fullFingerprint = exchangeFingerprint(rr);
+                    labels[i] = IdentityLabelResolver.labelFor(
+                            rr.request().method(), rr.request().url(), fullFingerprint.substring(0, 8),
+                            fullFingerprint, sessionLabelsByFingerprint);
                 }
-            } catch (Exception ignored) {}
-        }
+                final int[] selected = {-1};
+                try {
+                    selected[0] = JOptionPane.showOptionDialog(null,
+                            "Select the captured request made as the comparison identity (identity B).\n\n" +
+                                    "This assertion is analyst-controlled; the harness will not invent credentials or session state.",
+                            "Select comparison identity", JOptionPane.DEFAULT_OPTION, JOptionPane.PLAIN_MESSAGE, null, labels, labels[0]);
+                } catch (Exception e) {
+                    statusFor(plan, source, "inconclusive", 0, false, "No comparison identity was selected.", "");
+                    return;
+                }
+                if (selected[0] < 0) { statusFor(plan, source, "inconclusive", 0, false, "Comparison cancelled.", ""); return; }
 
-        if (candidates.isEmpty()) {
-            String need = isIdor
-                    ? "No second captured request referencing a different object identifier for the same endpoint shape is available. Capture the same operation for a second identity with a different object id and retry."
-                    : "No second captured request for the same URL from a different identity is available. Capture the same operation as a second identity and retry.";
-            statusFor(plan, source, "inconclusive", 0, false, need, "");
-            return;
+                candidate = candidates.get(selected[0]);
+                diff = diffs.get(selected[0]);
+            }
+            default -> { // RESOLVED
+                candidate = r.candidate;
+                diff = r.diff;
+            }
         }
-
-        String host = netloc(source.request().url());
-        Map<String, String> sessionLabelsByFingerprint = fetchSessionLookup(host);
-
-        String[] labels = new String[candidates.size()];
-        for (int i = 0; i < candidates.size(); i++) {
-            HttpRequestResponse rr = candidates.get(i);
-            String fullFingerprint = exchangeFingerprint(rr);
-            labels[i] = IdentityLabelResolver.labelFor(
-                    rr.request().method(), rr.request().url(), fullFingerprint.substring(0, 8),
-                    fullFingerprint, sessionLabelsByFingerprint);
-        }
-        final int[] selected = {-1};
-        try {
-            selected[0] = JOptionPane.showOptionDialog(null,
-                    "Select the captured request made as the comparison identity (identity B).\n\n" +
-                            "This assertion is analyst-controlled; the harness will not invent credentials or session state.",
-                    "Select comparison identity", JOptionPane.DEFAULT_OPTION, JOptionPane.PLAIN_MESSAGE, null, labels, labels[0]);
-        } catch (Exception e) {
-            statusFor(plan, source, "inconclusive", 0, false, "No comparison identity was selected.", "");
-            return;
-        }
-        if (selected[0] < 0) { statusFor(plan, source, "inconclusive", 0, false, "Comparison cancelled.", ""); return; }
-
-        HttpRequestResponse candidate = candidates.get(selected[0]);
-        UrlIdentifierDiff.Diff diff = diffs.get(selected[0]);
 
         var sourceReplay = api.http().sendRequest(source.request());
         var candidateReplay = api.http().sendRequest(candidate.request());
@@ -1268,25 +1295,11 @@ public final class ValidationExecutor {
      * sides agree.
      */
     public static String exchangeFingerprint(HttpRequestResponse rr){
-        try{ var req=rr.request(); MessageDigest md=MessageDigest.getInstance("SHA-256"); StringBuilder m=new StringBuilder();
-            m.append(req.method().toUpperCase()).append('\u001f').append(req.url()).append('\u001f');
-            Map<String, String> merged = new java.util.LinkedHashMap<>();
-            for (HttpHeader h : req.headers()) {
-                merged.merge(h.name(), h.value(), (oldValue, newValue) -> oldValue + "\n" + newValue);
-            }
-            // Sort by the ORIGINAL-case key first, matching Python's
-            // sorted(dict.items()) exactly -- then lowercase only for the
-            // output string. Lowercasing before sorting would give a
-            // different order whenever two header names' relative order
-            // depends on case (e.g. "Content-Type" sorts before "accept"
-            // by original case, but after it if both are lowercased
-            // first) -- a real, if narrow, way these two sides could
-            // still silently disagree even with merging fixed.
-            merged.entrySet().stream()
-                    .sorted(Map.Entry.comparingByKey())
-                    .forEach(h -> m.append(h.getKey().toLowerCase(Locale.ROOT)).append(':').append(h.getValue()).append('\u001f'));
-            m.append(req.bodyToString()); return HexFormat.of().formatHex(md.digest(m.toString().getBytes(StandardCharsets.UTF_8)));
-        }catch(Exception e){return "";}
+        // Delegates to logic.ExchangeFingerprint so IdentityCandidateResolver
+        // (Montoya-stub-only, headlessly testable) can share this exact
+        // algorithm without pulling in this class (needs HarnessClient/Gson
+        // to compile) -- see that class own doc comment.
+        return ExchangeFingerprint.compute(rr);
     }
 
     /**

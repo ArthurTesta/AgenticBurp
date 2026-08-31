@@ -127,8 +127,19 @@ def plans_for_findings(exchange: HttpExchange, findings: list[Finding]) -> list[
             elif hint in _CAPABILITIES:
                 cap, requires = _CAPABILITIES[hint]
                 plane = "burp"
-            elif hint in ("sql_injection_validation", "jwt_validation", "xxe_validation", "csrf_validation", "file_upload_validation", "nosql_validation", "command_injection_validation", "ssti_validation", "open_redirect_validation"):
+            elif hint == "sql_injection_validation":
+                # The only genuine local_tool capability in this group --
+                # sqlmap is a real external binary, not a Burp executor.
                 cap, requires, plane = hint, True, "local_tool"
+            elif hint in ("jwt_validation", "xxe_validation", "csrf_validation", "file_upload_validation", "nosql_validation", "command_injection_validation", "ssti_validation", "open_redirect_validation"):
+                # These all have (or, for nosql_validation, are deliberately
+                # missing -- see HANDOVER.md 5f) a Burp executor, not a
+                # local_tool one -- must match the plane the category-based
+                # branch above already assigns for the same capabilities
+                # (_CAPABILITIES), or a plan reached via this literal-hint
+                # path instead gets an execution_plane Burp can never run,
+                # producing "Plan is not assigned to Burp." on click.
+                cap, requires, plane = hint, True, "burp"
             else:
                 continue
             key = (finding.vulnerability_class, cap)

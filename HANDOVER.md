@@ -1813,6 +1813,279 @@ for what's needed once it's in place.
 
 ---
 
+## 5n. Headless cross-identity IDOR proven live for the first time; an
+execution_plane drift bug fixed; a real, live circuit-breaker collateral-
+damage bug found and fixed
+
+REVIEW.md (a senior architecture/OWASP audit run against this project,
+independent of HANDOVER's own session-by-session log) named the single
+biggest architectural gap as: analysis is single-exchange, so IDOR/authz
+findings are never actually *proven*, only guessed at by an LLM from one
+request. Investigation confirmed the picture was narrower than "missing":
+`IdentityCompareLogic.java`'s source/candidate/attempt/anon 4-probe
+comparison (with an anonymous-baseline check to rule out "this is just a
+public resource") already existed and was already unit-tested — but was
+reachable ONLY via a human clicking a `JOptionPane` in Burp to hand-pick
+the comparison exchange. PixelMart's own test target already captures a
+genuine two-identity scenario (Alice/Bob) specifically for this (TP3/TP4
+IDOR), but the scoring scripts threw the identity relationship away and
+scored both requests as independent single-exchange guesses.
+
+**Made headless, both sides, verified real:**
+
+- Java: `ValidationExecutor.identityCompare()` split into
+  `identityCompareInternal` plus two new public overloads
+  (`identityCompare(plan, source, candidateFingerprint)` and
+  `identityCompare(plan, source, explicitCandidate)`) that skip the
+  `JOptionPane` when a candidate is supplied explicitly. The
+  candidate-selection *decision* (pool scan / explicit lookup / diff
+  computation) was extracted into a new, Montoya-stub-only
+  `IdentityCandidateResolver.java` so it's headlessly testable the same
+  way every other `logic/` class already is — 8 new tests.
+  `ValidationExecutor.exchangeFingerprint()`'s body was itself extracted
+  into a new `logic/ExchangeFingerprint.java` (delegated to, not
+  duplicated — every existing call site unchanged) specifically because
+  `IdentityCandidateResolver` needed to call it, and calling
+  `ValidationExecutor`'s own static method directly broke the isolated
+  `logic/`-only javac/RunTests compilation this whole test class depends
+  on (`ValidationExecutor.java` itself doesn't compile standalone — needs
+  `HarnessClient`/Gson, per `dev-tools/README.md`). Found by actually
+  running the verification command, not by inspection.
+  ```bash
+  JAVAC="/c/Users/arthu/AppData/Local/Programs/BurpSuiteCommunity/jre/bin/javac.exe"
+  JAVA="/c/Users/arthu/AppData/Local/Programs/BurpSuiteCommunity/jre/bin/java.exe"
+  find burp-extension/src/main/java/com/harness/llm/logic burp-extension/src/test/java/com/harness/llm/logic dev-tools/stubs -name "*.java" > /tmp/logicsrc.txt
+  "$JAVAC" -d /tmp/logictest -nowarn @/tmp/logicsrc.txt && "$JAVAC" -d /tmp/logictest -nowarn dev-tools/RunTests.java
+  cd /tmp/logictest && "$JAVA" RunTests $(find /c/Users/arthu/Documents/AgenticVibe/burp-extension/src/test/java/com/harness/llm/logic -name '*Test.java' | sed 's|.*[\\/]logic[\\/]||; s|\.java||' | sed 's|^|com.harness.llm.logic.|')
+  # === TOTAL: 177 passed, 0 failed ===  (169 pre-existing + 8 new)
+  ```
+  Main-tree compile baseline unchanged: still exactly 19 pre-existing
+  missing-jar errors, zero new, across every file touched this pass.
+
+- Python: `IdentityCompareLogic`'s algorithm ported line-for-line to new
+  `harness/identity_compare.py` (same verdict tiers, same 0.70
+  trigram-Jaccard threshold, same confidence constants) — 12 tests ported
+  1:1 from `IdentityCompareLogicTest.java`'s fixture strings, all passing,
+  confirming real behavioral parity rather than assumed parity.
+
+- New `testing/test-target/cross_identity_probe.py`: a fully
+  self-contained script (bare `requests`, no Ollama, no Burp, no
+  `harness/server.py`) that performs the actual live 4-probe comparison
+  against a freshly-restarted PixelMart. **Run for real, live, this
+  session — first non-LLM-guessed proof in this project's history**:
+  ```
+  [TP3 profile IDOR] CONFIRMED (confidence=0.91) -- ...
+  [TP4 order IDOR]   CONFIRMED (confidence=0.91) -- ...
+  ```
+  Precision spot-checked too, not just recall: run manually against
+  `GET /api/products` (a genuinely public endpoint) → `INCONCLUSIVE`,
+  correctly not a false CONFIRMED.
+
+**Deliberately deferred, not touched this pass**: `sessionFixationCompare`/
+`logoutInvalidationCompare`'s own `JOptionPane`s (same fix would apply,
+same class); race conditions/TP8; any change to `orchestrator.py`,
+`planner.py`'s `plans_for_findings` flow, or `TestPlan`'s schema — the
+live `/analyze` production path is byte-for-byte unchanged. This closes
+one concrete slice of REVIEW.md's #3 (scope mismatch), not the whole
+thing — multi-request testing for `auth`/`business_logic` findings the
+LLM pipeline itself never requests is still exactly the gap REVIEW.md
+named.
+
+### A live, real bug found and fixed while testing the extension: `execution_plane` drift
+
+Clicking "Execute selected test plan" in Burp for a `sql_injection_validation`
+plan produced `[sql_injection_validation] ERROR: Plan is not assigned to
+Burp.` `sql_injection_validation` (sqlmap) is *correctly* `local_tool` —
+that part isn't a bug. The real bug, in `harness/planner.py`'s
+hint-based branch: `jwt_validation`, `xxe_validation`, `csrf_validation`,
+`file_upload_validation`, `command_injection_validation`,
+`ssti_validation`, and `open_redirect_validation` were ALSO hardcoded
+`local_tool` there, even though `HarnessPanel.java`'s own
+`IMPLEMENTED_BURP_CAPABILITIES` set proves all 7 now have real Burp
+executors (added in earlier sessions, after this hint-list was written —
+the two drifted apart, exactly the "no shared source of truth between
+the two" risk that set's own doc comment already named). Reproduces
+whenever a model's own `validation_hints` contains the literal capability
+string before the resolved category does (order-dependent first-write-wins
+via the `seen` dedup set) — confirmed with a new test that reproduces
+this exact ordering. Fixed by splitting the tuple into the one genuine
+`local_tool` entry (`sql_injection_validation`) and the 7 that must match
+`_CAPABILITIES`'s own `plane="burp"` treatment. Also fixed
+`HarnessPanel.choosePlan()`'s picker: `local_tool` plans now get their own
+explicit suffix (`"(runs via the harness's active validators, not this
+button)"`) instead of silently inviting a guaranteed-to-fail click, same
+spirit as the existing `"(not yet implemented)"` suffix.
+```bash
+cd harness && python -m unittest test_planner -v   # 8 tests, was 7
+```
+
+### A live, real bug found and fixed while testing the extension: circuit-breaker collateral damage
+
+Live symptom: `auth` and `business_logic` (both correctly configured,
+`llama3.1:8b` per `config.yaml`) failed outright with `Circuit breaker
+'ollama' is OPEN. Service unavailable. Retry after 60.0s.` while other
+agents in the same dispatch succeeded. Root cause, confirmed by reading
+`ollama_client.py`/`circuit_breaker.py`: **every `OllamaClient` instance
+shares one single, process-wide circuit breaker literally named
+`"ollama"`**, wrapping every Ollama call from every agent regardless of
+model, with `failure_threshold=3`. `ollama_client.py` raised the exact
+same generic `OllamaError` for a real outage (connection refused,
+timeout) AND for Ollama's own HTTP 404 "this model tag doesn't exist"
+response (verified directly: `curl` against a live local Ollama with a
+made-up model name returns `404 {"error": "model '...' not found"}`) —
+both counted identically toward the same shared failure counter. Three
+calls to ANY misconfigured model anywhere (coordinator, one agent, the
+critique pass) trips the breaker and rejects every OTHER agent's calls,
+on any model, for the next 60 seconds — a permanent config problem
+masquerading as, and triggering the same response to, a transient outage.
+
+**Important correction, found while root-causing this live**: at the
+exact moment this was investigated, both `qwen3:8b` (then configured as
+`coordinator.model`) and even `gemma4:31b-cloud` (an earlier, previously
+suspected-broken coordinator setting — turned out to be a real, working
+Ollama Cloud model once reachable, confirmed by a direct `curl` returning
+a real completion) responded successfully — so the SPECIFIC trip observed
+live was probably NOT a model-not-found case. The fix below is a real,
+independently-worth-having correctness fix regardless (the conflation is
+wrong on its own terms, and this exact scenario **is** what happens the
+moment any model tag actually is wrong), but whoever picks this up next
+should look at resource contention as the more likely trigger for
+*this particular* incident: `config.yaml`'s `agents:` section still pins
+every one of `sqli`/`xss`/`idor`/`auth`/`business_logic`/etc. to
+`llama3.1:8b` regardless of `coordinator.model` — changing the
+coordinator model does NOT change what any specialist agent actually
+reasons with, so 8 agents all hitting the same `llama3.1:8b` under
+`concurrency.max_parallel_agents: 3` alongside a separate `qwen3:8b`
+coordinator call is a real, plausible way to legitimately time out 3
+calls in a row on modest hardware. Worth checking `ollama.timeout_seconds`
+(120s) against real observed latency under that load before assuming the
+breaker itself is mis-tuned.
+
+Fixed: new `OllamaModelNotFoundError(OllamaError)`, raised specifically
+on HTTP 404 (checked before the generic non-200 branch), added to the
+shared "ollama" breaker's `excluded_exceptions` — every other
+`CircuitBreakerConfig` field spelled out explicitly to avoid
+`OllamaCircuitBreaker`'s `x or default`-based config-merge silently
+overriding an Ollama-specific default (3/2/60.0/1) with
+`CircuitBreakerConfig`'s own generic dataclass defaults (5/3/30.0/1) the
+moment any config object is passed at all — a real footgun in the
+existing merge logic, worked around here rather than fixed at its root
+(out of scope for this fix). 3 new tests in `test_ollama_client.py`,
+including the actual regression shape: 5 consecutive 404s from one
+"bad-tag" client, then a fresh client sharing the same breaker on a
+genuinely different, working model succeeds normally.
+```bash
+cd harness && python -m unittest test_ollama_client -v   # 8 tests, was 5
+python -m unittest discover -p "test_*.py"                # 522 tests, OK
+```
+
+### A real Gradle build (a different environment than every sandbox this project has run in before) found two more real gaps this session's own headless verification couldn't see
+
+The user rebuilds the real extension jar from a GitHub Codespace against
+this repo's real `build.gradle` (real Montoya API + Gson from Maven
+Central, real Gradle) — a genuinely different, and stricter, environment
+than the `dev-tools/stubs`-plus-plain-`javac` verification every `logic/`
+test in this project (including this session's own new
+`IdentityCandidateResolverTest`) has ever been checked against. That real
+build surfaced two things the stub-based check structurally could not:
+
+1. **`build.gradle` had no `testCompileOnly` for the Montoya API.**
+   Gradle's Java plugin does not extend a main source set's `compileOnly`
+   dependencies to the test source set automatically. Every test file in
+   this project before today avoided the problem entirely by only using
+   each `*Logic` class's own plain `Probe`/`Evidence`-style value types,
+   never a raw Montoya interface directly.
+   `IdentityCandidateResolverTest.java` is the first test that needs real
+   `HttpRequestResponse`/`HttpRequest` objects (`IdentityCandidateResolver`'s
+   whole job is picking a candidate directly out of a
+   `Map<String, HttpRequestResponse>`), and hit
+   `package burp.api.montoya.http.message does not exist` the moment it
+   tried. **First fix attempt was itself wrong, in a way only a real
+   Gradle `test` run (not compilation) surfaced**: added `testCompileOnly
+   'net.portswigger.burp.extensions:montoya-api:2023.12.1'` — this made
+   `compileTestJava` succeed, but the very next real Gradle run then
+   failed all discovery with `DiscoveryIssueException` /
+   `JUnit Jupiter > initializationError` ("1 test completed, 1 failed").
+   Root cause: `compileOnly`-family scopes are deliberately excluded from
+   Gradle's *runtime* classpath, by design — but `IdentityCandidateResolverTest`
+   uses `java.lang.reflect.Proxy` (see item 2 below), which needs
+   `HttpRequest.class`/`HttpRequestResponse.class`/`HttpHeader.class`
+   loadable at TEST EXECUTION time, not just compile time. Reproduced
+   directly, standalone: running the compiled test class with the real
+   jar present on the classpath passes 8/8; running the exact same
+   compiled classes with the jar removed from the classpath (only, not
+   recompiled) throws `ClassNotFoundException:
+   burp.api.montoya.http.message.requests.HttpRequest` — the identical
+   shape to the user's real failure. **Corrected fix**: `testImplementation`
+   instead of `testCompileOnly` (puts the jar on both the test compile AND
+   test runtime classpath); main's own `compileOnly` is untouched and
+   correct as-is, since Burp itself supplies the real Montoya
+   implementation to the extension at ITS runtime — only the test suite,
+   which Gradle runs standalone with no Burp process behind it, needs the
+   jar bundled onto its own runtime classpath.
+2. **The real `HttpRequest`/`HttpRequestResponse` interfaces are far
+   larger than `dev-tools/stubs`' simplified versions** — confirmed by
+   pulling the real jar from Maven Central directly and reflectively
+   listing every declared method (no `javap`/`jar` tool in Burp's bundled
+   JRE, so this was done via a tiny throwaway `URLClassLoader` +
+   `Class.getMethods()` probe rather than assumed): the real `HttpRequest`
+   has ~65 abstract methods, `HttpRequestResponse` has ~15, against the
+   stub's 12 and 2 respectively. A hand-written `Fake...implements
+   HttpRequest` (this session's first attempt) compiles fine against the
+   simplified stub but fails "is not abstract and does not override
+   abstract method ..." against the real jar — and would need updating
+   every time Montoya adds another method regardless. **Fixed by rewriting
+   the test's fakes to use `java.lang.reflect.Proxy`** instead of
+   hand-written classes: a dynamic proxy satisfies the full interface
+   automatically (unhandled methods throw `UnsupportedOperationException`,
+   same intent as before), and needs zero changes if Montoya's API grows,
+   since `Proxy.newProxyInstance` only needs the interface's `Class`
+   object, not a fixed method list — verified to work identically against
+   both the real jar and the simplified stub.
+
+**Verified as genuinely fixed against the real API, not just reasoned
+about** — this machine has no working Gradle (the only cached distribution,
+8.7, cannot run its own daemon under Burp's bundled JDK 26 at all:
+`Unsupported class file major version 70`, a hard Gradle-runtime
+ceiling around JDK 22 unrelated to anything in this codebase), so
+verification here was done by pulling the real Montoya API jar plus real
+`junit-jupiter`/`junit-platform-console-standalone` jars from Maven
+Central directly and compiling + running with plain `javac`/`java`,
+bypassing Gradle entirely but exercising the exact same real dependency
+that broke the Codespace build:
+```bash
+# compiled clean against the REAL jar (zero errors, not the stub):
+javac -cp "montoya-api-2023.12.1.jar;junit-jupiter-api-5.14.4.jar" -d out \
+  IdentityCandidateResolver.java UrlIdentifierDiff.java ExchangeFingerprint.java \
+  IdentityCandidateResolverTest.java
+# ran for real via the real JUnit 5 platform:
+java -jar junit-platform-console-standalone-1.14.4.jar execute \
+  --class-path "out;montoya-api-2023.12.1.jar" \
+  --select-class com.harness.llm.logic.IdentityCandidateResolverTest --details=tree
+# 8 tests found, 8 successful, 0 failed
+
+# the runtime-classpath gap reproduced standalone, same command, jar
+# removed from the classpath only (already-compiled classes untouched):
+java -jar junit-platform-console-standalone-1.14.4.jar execute \
+  --class-path "out" \
+  --select-class com.harness.llm.logic.IdentityCandidateResolverTest --details=tree
+# Caused by: java.lang.ClassNotFoundException: burp.api.montoya.http.message.requests.HttpRequest
+# 1 tests found, 1 tests failed -- byte-for-byte the shape of the real Gradle failure
+```
+Whoever verifies a Java change here next: this session's own
+`dev-tools/stubs`-based verification is necessary but demonstrably **not
+sufficient** to guarantee a real Gradle build succeeds — the stub is a
+deliberately simplified stand-in, and a test that touches a raw Montoya
+interface type can pass every sandbox check here and still fail for real,
+in TWO independent ways found this session alone (a missing test-compile
+dependency, then a compile-only-vs-runtime classpath scoping gap on top
+of that fix). Compiling AND running against the actual dependency jar
+(pulled directly from Maven Central, as done here, with and without it on
+the runtime classpath specifically) is the only way to be sure, when a
+real Gradle run isn't available.
+
+---
+
 ## 6. Still open — consolidated, current status noted
 
 1. ~~`coordinator.py`'s fail-open-to-all-36-agents fallback, unverified

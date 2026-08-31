@@ -31,6 +31,33 @@ dependencies {
     compileOnly 'net.portswigger.burp.extensions:montoya-api:2023.12.1'
     implementation 'com.google.code.gson:gson:2.10.1'
 
+    // Gradle's Java plugin does NOT extend a main source set's compileOnly
+    // dependencies to the test source set automatically -- every prior test
+    // file avoided this entirely by only using each Logic class's own plain
+    // Probe/Evidence-style value types, never a raw Montoya interface
+    // directly. IdentityCandidateResolverTest.java is the first test that
+    // builds fake HttpRequestResponse/HttpRequest/HttpHeader objects (via
+    // java.lang.reflect.Proxy -- IdentityCandidateResolver's job is picking
+    // a candidate directly out of a Map<String, HttpRequestResponse>, so
+    // its test can't avoid the real interface types the way the others do).
+    //
+    // Deliberately `testImplementation`, NOT `testCompileOnly`: the Proxy
+    // needs HttpRequest.class/HttpRequestResponse.class/HttpHeader.class
+    // resolvable at TEST EXECUTION time (Proxy.newProxyInstance loads and
+    // generates a class implementing the interface at runtime, not just
+    // compile time), and `compileOnly`-family scopes are never added to
+    // Gradle's runtime classpath by design (main's own compileOnly above is
+    // correct AS IS for that reason -- Burp itself supplies the real
+    // Montoya implementation to the extension at its actual runtime, so the
+    // jar must never be bundled into the shipped jar). `testCompileOnly`
+    // here compiled clean but then failed every test with
+    // `ClassNotFoundException: burp.api.montoya.http.message.requests.HttpRequest`
+    // the moment Gradle's `test` task actually ran them (reproduced directly:
+    // running the same compiled test class with the jar deliberately absent
+    // from the runtime classpath gives byte-for-byte this exact
+    // ClassNotFoundException) -- found live, via a real Gradle build.
+    testImplementation 'net.portswigger.burp.extensions:montoya-api:2023.12.1'
+
     // Test files under src/test/java use real JUnit 5 (Jupiter) @Test
     // methods. Without this, they compile but Gradle's default `test`
     // task finds zero discoverable tests and fails the build with

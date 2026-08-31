@@ -153,8 +153,19 @@ public class HarnessPanel extends JPanel {
 
     private TestPlan choosePlan(List<TestPlan> plans) {
         String[] labels = plans.stream().map(p -> {
-            String suffix = "burp".equalsIgnoreCase(p.execution_plane) && !IMPLEMENTED_BURP_CAPABILITIES.contains(p.capability)
-                    ? " (not yet implemented)" : "";
+            String suffix;
+            if ("burp".equalsIgnoreCase(p.execution_plane)) {
+                suffix = IMPLEMENTED_BURP_CAPABILITIES.contains(p.capability) ? "" : " (not yet implemented)";
+            } else {
+                // local_tool plans (e.g. sql_injection_validation/sqlmap) can
+                // never be run from this button -- ValidationExecutor.execute()
+                // rejects anything whose execution_plane isn't "burp" outright
+                // ("Plan is not assigned to Burp."). Say so here, before the
+                // analyst spends an approval click on a guaranteed failure,
+                // not after -- same reasoning as the "(not yet implemented)"
+                // suffix above, for a different reason a plan can't run here.
+                suffix = " (runs via the harness's active validators, not this button)";
+            }
             return p.capability + " [" + p.execution_plane + "]" + suffix;
         }).toArray(String[]::new);
         int idx = JOptionPane.showOptionDialog(this, "Choose a proposed validation:", "Validation plan",
