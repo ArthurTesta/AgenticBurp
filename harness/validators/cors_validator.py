@@ -257,17 +257,39 @@ class CorsValidator(Validator):
             
             # Check for wildcard
             acao = response.headers.get("Access-Control-Allow-Origin", "")
-            
+            acac = response.headers.get("Access-Control-Allow-Credentials", "")
+
             if acao == "*":
+                # A bare `Access-Control-Allow-Origin: *` WITHOUT
+                # `Access-Control-Allow-Credentials: true` is NOT a
+                # vulnerability -- it's the intended, low-risk pattern for a
+                # public read-only API, and browsers forbid sending
+                # credentials to a wildcard origin. Marking it vulnerable here
+                # was the single largest source of false "confirmed" findings
+                # in the Juice Shop run (58 of 60 confirmations traced to this
+                # check firing on secure and vulnerable endpoints alike). The
+                # genuinely dangerous combination -- wildcard AND credentials
+                # -- is caught, gated correctly, by _test_credentials_wildcard
+                # below; the bare case is reported as informational only so it
+                # never flips the finding's `confirmed` flag.
+                if acac.lower() == "true":
+                    return CorsTestResult(
+                        test_name="Wildcard Origin + Credentials",
+                        passed=False,
+                        severity="critical",
+                        detail="Server returns Access-Control-Allow-Origin: * together with Access-Control-Allow-Credentials: true (spec violation, credentialed cross-origin reads possible)",
+                        evidence="Access-Control-Allow-Origin: *, Access-Control-Allow-Credentials: true",
+                        vulnerable=True,
+                    )
                 return CorsTestResult(
                     test_name="Wildcard Origin",
-                    passed=False,
-                    severity="high",
-                    detail=f"Server returns Access-Control-Allow-Origin: * (allows any origin)",
-                    evidence=f"Response header: Access-Control-Allow-Origin: *",
-                    vulnerable=True,
+                    passed=True,
+                    severity="info",
+                    detail="Server returns Access-Control-Allow-Origin: * without Access-Control-Allow-Credentials -- the intended, low-risk pattern for a public read-only API. Informational, not exploitable on its own.",
+                    evidence="Response header: Access-Control-Allow-Origin: * (no Allow-Credentials)",
+                    vulnerable=False,
                 )
-            
+
             # Check if our origin is reflected
             if acao.lower() == test_origin.lower():
                 return CorsTestResult(

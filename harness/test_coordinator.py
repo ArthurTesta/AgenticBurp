@@ -100,5 +100,116 @@ class CoordinatorDispatchTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("fallback", reason)
 
 
+class CloudCoordinatorTests(unittest.IsolatedAsyncioTestCase):
+    """Cloud-primary routing (handover §7): routes on the anonymized
+    projection, uses the cloud model, and never leaks body/header values
+    across the off-prem boundary."""
+
+    def setUp(self):
+        self.ollama = AsyncMock()
+        self.available = ["sqli", "xss", "idor", "auth", "misconfig", "cors"]
+
+    def test_cloud_flags_default_off(self):
+        c = Coordinator(self.ollama, {"model": "qwen3:8b"})
+        self.assertFalse(c.cloud_primary)
+        self.assertEqual(c.cloud_model, "qwen3:8b")  # falls back to local model
+
+    def test_cloud_flags_parsed(self):
+        c = Coordinator(self.ollama, {
+            "model": "qwen3:8b", "cloud_primary": True, "cloud_model": "gemma4:31b-cloud",
+        })
+        self.assertTrue(c.cloud_primary)
+        self.assertEqual(c.cloud_model, "gemma4:31b-cloud")
+
+    async def test_cloud_routing_uses_cloud_model_and_projection(self):
+        c = Coordinator(self.ollama, {
+            "model": "qwen3:8b", "cloud_primary": True, "cloud_model": "gemma4:31b-cloud",
+        })
+        self.ollama.chat_json_metered.return_value = OllamaResult(
+            data={"dispatch": ["idor", "auth"], "reason": "id path, no auth"},
+            prompt_tokens=10, completion_tokens=5,
+        )
+        ex = HttpExchange(
+            url="https://shop.test/api/Users/35?token=SECRETVAL",
+            method="GET",
+            request_headers={"Authorization": "Bearer LEAKEDTOKENVALUE",
+                             "Cookie": "session=LEAKEDSESSION"},
+            response_status=200,
+            response_body="PROPRIETARY_BODY_CONTENT",
+        )
+        dispatch, reason = await c.choose_agents_cloud(ex, self.available)
+        self.assertEqual(dispatch, ["idor", "auth"])
+
+        # The cloud model -- not the local one -- must have been used.
+        _, kwargs = self.ollama.chat_json_metered.call_args
+        self.assertEqual(kwargs["model"], "gemma4:31b-cloud")
+
+        # Anonymization boundary: no secret value may appear in the prompt.
+        sent = kwargs["system_prompt"] + kwargs["user_prompt"]
+        for secret in ("SECRETVAL", "LEAKEDTOKENVALUE", "LEAKEDSESSION",
+                       "PROPRIETARY_BODY_CONTENT", "35"):
+            self.assertNotIn(secret, sent)
+        # ...but the routing signal (path shape, resource-id flag) survives.
+        self.assertIn("/api/Users/{id}", sent)
+
+    async def test_cloud_routing_fails_open_on_error(self):
+        c = Coordinator(self.ollama, {
+            "model": "qwen3:8b", "cloud_primary": True, "cloud_model": "gemma4:31b-cloud",
+        })
+        self.ollama.chat_json_metered.side_effect = RuntimeError("cloud unreachable")
+        ex = HttpExchange(url="https://shop.test/x", method="GET", response_status=200)
+        dispatch, reason = await c.choose_agents_cloud(ex, self.available)
+        self.assertEqual(dispatch, self.available)
+        self.assertIn("fallback", reason)
+
+
+class RespinSuggestionTests(unittest.IsolatedAsyncioTestCase):
+    """suggest_followup_agents (adaptive re-spin): excludes already-tried
+    agents, returns token counts for the ledger, and -- unlike primary
+    routing -- does NOT fail open to all agents (a clean 'nothing further'
+    is the safe answer)."""
+
+    def setUp(self):
+        self.ollama = AsyncMock()
+        self.coordinator = Coordinator(self.ollama, {
+            "model": "qwen3:8b", "cloud_primary": True, "cloud_model": "gemma4:31b-cloud",
+        })
+        self.available = ["sqli", "xss", "idor", "auth", "business_logic"]
+
+    async def test_excludes_already_tried_and_returns_tokens(self):
+        self.ollama.chat_json_metered.return_value = OllamaResult(
+            data={"dispatch": ["business_logic", "sqli"], "reason": "price field shape"},
+            prompt_tokens=42, completion_tokens=7,
+        )
+        ex = HttpExchange(url="https://shop.test/api/checkout", method="POST", response_status=200)
+        new_agents, reason, p, c = await self.coordinator.suggest_followup_agents(
+            ex, self.available, already_tried=["sqli", "xss"]
+        )
+        # sqli was already tried -> excluded; business_logic survives.
+        self.assertEqual(new_agents, ["business_logic"])
+        self.assertEqual((p, c), (42, 7))
+
+    async def test_empty_suggestion_does_not_fail_open(self):
+        self.ollama.chat_json_metered.return_value = OllamaResult(
+            data={"dispatch": [], "reason": "nothing further"},
+            prompt_tokens=30, completion_tokens=3,
+        )
+        ex = HttpExchange(url="https://shop.test/about", method="GET", response_status=200)
+        new_agents, reason, p, c = await self.coordinator.suggest_followup_agents(
+            ex, self.available, already_tried=["misconfig"]
+        )
+        self.assertEqual(new_agents, [])  # NOT self.available
+
+    async def test_error_returns_no_agents_and_zero_tokens(self):
+        self.ollama.chat_json_metered.side_effect = RuntimeError("cloud down")
+        ex = HttpExchange(url="https://shop.test/x", method="GET", response_status=200)
+        new_agents, reason, p, c = await self.coordinator.suggest_followup_agents(
+            ex, self.available, already_tried=[]
+        )
+        self.assertEqual(new_agents, [])
+        self.assertEqual((p, c), (0, 0))
+        self.assertIn("error", reason)
+
+
 if __name__ == "__main__":
     unittest.main()

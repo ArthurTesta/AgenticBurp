@@ -15,6 +15,7 @@ from validators.sqlmap import (
     _mutate_query_param,
     _responses_differ,
     _text_has_db_error_markers,
+    _inferred_content_type_for_body,
 )
 
 
@@ -108,6 +109,24 @@ class DbErrorMarkerTests(unittest.TestCase):
         self.assertFalse(_text_has_db_error_markers('{"status":"success","data":[]}'))
 
 
+class InferredContentTypeTests(unittest.TestCase):
+    def test_json_body_without_content_type(self):
+        self.assertEqual(_inferred_content_type_for_body('{"a":1}', ""), "application/json")
+        self.assertEqual(_inferred_content_type_for_body('  [1,2]', ""), "application/json")
+
+    def test_form_body_without_content_type(self):
+        self.assertEqual(
+            _inferred_content_type_for_body("a=1&b=2", ""), "application/x-www-form-urlencoded"
+        )
+
+    def test_existing_content_type_returns_none(self):
+        self.assertIsNone(_inferred_content_type_for_body('{"a":1}', "application/json"))
+        self.assertIsNone(_inferred_content_type_for_body('{"a":1}', "text/plain"))
+
+    def test_empty_body_returns_none(self):
+        self.assertIsNone(_inferred_content_type_for_body("", ""))
+
+
 class BooleanProbeFallbackTests(unittest.IsolatedAsyncioTestCase):
     def _validator(self):
         return SqlmapValidator(binary="sqlmap")
@@ -119,6 +138,50 @@ class BooleanProbeFallbackTests(unittest.IsolatedAsyncioTestCase):
             result = await v._boolean_probe_fallback(_finding(), exchange)
         mock_req.assert_not_called()
         self.assertIsNone(result)
+
+    async def test_empty_header_capture_gets_json_content_type(self):
+        """Regression (Juice Shop full-run sqlmap 0/26 diagnosis): a capture
+        with request_headers={} and a JSON body was replayed with NO
+        Content-Type, so express.json() never parsed it, req.body was empty,
+        and every payload returned an identical unparsed-body response --
+        making the differential silently impossible. The probe must now add
+        Content-Type: application/json for a JSON-shaped body."""
+        v = self._validator()
+        exchange = HttpExchange(
+            url="http://localhost:3000/rest/user/login", method="POST",
+            request_headers={},  # <-- as captured in the real run
+            request_body='{"email":"a@b.com","password":"x"}',
+            response_status=200,
+        )
+        resp_a = httpx.Response(200, content=b"x" * 500, request=httpx.Request("POST", exchange.url))
+        resp_b = httpx.Response(401, content=b"y" * 5, request=httpx.Request("POST", exchange.url))
+        with patch("httpx.AsyncClient.request", new_callable=AsyncMock,
+                   side_effect=[resp_a, resp_b]) as mock_req:
+            result = await v._boolean_probe_fallback(_finding(), exchange)
+        self.assertEqual(result.status, "confirmed")
+        # Every replayed request must carry the JSON Content-Type.
+        for call in mock_req.call_args_list:
+            headers = call.kwargs.get("headers", {})
+            ct = next((val for k, val in headers.items() if k.lower() == "content-type"), None)
+            self.assertEqual(ct, "application/json")
+
+    async def test_existing_content_type_is_not_overwritten(self):
+        """A capture that already declared a content-type is left exactly as
+        sent -- the fix only fills in a MISSING header."""
+        v = self._validator()
+        exchange = HttpExchange(
+            url="http://localhost:3000/api/search", method="POST",
+            request_headers={"Content-Type": "application/vnd.custom+json"},
+            request_body='{"query":"widgets"}', response_status=200,
+        )
+        resp_a = httpx.Response(200, content=b"x" * 500, request=httpx.Request("POST", exchange.url))
+        resp_b = httpx.Response(200, content=b"x" * 5, request=httpx.Request("POST", exchange.url))
+        with patch("httpx.AsyncClient.request", new_callable=AsyncMock,
+                   side_effect=[resp_a, resp_b]) as mock_req:
+            await v._boolean_probe_fallback(_finding(), exchange)
+        headers = mock_req.call_args_list[0].kwargs.get("headers", {})
+        ct = next((val for k, val in headers.items() if k.lower() == "content-type"), None)
+        self.assertEqual(ct, "application/vnd.custom+json")
 
     async def test_json_body_field_differential_confirms(self):
         """The general case the credential-only version of this fallback

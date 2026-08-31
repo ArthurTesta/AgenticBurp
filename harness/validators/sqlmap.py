@@ -86,6 +86,32 @@ def _content_type_of(exchange: HttpExchange) -> str:
     return next((v for k, v in exchange.request_headers.items() if k.lower() == "content-type"), "")
 
 
+def _inferred_content_type_for_body(body: str, existing_ct: str) -> str | None:
+    """Return the Content-Type a JSON/form-shaped body needs, or None.
+
+    Found live (Juice Shop full run, sqlmap 0/26 diagnosis): the captured
+    exchanges carried request_headers={} -- no Content-Type. Both the probe
+    below and sqlmap replay the captured headers verbatim, so a JSON body was
+    sent with NO Content-Type. Express's express.json() only parses a body
+    when Content-Type is application/json, so req.body came back empty, the
+    login SQL saw no email/password at all, and every payload returned an
+    identical 401 -- making the tautology and contradiction indistinguishable
+    and the injection point silently untestable. Returns the header to add
+    ONLY when the body clearly needs one and none is already present; a body
+    that already declares a content-type is left exactly as captured.
+    """
+    if not body or existing_ct.strip():
+        return None
+    stripped = body.lstrip()
+    if stripped[:1] in ("{", "["):
+        return "application/json"
+    # A urlencoded form body: key=value pairs, no JSON braces. Kept narrow
+    # (must contain '=') so arbitrary opaque bodies aren't mislabeled.
+    if "=" in body:
+        return "application/x-www-form-urlencoded"
+    return None
+
+
 def _responses_differ(resp_a: httpx.Response, resp_b: httpx.Response) -> bool:
     """Boolean-blind confirmation signal, generalized beyond auth
     endpoints: a status-code difference is always meaningful; otherwise
@@ -269,6 +295,16 @@ class SqlmapValidator(Validator):
                 if k.lower() in ("host", "content-length"):
                     continue  # sqlmap derives these itself from -u/--data
                 cmd += ["-H", f"{k}: {v}"]
+            # If the capture lacked a Content-Type but the body is JSON/form-
+            # shaped, add it explicitly so the server actually parses the body
+            # sqlmap is injecting into (same root cause as the probe fix above;
+            # sqlmap's own JSON auto-detection is reliable but this makes the
+            # invocation correct regardless of it).
+            _inferred_ct = _inferred_content_type_for_body(
+                exchange.request_body or "", _content_type_of(exchange)
+            )
+            if _inferred_ct is not None:
+                cmd += ["-H", f"Content-Type: {_inferred_ct}"]
             if exchange.response_status is not None and not (200 <= exchange.response_status < 300):
                 # Verified against a live target (OWASP Juice Shop's login
                 # endpoint, which returns 401 for invalid credentials --
@@ -458,6 +494,14 @@ class SqlmapValidator(Validator):
             k: v for k, v in exchange.request_headers.items()
             if k.lower() not in ("host", "content-length")
         }
+        # Ensure a JSON/form body carries the Content-Type the server needs to
+        # parse it -- without this, a capture that lacked the header (e.g.
+        # request_headers={}) makes every payload return an identical
+        # unparsed-body response, silently defeating the differential. See
+        # _inferred_content_type_for_body for the full root-cause note.
+        inferred_ct = _inferred_content_type_for_body(body, content_type)
+        if inferred_ct is not None:
+            headers["Content-Type"] = inferred_ct
         # Baseline check so an endpoint that already returns DB-error-
         # shaped text for perfectly ordinary input doesn't get flagged
         # just for continuing to do so under a mutated value.

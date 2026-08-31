@@ -107,12 +107,32 @@ _URL_PATTERNS: list[tuple[re.Pattern, list[str]]] = [
     # `GET /rest/basket/<id>` request -- exactly the same per-user-owned,
     # sequential-id-in-the-URL shape as order/invoice/booking, just a
     # different noun. idor was not dispatched at all for it.)
-    (re.compile(r'/order|/orders|/invoice|/invoices|/booking|/bookings|'
+    # track-order added: found missing during the Juice Shop full run --
+    # `GET /rest/track-order/<id>` is the same per-user-owned, numeric-id-
+    # in-the-path IDOR shape as basket/order/invoice, but `/track-order`
+    # does not contain the `/order` substring the old regex required
+    # (`-order`, not `/order`), so idor was never dispatched for it despite
+    # /api/Users/<id> and /rest/basket/<id> triggering it correctly in the
+    # same run. See "Harness vs. Juice Shop" §06 (dispatch-layer gaps).
+    (re.compile(r'/order|/orders|/track-order|/track_order|/trackorder|'
+                r'/invoice|/invoices|/booking|/bookings|'
                 r'/ticket|/tickets|/transaction|/transactions|'
                 r'/reservation|/reservations|/appointment|/appointments|'
                 r'/basket|/baskets|/cart|/carts',
                 re.IGNORECASE),
      ['idor', 'auth', 'misconfig']),
+
+    # Exposed file-store / directory-listing endpoints. Found missing
+    # during the Juice Shop full run: `GET /ftp` returns a browsable
+    # directory listing (a real information-disclosure + misconfiguration
+    # finding), but matched no pattern at all -- only cors/csp were
+    # dispatched, so no misconfig/recon agent ever saw it. A bare `/ftp`,
+    # `/files` static root, or `/backup` store carries no query string and
+    # no "sensitive"-looking header, so nothing else fired. See
+    # "Harness vs. Juice Shop" §06.
+    (re.compile(r'/ftp(/|$)|/backup|/backups|/dump|/dumps|/filestore|/file-store',
+                re.IGNORECASE),
+     ['misconfig', 'recon', 'info_disclosure']),
     
     # Search endpoints
     (re.compile(r'/search|/find|/query|/lookup', re.IGNORECASE), 

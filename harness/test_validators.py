@@ -225,5 +225,56 @@ class EveryActiveValidatorPlanMethodWorksTests(unittest.TestCase):
         )
 
 
+class _FakeResponse:
+    """Minimal httpx.Response stand-in for CORS validator unit tests."""
+    def __init__(self, headers):
+        self.headers = headers
+
+
+class CorsWildcardGateTests(unittest.TestCase):
+    """A bare `Access-Control-Allow-Origin: *` without credentials must NOT
+    be reported as a vulnerability (Juice Shop full-run: this was 58 of 60
+    false 'confirmed' findings). The dangerous wildcard+credentials
+    combination MUST still confirm."""
+
+    def setUp(self):
+        from validators.cors_validator import CorsValidator
+        self.validator = CorsValidator()
+        self.exchange = HttpExchange(
+            url="https://example.test/api/products",
+            method="GET",
+            request_headers={"User-Agent": "test"},
+            response_status=200,
+            response_body="{}",
+        )
+
+    def _run_wildcard(self, headers):
+        async def fake_send(*args, **kwargs):
+            return _FakeResponse(headers)
+        with patch.object(self.validator, "_send_request", side_effect=fake_send):
+            return asyncio.run(
+                self.validator._test_wildcard_origin("https://example.test", self.exchange)
+            )
+
+    def test_bare_wildcard_is_informational_not_vulnerable(self):
+        result = self._run_wildcard({"Access-Control-Allow-Origin": "*"})
+        self.assertFalse(result.vulnerable)
+        self.assertEqual(result.severity, "info")
+
+    def test_wildcard_with_credentials_is_vulnerable(self):
+        result = self._run_wildcard({
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Credentials": "true",
+        })
+        self.assertTrue(result.vulnerable)
+        self.assertEqual(result.severity, "critical")
+
+    def test_arbitrary_origin_reflection_still_vulnerable(self):
+        result = self._run_wildcard(
+            {"Access-Control-Allow-Origin": "https://evil-attacker.com"}
+        )
+        self.assertTrue(result.vulnerable)
+
+
 if __name__ == "__main__":
     unittest.main()

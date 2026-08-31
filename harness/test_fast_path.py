@@ -73,6 +73,25 @@ class TestUrlPatterns(unittest.TestCase):
         self.assertIn("auth", agents)
         self.assertIn("misconfig", agents)
     
+    def test_track_order_idor(self):
+        """track-order endpoints carry the numeric-id-in-path IDOR shape
+        (Juice Shop full-run dispatch gap): must select idor/auth/misconfig
+        even though the path lacks a bare '/order' substring."""
+        agents = select_agents_by_url("/rest/track-order/5")
+        self.assertIn("idor", agents)
+        self.assertIn("auth", agents)
+        self.assertIn("misconfig", agents)
+
+    def test_ftp_directory_listing(self):
+        """Exposed file-store endpoints (Juice Shop /ftp) must select
+        misconfig/recon/info_disclosure -- previously matched nothing."""
+        agents = select_agents_by_url("/ftp")
+        self.assertIn("misconfig", agents)
+        self.assertIn("recon", agents)
+        self.assertIn("info_disclosure", agents)
+        # A path segment under /ftp should also match.
+        self.assertIn("recon", select_agents_by_url("/ftp/package.json.bak"))
+
     def test_unknown_endpoint(self):
         """Unknown endpoints should return empty set."""
         agents = select_agents_by_url("/completely/unknown/path")

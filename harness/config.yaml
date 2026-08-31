@@ -3,7 +3,19 @@
 
 ollama:
   base_url: "http://localhost:11434"
-  timeout_seconds: 120
+  # Raised from 120s: three separate real PixelMart runs this session
+  # (after also fixing a genuinely broken dual-Ollama-process state --
+  # see HANDOVER.md) all showed the shared circuit breaker tripping
+  # partway through a 22-exchange run, after several individual agent
+  # calls that legitimately took 80-100s+ on this hardware (qwen3:8b,
+  # single consumer GPU) before eventually succeeding. Once tripped, the
+  # breaker silently zeroed out every remaining agent for the rest of
+  # that run with no error surfaced anywhere in the response -- empty
+  # findings that looked identical to "the model found nothing." Raised
+  # together with lowering concurrency.max_parallel_agents below, not
+  # isolated as two separate experiments -- if timeouts recur at 240s,
+  # narrow further from here rather than assuming this alone is sufficient.
+  timeout_seconds: 240
 
 # How many specialist agents are allowed to run concurrently against
 # Ollama at once, per exchange. Without a limit, a single exchange that
@@ -25,7 +37,12 @@ ollama:
 # it and watch `ollama ps` / your GPU's memory usage under a real run to
 # find your actual ceiling.
 concurrency:
-  max_parallel_agents: 3
+  # Lowered from 3 alongside the ollama.timeout_seconds raise above --
+  # this specific machine's GPU couldn't sustain 3 concurrent qwen3:8b
+  # inferences without individual calls slowing enough to approach the
+  # timeout ceiling. 1 fully serializes agent dispatch (slower wall-clock
+  # per exchange, but eliminates GPU contention as a variable entirely).
+  max_parallel_agents: 1
 
 # The coordinator decides which specialist agents to dispatch to, and
 # synthesizes their findings into a final report. Use a stronger local
@@ -36,6 +53,33 @@ concurrency:
 coordinator:
   model: "qwen3:8b"
   temperature: 0.1
+  # Cloud-primary routing (SESSION_HANDOVER.md §7). DEFAULT OFF -- when false,
+  # routing is exactly the legacy behavior (deterministic fast_path first,
+  # local coordinator LLM fallback). When true, the cloud model routes FIRST
+  # on an ANONYMIZED projection of the exchange (feature_projection.py: method,
+  # path, param NAMES, status, response shape, presence booleans -- never any
+  # body, header value, query value, or resource id), and fast_path is demoted
+  # to a deterministic UNION FLOOR beneath it (the coordinator can only add
+  # agents to that floor, never remove them). The cloud model was A/B-validated
+  # at 4.0 agents/exchange (31% tighter than fast_path's 5.8) for zero lost
+  # detections in the labeled run -- but re-run testing/test-target/
+  # ab_routing_recall.py before trusting it as primary on a fresh state.
+  cloud_primary: false
+  cloud_model: "gemma4:31b-cloud"
+
+# Adaptive re-spin loop (SESSION_HANDOVER.md §7). DEFAULT OFF, and further
+# a no-op unless coordinator.cloud_primary above is also on -- the loop is
+# driven by the cloud coordinator. When enabled: after a first agent pass
+# returns nothing at or above min_actionable_confidence, the coordinator is
+# asked (on the anonymized projection only) whether a DIFFERENT specialist is
+# worth a second look. Bounded by max_rounds AND the effort_budget (checked
+# before each escalation call and before each follow-up dispatch), and stops
+# as soon as an actionable finding appears. Each escalation's real token cost
+# is charged to the ledger as CallKind.ESCALATION.
+adaptive_respin:
+  enabled: false
+  max_rounds: 1
+  min_actionable_confidence: 0.4
 
 # Default model for any specialist agent that doesn't set its own "model"
 # below. This used to silently fall back to the coordinator's model,
@@ -194,7 +238,7 @@ server:
   # Ollama on 11434, PixelMart on 5001, etc.) is technically still in
   # scope by this check alone. Revert to [] once done testing against
   # Juice Shop.
-  allowed_hosts: ["localhost"]
+  allowed_hosts: ["localhost", "127.0.0.1"]
   # Cap on request/response body bytes sent into prompts, to keep local
   # context windows sane. Bodies are truncated, not dropped, with a marker.
   max_body_chars: 6000
