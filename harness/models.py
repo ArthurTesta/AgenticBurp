@@ -192,6 +192,34 @@ class EstimateRequest(BaseModel):
     urls: list[UrlEstimateItem]
 
 
+class PrioritizeRequestItem(BaseModel):
+    """Structure only -- method, URL, and parameter names -- deliberately
+    no request/response bodies. This is a triage/ranking pass over a
+    potentially large batch of endpoints (see surface_prioritizer.py),
+    not a per-exchange vulnerability analysis; sending full bodies for
+    every scanned row would defeat the point of keeping this bounded to
+    a handful of LLM calls."""
+    method: str
+    url: str
+    param_names: list[str] = Field(default_factory=list)
+
+
+class PrioritizeRequest(BaseModel):
+    items: list[PrioritizeRequestItem]
+
+
+class PrioritizeResultItem(BaseModel):
+    method: str
+    url: str
+    ai_priority: str  # "critical" | "high" | "medium" | "low" | "unscored"
+    ai_score: float = Field(ge=0.0, le=1.0)
+    reasoning: str
+
+
+class PrioritizeResponse(BaseModel):
+    results: list[PrioritizeResultItem]
+
+
 class EffortStatus(BaseModel):
     mode: str
     total_tokens: Optional[int] = None

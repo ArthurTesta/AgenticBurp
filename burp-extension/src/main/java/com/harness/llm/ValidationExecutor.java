@@ -741,11 +741,35 @@ public final class ValidationExecutor {
         List<SsrfCallbackLogic.CallbackAttempt> out = new ArrayList<>();
         for (int i = 0; i < candidates.size(); i++) {
             String token = payloads.get(i).toString();
-            List<Interaction> hits = client.getInteractions(InteractionFilter.interactionPayloadFilter(token));
-            List<String> types = hits.stream().map(h -> h.type().name()).distinct().toList();
-            out.add(new SsrfCallbackLogic.CallbackAttempt(candidates.get(i).name(), token, types));
+            out.add(new SsrfCallbackLogic.CallbackAttempt(candidates.get(i).name(), token, interactionTypesFor(client, token)));
         }
         return out;
+    }
+
+    /** The one-line "get interaction types for this token" computation shared
+     * by every Collaborator-based capability -- extracted so it's stated once,
+     * not copy-pasted, even though each caller's own retry/poll SHAPE differs
+     * (SSRF polls across several candidate tokens per round; XXE below polls
+     * a single token). */
+    private static List<String> interactionTypesFor(CollaboratorClient client, String token) {
+        return client.getInteractions(InteractionFilter.interactionPayloadFilter(token))
+                .stream().map(h -> h.type().name()).distinct().toList();
+    }
+
+    /** Bounded poll for a single Collaborator payload token -- same reasoning
+     * and same 5x2s bound as controlledCallbackProbe's own poll above
+     * (interactions can take a few seconds to register server-side, so a
+     * single immediate check produces false negatives). Found live: xxeValidation
+     * originally checked exactly once with zero wait, unlike this identical
+     * underlying mechanism used for SSRF -- a likely source of false
+     * INCONCLUSIVE verdicts for XXE specifically. */
+    private static List<String> pollInteractionTypes(CollaboratorClient client, String token) {
+        List<String> types = interactionTypesFor(client, token);
+        for (int round = 0; round < 5 && types.isEmpty(); round++) {
+            try { Thread.sleep(2000); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); break; }
+            types = interactionTypesFor(client, token);
+        }
+        return types;
     }
 
     private static final class Outcome { String status="inconclusive"; String detail=""; }
@@ -1005,8 +1029,7 @@ public final class ValidationExecutor {
 
         String payloadBody = XxeCollaboratorLogic.buildPayload(payload.toString());
         api.http().sendRequest(req.withBody(payloadBody));
-        List<Interaction> hits = client.getInteractions(InteractionFilter.interactionPayloadFilter(payload.toString()));
-        List<String> types = hits.stream().map(h -> h.type().name()).distinct().toList();
+        List<String> types = pollInteractionTypes(client, payload.toString());
         XxeCollaboratorLogic.Evidence ev = XxeCollaboratorLogic.evaluate(true, types);
         statusFor(plan, source, ev.verdict().name().toLowerCase(Locale.ROOT), ev.confidence(), ev.confirmed(), ev.summary(), ev.detail());
     }
@@ -1314,7 +1337,26 @@ public final class ValidationExecutor {
     private void submit(TestPlan p,HttpRequestResponse source,String status,double confidence,boolean confirmed,String summary,String evidence){
         ValidationSubmission v=new ValidationSubmission(); v.plan_id=p.id; v.status=status; v.confidence=confidence; v.confirmed=confirmed;
         v.summary=summary; v.evidence=evidence; v.executor="burp:"+p.capability; v.source_exchange_hash=exchangeFingerprint(source);
-        try{ client.submitValidationResult(v); }catch(HarnessClient.HarnessException e){ api.logging().logToError("Validation submission failed: "+e.getMessage()); }
+        try{
+            client.submitValidationResult(v);
+        }catch(HarnessClient.HarnessException e){
+            api.logging().logToError("Validation submission failed: "+e.getMessage());
+            // Found live: statusFor() already stored this plan's Outcome (with a
+            // "CONFIRMED"-shaped detail string) in `outcomes` BEFORE calling this
+            // method -- so if the server-side POST above is rejected (most
+            // commonly: this capability isn't yet on store.py's
+            // confirmation_capabilities allowlist, so a locally-computed
+            // confirmed=true verdict is never durably recorded in
+            // validation_runs), the analyst would otherwise see "CONFIRMED" in
+            // the panel with zero indication that nothing was actually
+            // persisted -- the rejection only ever reached Burp's separate
+            // Output/error log above, which the analyst watching the harness
+            // panel has no reason to be looking at. Mutating the same Outcome
+            // object here works because submit() always runs to completion
+            // before SwingWorker.done() reads it back out of the map.
+            Outcome o = outcomes.get(p.id);
+            if (o != null) { o.detail = o.detail + " (NOT PERSISTED: " + e.getMessage() + ")"; }
+        }
     }
 
     /**

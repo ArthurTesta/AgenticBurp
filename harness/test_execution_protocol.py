@@ -31,10 +31,15 @@ def test_confirmation_requires_matching_typed_executor(monkeypatch, tmp_path):
 
 
 def test_non_confirmation_capability_cannot_confirm(monkeypatch, tmp_path):
+    # command_injection_validation is deliberately left off store.py's
+    # confirmation_capabilities allowlist (timing-based evidence is
+    # noisier than the other replay/probe capabilities -- see that
+    # module's comment), unlike xss's reflection_context_validation,
+    # which was added to the allowlist alongside this test's writing.
     monkeypatch.setattr(store, "_DB_PATH", tmp_path / "state.db")
     e=HttpExchange(url="https://example.test/form", method="POST")
-    f=Finding(vulnerability_class="xss", confidence=.7, summary="x", evidence="y",
-              suggested_test="reflect canary", basis="derived")
+    f=Finding(vulnerability_class="command_injection", confidence=.7, summary="x", evidence="y",
+              suggested_test="timing differential", basis="derived")
     plan=planner.plans_for_findings(e,[f])[0]
     store.persist_test_plans(e,[plan])
     sub=__import__('models').ValidationSubmission(plan_id=plan.id, status="confirmed", confidence=.9, confirmed=True,

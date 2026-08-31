@@ -706,8 +706,27 @@ def select_fast_path_agents(exchange: HttpExchange, available_agents: set[str]) 
 # =============================================================================
 
 class EarlyTerminationConfig:
-    """Configuration for confidence-based early termination."""
-    
+    """Configuration for confidence-based early termination.
+
+    Default min_severity narrowed from {"critical", "high"} to {"critical"}
+    only -- found live, root-caused precisely via the orchestrator's own
+    "Early termination: ..." log line: a real Juice Shop CORS misconfiguration
+    finding (confidence 0.95, severity "high" -- and CORS fires at that
+    exact confidence/severity on nearly every exchange against this
+    particular target, since it has a genuinely permissive CORS policy
+    everywhere) was triggering this on the FIRST 3-agent batch and silently
+    cancelling the remaining batch outright -- confirmed directly, twice,
+    with `sqli`/`idor`/`xss`/`csp`/`misconfig`/`nosql`/`rate_limit` never
+    even receiving an AgentReport at all (not an empty one, not an error --
+    literally never dispatched). The underlying premise ("a confident,
+    severe finding means checking OTHER, unrelated vulnerability classes is
+    unnecessary") doesn't hold for "high" severity in practice: CORS/XSS/
+    header-based findings routinely reach "high" independent of whether
+    sqli/idor/business_logic also exist on the same exchange -- unlike a
+    genuinely "critical" finding (e.g. a confirmed RCE), which is a much
+    stronger, rarer signal that further probing has lower marginal value.
+    """
+
     def __init__(
         self,
         enabled: bool = True,
@@ -717,7 +736,7 @@ class EarlyTerminationConfig:
     ):
         self.enabled = enabled
         self.min_confidence = min_confidence
-        self.min_severity = min_severity or {"critical", "high"}
+        self.min_severity = min_severity or {"critical"}
         self.max_agents_before_check = max_agents_before_check
 
 

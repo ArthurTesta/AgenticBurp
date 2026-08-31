@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 import store
-from models import HttpExchange, Finding
+from models import HttpExchange, Finding, TestPlan, ValidationSubmission
 
 
 class TestFindingsPersistenceRoundTrip(unittest.TestCase):
@@ -239,6 +239,71 @@ class TestPriorFindingsSummaryStripsBackticks(unittest.TestCase):
         )
         self.assertNotIn("`", summary)
         self.assertIn("/api/avatar", summary)
+
+
+class TestConfirmationCapabilitiesAllowlist(unittest.TestCase):
+    """
+    Regression test for the exact membership of store.py's
+    confirmation_capabilities allowlist -- found live this session that
+    20 of 22 implemented Burp-plane capabilities could never durably
+    record confirmed=True (silently rejected, with zero signal to the
+    analyst -- see the Burp-side fix in ValidationExecutor.submit()).
+    After a real audit of each capability's actual confirmation rigor
+    (not a decision folded into an unrelated bugfix), this asserts the
+    exact resulting set, so any future change to this list is a
+    deliberate, visible diff here, not silent drift.
+    """
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self._original_db_path = store._DB_PATH
+        store._DB_PATH = Path(self._tmpdir.name) / "test_harness_state.db"
+
+    def tearDown(self):
+        store._DB_PATH = self._original_db_path
+        self._tmpdir.cleanup()
+
+    def _try_confirm(self, capability: str) -> tuple[bool, str]:
+        plan = TestPlan(
+            id=f"plan-{capability}",
+            capability=capability,
+            finding_class="x",
+            category="x",
+            source_exchange_url="https://confirmation-allowlist-test.invalid/x",
+            execution_plane="burp",
+            source_exchange_hash="hash-abc",
+        )
+        store.persist_retry_plan(plan)
+        submission = ValidationSubmission(
+            plan_id=plan.id, status="confirmed", confirmed=True,
+            executor=f"burp:{capability}", source_exchange_hash="hash-abc",
+        )
+        return store.persist_validation_submission(submission)
+
+    def test_capabilities_expected_to_allow_confirmation(self):
+        for capability in (
+            "cross_identity_compare", "authorization_boundary_compare",
+            "sql_injection_validation", "cors_misconfiguration_detection",
+            "reflection_context_validation", "open_redirect_validation",
+            "jwt_validation",
+        ):
+            ok, reason = self._try_confirm(capability)
+            self.assertTrue(ok, f"{capability} should be allowed to confirm, got: {reason}")
+
+    def test_capabilities_expected_to_reject_confirmation(self):
+        # A representative sample, not exhaustive: capabilities that
+        # provide real evidence but were deliberately NOT added in this
+        # session's audit (xxe/ssti: no live false-positive check done
+        # yet; command_injection_validation: timing-based, deliberately
+        # left off pending a live false-positive check -- see store.py's
+        # own comment).
+        for capability in (
+            "xxe_validation", "ssti_validation", "command_injection_validation",
+            "csp_clickjacking_validation",
+        ):
+            ok, reason = self._try_confirm(capability)
+            self.assertFalse(ok, f"{capability} should NOT be allowed to confirm yet")
+            self.assertEqual(reason, "this capability may provide evidence but cannot mark the vulnerability confirmed")
 
 
 if __name__ == "__main__":

@@ -2278,16 +2278,457 @@ same architectural gap REVIEW.md's #3/#8 already named as the single
 largest item in this whole project (this session's earlier §5n work --
 headless cross-identity comparison -- is one narrow slice of it, not the
 whole thing) -- now independently arrived at from the demand side by a
-live user, not just from the audit side. It was deliberately NOT built
-this session (explicitly scoped down to a "prove the value first" live
-test, per an in-session discussion of the tradeoff) but should be
-treated as the single highest-priority next architectural item: it
-requires (a) detecting "scope changed" from a response (new identity in
-a token, a 200 where 401 was expected, a role field flipping), (b) the
-harness sending its OWN exploratory requests to a target for the first
-time in its history (today it is purely passive/analytical), and (c)
-feeding what it discovers back into the same analysis pipeline
-recursively.
+live user, not just from the audit side. **Built as a real, if
+deliberately small, MVP in the very next pass -- see §5p.** Also:
+**"today it is purely passive/analytical" (below) turned out to be
+stale/wrong the moment it was checked properly** -- 11 of 13 Python
+validators (everything except `deserialization`) already send real
+traffic to the target whenever `validators.active_enabled` is on
+(already `true` in the checked-in config as of §5n), and
+`recon_validator.py` already does real, recursive, multi-request
+crawling. The genuinely missing piece was narrower than this paragraph
+originally claimed: nothing reacted to a *scope-change signal* by
+sending a NEW request a human never captured -- see §5p for exactly
+what closed that gap and what's still open.
+
+---
+
+## 5p. Root-caused the real "most agents go silent" pattern (it was early
+termination, not resource contention); durable confirmation for 4 more
+capabilities; a real, if deliberately small, autonomous scope-discovery
+feature shipped
+
+Direct continuation of §5o's live Juice Shop testing. The user asked for
+two things -- autonomous scope discovery, and making "execute test plan"
+actually mean something -- and a third was folded in after live evidence
+showed most dispatched agents going silent on a known-SQLi exchange
+(§5o's own SQLi-login test): `2 agent(s) failed: auth: Ollama request
+timed out after 120s; business_logic: ...` in one run, then later runs
+showing entire batches of agents with zero findings and zero errors.
+**User's explicit instruction: investigate this as a third priority
+alongside the other two, then fix what's actually broken.**
+
+### The real root cause: early termination, not resource contention
+
+Two Explore-agent investigations (Burp-side capability audit; harness
+safety-architecture audit) first corrected several of this session's own
+prior assumptions -- see below -- before the actual reliability bug was
+found, live, via the orchestrator's OWN log line:
+```
+INFO:harness.orchestrator:Early termination: Early termination: high
+severity finding with 0.9 confidence (CORS misconfiguration) detected early
+```
+`fast_path.py`'s `EarlyTerminationConfig` defaulted `min_severity` to
+`{"critical", "high"}`. `orchestrator.analyze()` dispatches agents in up
+to two batches (first 3, then the rest) and skips the SECOND batch
+entirely if `should_terminate_early()` sees a qualifying finding in the
+first. CORS misconfiguration reaches confidence 0.95/severity "high" on
+nearly every exchange against this specific target (a genuinely
+permissive CORS policy), so it was silently cancelling the remaining 7
+agents' dispatch OUTRIGHT -- not producing empty results, not erroring,
+simply never calling them. Confirmed precisely with a purpose-built script
+that diffs `dispatched_agents` against which agents actually got an
+`AgentReport` at all:
+```
+DISPATCHED BUT NO REPORT AT ALL: ['csp', 'idor', 'misconfig', 'nosql', 'rate_limit', 'sqli', 'xss']
+```
+identically across two separate real runs. The underlying premise ("a
+confident, severe finding means further probing is unnecessary") doesn't
+hold for "high" severity in practice -- CORS/XSS/header-based findings
+reach "high" independent of whether sqli/idor/business_logic also exist
+on the same exchange, unlike a genuinely "critical" finding (confirmed
+RCE, say), which is a much stronger, rarer signal.
+
+**Fixed**: narrowed the default to `{"critical"}` only. No existing test
+broke (every prior test that constructs `EarlyTerminationConfig` already
+passes `min_severity` explicitly, none relied on the default). 2 new
+regression tests in `test_fast_path.py` reproduce the exact live scenario
+(a "high"-severity 0.95-confidence finding no longer terminates by
+default; a genuinely "critical" one still does).
+
+**Verified against the real, exact failing exchange, before and after**:
+```bash
+# before: DISPATCHED BUT NO REPORT AT ALL: ['csp','idor','misconfig','nosql','rate_limit','sqli','xss']  (both runs)
+# after:  DISPATCHED BUT NO REPORT AT ALL: []                                                              (both runs)
+#         sqli: findings=1 in BOTH runs (was 0/multiple runs before) -- the exact
+#         finding category the user flagged ("we know there's an SQLi in there")
+```
+`idor`/`nosql`/`xss` still show `findings=0` post-fix on this exchange --
+now a real "the model looked and found nothing" result (no longer a
+silent skip), the same already-documented single-pass LLM variance class
+this project's history has characterized extensively elsewhere (§5j/§5k),
+not something this fix claims to solve.
+
+### Corrected premises, found by two Explore-agent audits before any code changed
+
+1. **"Execute selected test plan" already sends real payloads for 22 of 30
+   capabilities** -- independently verified by reading 6 more executor
+   methods in full (`corsMisconfig`, `openRedirect`, `jwtForgery`,
+   `sstiValidation`, `commandInjectionTiming`, `xxeCollaboratorProbe`):
+   every one is a genuine mutate -> real `api.http().sendRequest()`
+   -> classify-from-real-response implementation, not a stub. The user's
+   actual gap was one step downstream (next section).
+2. **The harness is NOT purely passive/analytical**, contradicting this
+   document's own §5o wording. 11 of 13 Python validators (everything
+   except `deserialization`) already send real traffic to the target when
+   `validators.active_enabled` is on -- already `true` in the checked-in
+   config since §5n, scoped to Juice Shop. `recon_validator.py` already
+   does real, recursive, multi-request crawling, just triggered by an
+   agent's own `recon`-classified finding, never by a scope-change signal.
+3. **`server.allowed_hosts` is checked exactly once**, at `analyze()`
+   entry, against the single captured exchange's URL -- nothing re-checks
+   a URL a validator (or a new discovery feature) constructs afterward.
+   `subdomain_takeover_validator.py` already deliberately steps outside
+   that scope for third-party fingerprint checks (correct for what it
+   does), but this meant the gap was real and needed closing explicitly
+   for any NEW feature that goes looking for endpoints on its own.
+
+### Making "CONFIRMED" durable, not just displayed
+
+Exact mechanism traced: `ValidationExecutor.statusFor()` builds the local
+`Outcome` (what the Burp panel will show) and stores it in the `outcomes`
+map, THEN calls `submit()` synchronously, which POSTs to
+`/validation-results` -- and on rejection (most commonly:
+`store.py`'s `confirmation_capabilities` allowlist not including this
+capability), only logged to Burp's separate Output/error tab, never the
+panel the analyst is actually watching. A real, live Juice Shop CORS run
+had already produced 10 genuine confirmations silently discarded this
+way (§5i/§6.9), with zero indication anything went wrong.
+
+**Fixed, two ways**:
+- `ValidationExecutor.submit()`'s catch block now also mutates the SAME
+  `Outcome` object `SwingWorker.done()` reads a moment later: `o.detail +=
+  " (NOT PERSISTED: " + e.getMessage() + ")"` -- no new field, no new
+  callback path, just completing the existing one.
+- Audited every implemented capability's actual confirmation rigor (the
+  audit HANDOVER's own §5i explicitly said had to happen before touching
+  `store.py`'s allowlist) and added 4 more capabilities whose confirmation
+  is build-for-build equivalent to the existing 3 (a real replay/probe
+  compared against real observed behavior, not an LLM guess):
+  `cors_misconfiguration_detection`, `reflection_context_validation`
+  (XSS), `open_redirect_validation`, `jwt_validation`.
+  `command_injection_validation` deliberately left off (timing-based,
+  inherently noisier, no live false-positive check done yet). New
+  `TestConfirmationCapabilitiesAllowlist` in `test_store.py` asserts the
+  exact expected membership both ways (allowed vs. still-rejected), so a
+  future change to this list is a visible diff, not silent drift.
+- Also fixed a smaller, related bug found in the same area:
+  `xxeCollaboratorProbe` checked Collaborator interactions exactly once
+  with zero wait, unlike its sibling `controlledCallbackProbe` (SSRF),
+  which polls 5x2s specifically because interactions can take a few
+  seconds to register -- likely a source of false `INCONCLUSIVE` verdicts
+  for XXE specifically. Extracted the shared poll-loop shape into one
+  helper both now call.
+
+**Deliberately out of scope**: `misconfig`/`ai_llm`/`supply_chain`/
+`anomaly` findings still get zero `TestPlan` at all (not even a "not yet
+implemented" placeholder) -- these categories don't have an obvious
+single mutate-and-compare test shape the way the other 30 do. Documented,
+not solved.
+
+### Autonomous scope-discovery MVP shipped
+
+New `harness/scope_discovery.py`, off by default
+(`autonomous_discovery.enabled: false`). GET-only by design (SAFE tier
+per `safety_gate.py`'s own classification), so it needs no
+`allow_mutating_replay` authorization. When a finding on an exchange is
+BOTH `confirmed=true` AND its category is in a configured
+`trigger_categories` list (default: sqli/auth/business_logic/
+api_security/idor), it probes a short, fixed `candidate_paths` list
+(default 5 paths) on the SAME host, carrying the SAME
+Authorization/Cookie headers the triggering exchange had (no new
+identity/session data model needed -- confirmed `HttpExchange`/`Finding`
+have no identity linkage today, and the credentials that produced the
+escalation are already sitting in `exchange.request_headers`), re-checks
+EVERY candidate URL against `server.allowed_hosts` individually (closing
+the gap named above -- `orchestrator.py`'s own entry-point check now
+delegates to the same `scope_discovery.is_host_allowed()` function, so
+there is exactly one implementation, not two that could drift), and feeds
+each real response back through `orchestrator.analyze()` recursively
+(guarded by an internal `_from_discovery` flag so a discovery pass's own
+results can never trigger another discovery pass). Discovered exchanges'
+`AnalysisResponse.summary` is prefixed `"[Autonomous discovery] ..."` so
+results are visibly distinguishable from human-captured ones. New
+`test_scope_discovery.py`, 11 tests, including the explicit safety-net
+case `test_safety_gate.py`'s own validator-bypass check doesn't cover
+(this is a new top-level module, not under `validators/`): a candidate
+host outside `allowed_hosts` is never sent to, verified against a mocked
+`httpx` client so no real network call happens in the test.
+
+Deliberately the smallest real slice of REVIEW.md's largest architectural
+item, matching the "prove the value first" scoping this session's earlier
+IDOR/authz feature (§5n) already used -- NOT a general-purpose crawler
+(that's `recon_validator.py`'s job, already built), just a short, curated
+check with the credentials a just-proven privilege escalation produced.
+Not yet live-verified against a real Juice Shop escalation end-to-end in
+this session (implemented and unit-tested; the next live-testing pass
+should flip `autonomous_discovery.enabled: true` and confirm real
+discovery traffic actually fires and produces a recursively-tagged
+`AnalysisResponse`, the same way every other feature in this document was
+verified against a live target before being called done).
+
+573 Python tests pass (up from 506 at the start of this session's live
+Juice Shop testing). Java side unchanged from §5n's Montoya-verified
+baseline for B1/B3 (compiled clean, 19-error baseline unchanged; 182
+logic tests still pass -- these two fixes are in `ValidationExecutor.java`
+orchestration code, which this project has never had a way to unit-test
+directly, same boundary as everywhere else in this file).
+
+---
+
+## 5q. Closed the real reason SQLi kept getting missed: reactive-only
+detection, then a completely non-functional confirmation layer --
+found live, fixed both, then got the first genuine end-to-end proof
+that §5p's autonomous discovery actually works
+
+Direct continuation of §5p, triggered by the user manually sending a
+completely ordinary Juice Shop login (`bob@bob.com`/`bobbob`, zero
+injection syntax) through the real, running harness and observing
+`[sqli] (no findings)`, then asking "because the harness didn't suspect
+SQLi it can't execute the test plan" -- their own precise diagnosis of
+the causal chain, confirmed correct by direct code reading.
+
+### Gap 1: sqli_agent is reactive, not proactive
+
+`agents/sqli_agent.py`'s prompt already explicitly instructs the model to
+check whether a login field ALREADY contains injection syntax (`' --`,
+`' OR 1=1--`) -- but has nothing that reasons "this is structurally a
+login endpoint, worth an active test, independent of what the captured
+credentials look like." An ordinary login has no such marker, so the
+agent correctly (by its own reactive design) finds nothing. No finding
+means no `TestPlan` (`planner.plans_for_findings` only ever sees agent
+output), which means the active SQL injection validator never gets
+dispatched at all -- not "tested, found nothing," but never tried.
+
+**Fixed**: new `harness/credential_endpoint_detector.py`, a deterministic,
+non-LLM rule (same shape as `chaining.py`'s own rule-based chain
+detector, not a new mechanism): flags any POST/PUT/PATCH with a
+password-shaped body field plus either an identifier-shaped field
+(email/username) or an auth-shaped URL path, at moderate confidence
+(0.5), `confirmed=False` -- it never claims a vulnerability, only
+guarantees the endpoint gets a real chance to be actively tested. Wired
+into `orchestrator.analyze()` as a synthetic `AgentReport` (agent=
+`credential_endpoint_detector`, model=`rule-based`), feeding the same
+planner/validator pipeline every other finding uses. 7 new tests
+(`test_credential_endpoint_detector.py`), including the exact real
+benign-login case and explicit false-positive guards (a settings PATCH
+that happens to include an unrelated "password" field on a non-auth URL
+is correctly NOT flagged).
+
+**A real ordering bug found in this same fix, live**: the detector was
+first wired in AFTER `_validate_findings()` already ran, so its
+synthetic finding was appended to `reports` one call too late for the
+active validator dispatch loop (which had already captured the old
+`reports` list) to ever see it -- verified live: the finding persisted
+correctly, but zero validator activity followed. Moved earlier in
+`analyze()`, before `_validate_findings()`, then re-verified live: the
+same benign login now shows `sqlmap POST ... -> ALLOWED` in the harness's
+own log and a real `sqlmap` entry in `validation_reports`.
+
+### Gap 2: sqlmap was never actually installed on this machine
+
+That same live re-verification exposed something bigger: `sqlmap`
+executable not found; install sqlmap to enable active SQLi validation --
+on every single attempt, including the EARLIER live test in §5p that
+deliberately sent the real, working `admin@juice-sh.op' --` injection
+payload. That test's `confirmed=False` result was never sqlmap failing to
+detect a real injection -- sqlmap never ran at all, all session, and
+nothing surfaced this until the finding-generation gap above forced a
+close look at what validation_reports actually contained. Confirmed
+directly: `sqlmap` is not on PATH in this environment at all.
+
+Offered to `pip install sqlmap`; **user explicitly said skip for now**.
+
+**User's own, correct architectural objection**: "You shouldn't rely
+solely on sqlmap ... if it's not there it should default back to the
+agent." Building a fallback that only handled the credential-field case
+would then have been a second architectural mistake -- the user's very
+next question ("what if the SQLi isn't in an auth field?") named it
+directly.
+
+**Fixed, in `validators/sqlmap.py`**: `SqlmapValidator.validate()`'s
+existing `FileNotFoundError` handler now calls
+`_boolean_probe_fallback()` instead of just returning an error.
+Deliberately general, not credential-specific:
+
+- Enumerates query-string parameters AND top-level JSON/form body
+  parameters (proper `json.loads`/`parse_qsl` parsing, not regex --
+  regex hardcoded to specific field names, as this fallback's first
+  draft did for password/email, cannot generalize to "whatever
+  parameters this exchange happens to have"). Capped at 5 parameters per
+  exchange (`_MAX_PROBE_PARAMS`), same bounded-active-check philosophy as
+  `recon_validator.py`'s own request caps.
+- For each candidate, sends exactly two requests differing only in that
+  one parameter's value: a tautology (`' OR '1'='1' -- `) and a
+  contradiction (`' OR '1'='2' -- `) -- same syntax, opposite truth
+  value.
+- **Two independent, complementary confirmation signals**, not one:
+  1. **Boolean-differential** (`_responses_differ`): a status-code
+     difference, or otherwise a relative response-length delta, between
+     the two requests. Works well for exact-match contexts (login
+     fields: verified live, `bob@bob.com`'s password field correctly
+     produced 401/401 -- a real, honest negative, not a false positive).
+  2. **Error-signature** (`_looks_like_db_error` / `_DB_ERROR_MARKERS`):
+     checks whether either mutated response contains a raw DB-error
+     string (SQLite/MySQL/Postgres/ORA- engine markers) that the
+     ORIGINAL, unmutated baseline response did not already contain.
+     **Added specifically because the boolean-differential signal alone
+     was verified live to MISS a real, confirmed injection**: Juice
+     Shop's product search (`GET /rest/products/search?q=`) wraps the
+     parameter in a `LIKE '%...%'` clause, where the unconditional
+     `LIKE '%'` half of an OR-based tautology already matches every row
+     regardless of the injected predicate's truth value -- both
+     `'1'='1'` and `'1'='2'` returned identical results, a real
+     injection point that the differential check alone reports as
+     `not_confirmed`. The same payload's trailing syntax does produce a
+     visible `SQLITE_ERROR`, though, which the error-signature check
+     catches. The baseline comparison exists so an endpoint that already
+     returns error-shaped text for ordinary input isn't flagged just for
+     continuing to do so.
+- Network failures across every candidate parameter return `error`, not
+  `not_confirmed` -- a probe that never ran is "we don't know," not
+  "tested, not vulnerable"; conflating the two would silently misreport
+  a probe failure as a negative result.
+
+26 new/updated tests in `test_sqlmap_validator.py`, including the exact
+two real scenarios found live: `test_error_signature_confirms_when_
+boolean_differential_does_not` (the LIKE-wrapped search-box case) and
+`test_baseline_already_erroring_endpoint_is_not_flagged` (the false-
+positive guard for an endpoint that's just generally broken).
+
+### Live re-verification: both real Juice Shop SQLi vectors, end to end
+
+Two full, real runs through the actual running harness (`autonomous_
+discovery.enabled: true`, `validators.active_enabled`/`allow_mutating_
+replay: true`, matching the already-authorized Juice Shop scope):
+
+1. The benign `bob@bob.com` login: `credential_endpoint_detector` fires
+   (`confidence=0.5`), `sqlmap` validator dispatches via the fallback,
+   correctly reports `not_confirmed` (a genuine negative -- this
+   specific field isn't the injectable one).
+2. `GET /rest/products/search?q=apple` (a completely ordinary search, no
+   injection syntax, no credential fields at all): `sqli` agent flags it
+   at low confidence, the fallback's error-signature check independently
+   **confirms it (`confirmed=True`, `confidence=0.8`)** -- a real,
+   non-auth SQL injection, found and confirmed without sqlmap installed.
+
+### First genuine, naturally-triggered, end-to-end live verification of §5p's autonomous discovery
+
+The confirmed SQLi finding from case 2 above did something that hadn't
+been observed yet: it satisfied `scope_discovery`'s real trigger
+condition from inside a real, single `/analyze` HTTP call -- no
+synthetic finding, no direct unit-level call into `scope_discovery.py`
+the way §5p's own verification had to settle for. The harness's own log
+shows all 5 configured `candidate_paths` actually probed against live
+Juice Shop (`/api/users` → 401, `/api/users/1` → 401, `/api/admin/config`
+→ 500, `/rest/admin/application-configuration` → 200), each response fed
+back through a full, independent, recursive `analyze()` call that
+persisted its own real findings (verified via `store.all_host_findings`)
+-- this is the exact "Verification for Part C" the original plan called
+for, now satisfied with real, naturally-arising data instead of a
+constructed test case.
+
+**Important operational finding, surfaced directly to the user, not
+buried**: the recursive analysis on the discovered `/api/users` exchange
+triggered the `api_security` validator's active mass-assignment check,
+which sent a real `POST /api/users` -- and Juice Shop returned `201
+Created`, meaning it genuinely created a new user record. This is a new
+class of behavior: the combination of autonomous discovery (§5p) and the
+already-existing active mutating validators (`allow_mutating_replay`,
+§5n) means the harness can now chain confirmed-finding → autonomous
+follow-up → a real mutating action, with no human approving the
+intermediate steps. Within this session's explicit authorization scope
+(disposable local Juice Shop instance), but a materially larger blast
+radius than "one human-captured exchange, one bounded active check" --
+worth any operator's explicit attention before enabling both
+`autonomous_discovery.enabled` and `validators.allow_mutating_replay`
+together against anything that isn't disposable.
+
+619 Python tests pass.
+
+---
+
+## 5r. LLM-based prioritization pass for the Attack Surface Map tab
+
+User's request, after the SQLi work above: an LLM-based prioritization
+pass on top of `AttackSurfacePanel.java`'s existing local-only heuristic
+scan (`PathScorer`), automatically covering every scanned row with query
+parameters or a mutating method (POST/PUT/DELETE/PATCH) -- "queries with
+parameters or queries with POST, PUT, DELETE, UPDATE should also be
+submitted to that prioritisation agent," in the user's own words, chosen
+explicitly over a narrower "on demand, analyst-triggered" alternative
+despite the cost tradeoff (more LLM calls per scan) being named directly
+before they picked it.
+
+Existing state confirmed by reading the code first, not assumed:
+`AttackSurfacePanel`'s "Scan Site Map" already covers the heuristic scan,
+the ranked table, and "Send selected to LLM Harness" (which already
+creates test plans); `HarnessContextMenu`'s "choose agents" submenu
+already lets an analyst override to one specific agent per request. The
+actual, real gap was exactly the LLM-based ranking pass itself -- nothing
+else needed rebuilding.
+
+**Python side**:
+- `models.py`: `PrioritizeRequestItem` (method/url/param_names -- no
+  bodies, deliberately: this is a structure-only triage pass over a
+  potentially large batch, not a per-exchange vulnerability analysis),
+  `PrioritizeRequest`, `PrioritizeResultItem` (ai_priority/ai_score/
+  reasoning), `PrioritizeResponse`.
+- New `harness/surface_prioritizer.py`: `prioritize(items, ollama, model,
+  temperature)` batches the ENTIRE input list into ONE `chat_json` call
+  (not one call per endpoint -- the whole point, given the user's own
+  "automatic for everything" choice already multiplies call volume
+  across a scan; per-endpoint calls would make that unbounded instead of
+  just larger). Results are matched back to input items by an explicit
+  `"index"` field the model returns, not by list position or object
+  identity -- a missing, duplicate, or out-of-range index for a given
+  row leaves that ONE row at a safe `"unscored"` placeholder rather than
+  crashing or silently shifting every subsequent row's ranking out of
+  alignment. `ai_score` is clamped to [0,1] before constructing the
+  Pydantic model, since a model returning e.g. `1.5` would otherwise
+  raise a validation error partway through parsing a batch.
+- `server.py`: `POST /prioritize`, chunking `req.items` into
+  `surface_prioritization.max_items_per_call`-sized groups (config.yaml,
+  default 40) and running the chunks concurrently via `asyncio.gather` --
+  bounded parallel LLM calls, not one giant serialized batch, for a
+  large site map.
+- `config.yaml`: new `surface_prioritization` section (enabled/model/
+  temperature/max_items_per_call), same on/off + model-override shape as
+  every other LLM-backed feature in this file.
+- 17 new tests: `test_surface_prioritizer.py` (8 -- index-matching, out-
+  of-range/duplicate indices, score clamping, single-call-per-batch,
+  total Ollama-error degradation) using a minimal `FakeOllama` stand-in,
+  `test_server.py`'s new `PrioritizeEndpointTests` (9 -- chunking count,
+  empty-input short-circuit, disabled-config 403).
+
+**Java side** (`burp-extension`): mirrored DTOs in `AnalysisModels.java`
+(`PrioritizeRequestItem`/`PrioritizeRequest`/`PrioritizeResultItem`/
+`PrioritizeResponse`), `HarnessClient.prioritize()` (same request-
+building/error-handling shape as the existing `estimate()`, but with a
+longer timeout floor -- 120s vs. the short calls -- since this one
+actually runs LLM inference server-side, potentially several batches of
+it, unlike `/estimate`/`/effort`). `AttackSurfacePanel.runScan()` now
+calls a new `runAiPrioritization()` after populating the table: filters
+scanned rows to those with non-empty `paramNames()` or a mutating method,
+sends the qualifying set through `client.prioritize()` inside a
+`SwingWorker` (off the EDT -- this must never block "Scan Site Map" from
+showing its heuristic results immediately, since the LLM pass is not
+instant), and merges results into two new table columns ("AI Priority",
+"AI Reasoning") as they arrive, keyed by `method + " " + url`. A fresh
+scan clears any stale AI results from a prior scan before repopulating.
+
+**Not independently build-verified this pass**: no JDK or Gradle is
+available in this environment (the user builds the extension on a
+different machine) -- confirmed directly (`javac`/`gradle` both absent,
+no local Maven/Gradle dependency cache found). Verified instead by
+close manual reading against the existing, already-working `estimate()`/
+`EstimateRequest`/`EstimateResponse` pattern this new code mirrors field-
+for-field and call-for-call: same request-building/timeout/error-
+handling shape in `HarnessClient`, same DTO-per-line style in
+`AnalysisModels`, same "off-EDT SwingWorker populates results
+asynchronously" shape `HarnessContextMenu.AnalysisRunner.submit()`
+already uses. Real compilation is this feature's own next required step,
+on the machine that actually builds it.
 
 ---
 

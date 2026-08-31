@@ -4,6 +4,10 @@ import com.harness.llm.HarnessClient;
 import com.harness.llm.model.AnalysisModels.EstimateRequest;
 import com.harness.llm.model.AnalysisModels.EstimateResponse;
 import com.harness.llm.model.AnalysisModels.UrlEstimateItem;
+import com.harness.llm.model.AnalysisModels.PrioritizeRequest;
+import com.harness.llm.model.AnalysisModels.PrioritizeRequestItem;
+import com.harness.llm.model.AnalysisModels.PrioritizeResponse;
+import com.harness.llm.model.AnalysisModels.PrioritizeResultItem;
 import com.harness.llm.surface.PathScorer;
 import com.harness.llm.surface.PathScorer.ScoredPath;
 import com.harness.llm.surface.PathScorer.Tier;
@@ -13,8 +17,11 @@ import javax.swing.table.AbstractTableModel;
 import javax.swing.table.TableRowSorter;
 import java.awt.*;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
@@ -25,11 +32,21 @@ import java.util.function.Supplier;
  * them sorted highest-score-first so the analyst can see where to spend
  * limited attention before running any agent at all.
  *
- * This tab intentionally does NOT call the LLM harness to build the map
- * itself -- scoring hundreds of endpoints through an LLM would be slow
- * and mostly redundant with cheap pattern matching. The harness is one
- * right-click away ("Send to LLM Harness") once the analyst has picked
- * promising candidates off this list.
+ * The PathScorer pass itself intentionally does NOT call the LLM harness
+ * -- scoring hundreds of endpoints through an LLM would be slow and
+ * mostly redundant with cheap pattern matching. On top of that, though,
+ * every scanned row with query parameters or a mutating method (POST/
+ * PUT/DELETE/PATCH -- the set an analyst can't dismiss on structure
+ * alone) is automatically sent to the harness's POST /prioritize for a
+ * second, LLM-based triage pass (see surface_prioritizer.py): structure
+ * only (method/URL/param names, no bodies), batched into a handful of
+ * calls server-side, off the EDT here via a SwingWorker so a scan of a
+ * large site map doesn't freeze the UI. Results land in two additional
+ * columns ("AI Priority", "AI Reasoning") as they come back, not
+ * blocking the initial heuristic ranking from showing immediately. The
+ * full harness (/analyze) is still one right-click away once the
+ * analyst has picked promising candidates off this list -- this tab's
+ * job is triage, not the actual vulnerability analysis.
  */
 public class AttackSurfacePanel extends JPanel {
 
@@ -83,6 +100,8 @@ public class AttackSurfacePanel extends JPanel {
         table.getColumnModel().getColumn(3).setPreferredWidth(60);  // method
         table.getColumnModel().getColumn(4).setPreferredWidth(320); // url
         table.getColumnModel().getColumn(5).setPreferredWidth(320); // reasons
+        table.getColumnModel().getColumn(6).setPreferredWidth(90);  // AI priority
+        table.getColumnModel().getColumn(7).setPreferredWidth(320); // AI reasoning
         table.setDefaultRenderer(Object.class, new TierRowRenderer());
 
         JScrollPane scroll = new JScrollPane(table);
@@ -169,6 +188,8 @@ public class AttackSurfacePanel extends JPanel {
         }
     }
 
+    private static final Set<String> MUTATING_METHODS = Set.of("POST", "PUT", "DELETE", "PATCH");
+
     private void runScan(Supplier<List<SiteMapRow>> siteMapSupplier) {
         List<SiteMapRow> rows = siteMapSupplier.get();
         this.sourceRows = rows;
@@ -181,6 +202,74 @@ public class AttackSurfacePanel extends JPanel {
         long high = scored.stream().filter(s -> s.tier() == Tier.HIGH).count();
         countLabel.setText(String.format(
                 "%d endpoints scanned  |  %d critical, %d high", scored.size(), critical, high));
+        runAiPrioritization(rows);
+    }
+
+    /**
+     * Automatically triages every scanned row with query parameters or a
+     * mutating method (POST/PUT/DELETE/PATCH -- structure that can't be
+     * dismissed on the URL/heuristic score alone) through the harness's
+     * POST /prioritize, on top of PathScorer's own local heuristic. Runs
+     * off the EDT via SwingWorker -- this involves real LLM inference
+     * server-side (batched, but not instant the way PathScorer's own
+     * pass is), so it must never block "Scan Site Map" from showing its
+     * results immediately; the AI columns simply populate a little later
+     * once this returns.
+     */
+    private void runAiPrioritization(List<SiteMapRow> rows) {
+        List<SiteMapRow> qualifying = rows.stream()
+                .filter(r -> !r.paramNames().isEmpty() || MUTATING_METHODS.contains(r.method().toUpperCase(Locale.ROOT)))
+                .toList();
+        if (qualifying.isEmpty()) {
+            return;
+        }
+
+        PrioritizeRequest request = new PrioritizeRequest();
+        request.items = new ArrayList<>();
+        for (SiteMapRow r : qualifying) {
+            PrioritizeRequestItem item = new PrioritizeRequestItem();
+            item.method = r.method();
+            item.url = r.url();
+            item.param_names = r.paramNames();
+            request.items.add(item);
+        }
+
+        new SwingWorker<PrioritizeResponse, Void>() {
+            String error;
+
+            @Override
+            protected PrioritizeResponse doInBackground() {
+                try {
+                    return client.prioritize(request);
+                } catch (HarnessClient.HarnessException e) {
+                    error = e.getMessage();
+                    return null;
+                }
+            }
+
+            @Override
+            protected void done() {
+                PrioritizeResponse resp;
+                try {
+                    resp = get();
+                } catch (Exception e) {
+                    resp = null;
+                }
+                if (resp == null || resp.results == null) {
+                    countLabel.setText(countLabel.getText() + "  |  AI prioritization failed"
+                            + (error != null ? " (" + error + ")" : ""));
+                    return;
+                }
+                for (PrioritizeResultItem r : resp.results) {
+                    tableModel.putAiResult(aiKey(r.method, r.url), r);
+                }
+                tableModel.fireTableDataChanged();
+            }
+        }.execute();
+    }
+
+    private static String aiKey(String method, String url) {
+        return method.toUpperCase(Locale.ROOT) + " " + url;
     }
 
     private void applyTierFilter() {
@@ -195,12 +284,25 @@ public class AttackSurfacePanel extends JPanel {
     }
 
     private static class ScoredTableModel extends AbstractTableModel {
-        private final String[] columns = {"Tier", "Score", "Category", "Method", "URL", "Why it's interesting"};
+        private final String[] columns = {
+                "Tier", "Score", "Category", "Method", "URL", "Why it's interesting",
+                "AI Priority", "AI Reasoning",
+        };
         private List<ScoredPath> data = List.of();
+        // Keyed by aiKey(method, url) -- populated asynchronously as
+        // runAiPrioritization's SwingWorker completes, separately from
+        // (and later than) setData's own PathScorer results, so a scan's
+        // initial heuristic ranking never waits on the LLM pass.
+        private final Map<String, PrioritizeResultItem> aiResults = new HashMap<>();
 
         void setData(List<ScoredPath> data) {
             this.data = data;
+            this.aiResults.clear(); // a fresh scan invalidates any AI results from a prior one
             fireTableDataChanged();
+        }
+
+        void putAiResult(String key, PrioritizeResultItem result) {
+            aiResults.put(key, result);
         }
 
         ScoredPath rowAt(int modelRow) {
@@ -226,6 +328,14 @@ public class AttackSurfacePanel extends JPanel {
                 case 3 -> s.method();
                 case 4 -> s.url();
                 case 5 -> String.join("; ", s.reasons());
+                case 6 -> {
+                    PrioritizeResultItem ai = aiResults.get(aiKey(s.method(), s.url()));
+                    yield ai != null ? ai.ai_priority : "";
+                }
+                case 7 -> {
+                    PrioritizeResultItem ai = aiResults.get(aiKey(s.method(), s.url()));
+                    yield ai != null ? ai.reasoning : "";
+                }
                 default -> "";
             };
         }

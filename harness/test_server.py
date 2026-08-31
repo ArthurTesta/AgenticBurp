@@ -89,5 +89,66 @@ class SuppressionEndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 422)
 
 
+class PrioritizeEndpointTests(unittest.TestCase):
+    """HTTP-level coverage for POST /prioritize -- the wiring/chunking
+    logic itself (surface_prioritizer.prioritize is mocked out here; its
+    own batching/index-matching logic is covered by
+    test_surface_prioritizer.py)."""
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self._original_db_path = store._DB_PATH
+        store._DB_PATH = Path(self._tmpdir.name) / "test_harness_state.db"
+
+        import importlib
+        import server as server_module
+        importlib.reload(server_module)
+        self.server_module = server_module
+        from fastapi.testclient import TestClient
+        self.client = TestClient(server_module.app)
+
+    def tearDown(self):
+        store._DB_PATH = self._original_db_path
+        self._tmpdir.cleanup()
+
+    def test_empty_items_returns_empty_results_without_calling_prioritizer(self):
+        from unittest.mock import AsyncMock, patch
+        with patch.object(self.server_module, "surface_prioritizer") as mock_mod:
+            mock_mod.prioritize = AsyncMock()
+            response = self.client.post("/prioritize", json={"items": []})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"results": []})
+        mock_mod.prioritize.assert_not_called()
+
+    def test_items_are_chunked_by_max_items_per_call(self):
+        from unittest.mock import AsyncMock, patch
+
+        self.server_module.config["surface_prioritization"] = {
+            "enabled": True, "max_items_per_call": 2, "model": "m", "temperature": 0.1,
+        }
+        items = [{"method": "GET", "url": f"https://x.test/{i}", "param_names": []} for i in range(5)]
+
+        async def side_effect(chunk, ollama, model, temperature):
+            return [self.server_module.PrioritizeResultItem(
+                method=it.method, url=it.url, ai_priority="medium", ai_score=0.5, reasoning="r",
+            ) for it in chunk]
+
+        with patch.object(self.server_module, "surface_prioritizer") as mock_mod:
+            mock_mod.prioritize = AsyncMock(side_effect=side_effect)
+            response = self.client.post("/prioritize", json={"items": items})
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(len(body["results"]), 5)
+        # 5 items, max_items_per_call=2 -> 3 chunks (2, 2, 1)
+        self.assertEqual(mock_mod.prioritize.await_count, 3)
+
+    def test_disabled_returns_403(self):
+        self.server_module.config["surface_prioritization"] = {"enabled": False}
+        response = self.client.post("/prioritize", json={"items": [
+            {"method": "GET", "url": "https://x.test/a", "param_names": []}
+        ]})
+        self.assertEqual(response.status_code, 403)
+
+
 if __name__ == "__main__":
     unittest.main()

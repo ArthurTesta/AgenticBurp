@@ -7,6 +7,8 @@ import com.harness.llm.model.AnalysisModels.AnalysisResponse;
 import com.harness.llm.model.AnalysisModels.ErrorBody;
 import com.harness.llm.model.AnalysisModels.EstimateRequest;
 import com.harness.llm.model.AnalysisModels.EstimateResponse;
+import com.harness.llm.model.AnalysisModels.PrioritizeRequest;
+import com.harness.llm.model.AnalysisModels.PrioritizeResponse;
 import com.harness.llm.model.AnalysisModels.EffortStatus;
 import com.harness.llm.model.AnalysisModels.IdentityInfo;
 import com.harness.llm.model.AnalysisModels.SessionInfo;
@@ -269,6 +271,41 @@ public class HarnessClient {
         EstimateResponse parsed = gson.fromJson(resp.body(), EstimateResponse.class);
         if (parsed == null) {
             throw new HarnessException("Harness /estimate returned an empty/unparseable response body");
+        }
+        return parsed;
+    }
+
+    /**
+     * Structure-only (method/URL/param names, no bodies) LLM triage pass
+     * for the Attack Surface Map tab -- see harness/surface_prioritizer.py
+     * and server.py's POST /prioritize. The server batches `request.items`
+     * into a handful of LLM calls internally; this is a single HTTP call
+     * from this side regardless of how many items are in it. Uses a
+     * longer timeout than the other short calls here (estimate/effort) --
+     * this one genuinely runs LLM inference, potentially several batches
+     * of it server-side, unlike those.
+     */
+    public PrioritizeResponse prioritize(PrioritizeRequest request) throws HarnessException {
+        String body = gson.toJson(request);
+        HttpRequest req = newRequestBuilder("/prioritize", Duration.ofSeconds(Math.max(timeoutSeconds, 120)))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(body))
+                .build();
+        HttpResponse<String> resp;
+        try {
+            resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
+        } catch (IOException e) {
+            throw new HarnessException("Could not reach harness at " + baseUrl + " for /prioritize (" + e.getMessage() + ")", e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new HarnessException("Request interrupted", e);
+        }
+        if (resp.statusCode() != 200) {
+            throw new HarnessException("Harness /prioritize returned HTTP " + resp.statusCode() + ": " + resp.body());
+        }
+        PrioritizeResponse parsed = gson.fromJson(resp.body(), PrioritizeResponse.class);
+        if (parsed == null) {
+            throw new HarnessException("Harness /prioritize returned an empty/unparseable response body");
         }
         return parsed;
     }

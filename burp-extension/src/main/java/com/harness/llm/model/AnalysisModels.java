@@ -111,6 +111,31 @@ public class AnalysisModels {
         public Map<String, Double> assumptions;
     }
 
+    /** Mirrors harness/models.py's PrioritizeRequestItem -- structure
+     * only (method/URL/param names), no request/response bodies. See
+     * server.py's POST /prioritize and surface_prioritizer.py. */
+    public static class PrioritizeRequestItem {
+        public String method;
+        public String url;
+        public List<String> param_names;
+    }
+
+    public static class PrioritizeRequest {
+        public List<PrioritizeRequestItem> items;
+    }
+
+    public static class PrioritizeResultItem {
+        public String method;
+        public String url;
+        public String ai_priority; // "critical" | "high" | "medium" | "low" | "unscored"
+        public double ai_score;    // 0.0-1.0
+        public String reasoning;
+    }
+
+    public static class PrioritizeResponse {
+        public List<PrioritizeResultItem> results;
+    }
+
     public static class EffortStatus {
         public String mode;
         public Integer total_tokens; // nullable

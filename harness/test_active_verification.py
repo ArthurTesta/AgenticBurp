@@ -61,12 +61,13 @@ class ActiveVerificationTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(ok, reason)
 
     async def test_confirmed_submission_produces_no_next_step(self):
-        # reflection_context_validation isn't in store.py's
-        # confirmation_capabilities allowlist -- confirmed=True is
-        # rejected outright for it (an xss/ssrf/business_logic active
-        # validator may support a hypothesis but never itself confirm
-        # one). status == "confirmed" alone (without the confirmed flag)
-        # is what decide_next_step actually treats as "done, stop" here.
+        # status == "confirmed" alone (without the confirmed flag) is what
+        # decide_next_step actually treats as "done, stop" here -- this
+        # test deliberately uses confirmed=False to isolate that from
+        # store.py's separate confirmation_capabilities allowlist check
+        # (reflection_context_validation IS on that allowlist as of this
+        # session's B2 audit -- see store.py's own comment -- but that's
+        # a persistence-layer concern, not what this test exercises).
         plan = _make_plan()
         submission = _submission(plan.id, "confirmed", confirmed=False)
         self._persist_and_submit(plan, submission)

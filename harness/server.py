@@ -1,17 +1,20 @@
 from __future__ import annotations
+import asyncio
 import logging
 import os
 import secrets
 import yaml
 import store
 import active_verification
+import surface_prioritizer
 from pathlib import Path
 
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse, PlainTextResponse
 
 from models import (AnalysisRequest, AnalysisResponse, ValidationSubmission, EstimateRequest, EffortStatus,
-                     IdentityCreateRequest, SessionCreateRequest, SuppressFindingRequest)
+                     IdentityCreateRequest, SessionCreateRequest, SuppressFindingRequest,
+                     PrioritizeRequest, PrioritizeResponse, PrioritizeResultItem)
 import identity as identity_mod
 from orchestrator import Orchestrator
 
@@ -151,6 +154,34 @@ async def estimate(req: EstimateRequest, authorization: str | None = Header(defa
     if not req.urls:
         raise HTTPException(status_code=400, detail="urls must be non-empty")
     return orchestrator.estimate_for_urls(req.urls)
+
+
+@app.post("/prioritize", response_model=PrioritizeResponse)
+async def prioritize(req: PrioritizeRequest, authorization: str | None = Header(default=None)):
+    """
+    Structure-only (method/URL/param names, no bodies) LLM triage pass for
+    the Attack Surface Map tab's "Scan Site Map" -- see
+    surface_prioritizer.py's own docstring. Batches req.items into chunks
+    of surface_prioritization.max_items_per_call, one LLM call per chunk,
+    run concurrently -- bounded even for a large site map, not one call
+    per endpoint.
+    """
+    _require_auth(authorization)
+    cfg = config.get("surface_prioritization", {})
+    if not cfg.get("enabled", True):
+        raise HTTPException(status_code=403, detail="surface_prioritization is disabled in config.yaml")
+    if not req.items:
+        return PrioritizeResponse(results=[])
+
+    chunk_size = max(1, cfg.get("max_items_per_call", 40))
+    chunks = [req.items[i:i + chunk_size] for i in range(0, len(req.items), chunk_size)]
+    model = cfg.get("model") or orchestrator.coordinator_model
+    chunk_results = await asyncio.gather(*[
+        surface_prioritizer.prioritize(chunk, orchestrator.ollama, model, cfg.get("temperature", 0.1))
+        for chunk in chunks
+    ])
+    results: list[PrioritizeResultItem] = [r for chunk in chunk_results for r in chunk]
+    return PrioritizeResponse(results=results)
 
 
 @app.get("/effort", response_model=EffortStatus)

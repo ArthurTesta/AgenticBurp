@@ -803,10 +803,44 @@ class TestEarlyTermination(unittest.TestCase):
         )
         
         reports = [self.create_report("sqli", 0.95, "critical")]
-        
+
         result = should_terminate_early(reports, ["idor", "xss", "ssrf", "auth"], config)
-        
+
         self.assertFalse(result[0])
+
+    def test_default_config_no_longer_terminates_on_high_severity_cors(self):
+        """Regression test for a real, live bug: EarlyTerminationConfig's
+        DEFAULT min_severity used to be {"critical", "high"} -- a real
+        Juice Shop CORS misconfiguration finding (confidence 0.95, severity
+        "high", which CORS reaches on nearly every exchange against that
+        target) was silently cancelling the entire remaining agent batch,
+        confirmed live via the orchestrator's own "Early termination: ..."
+        log line: sqli/idor/xss/csp/misconfig/nosql/rate_limit never
+        received an AgentReport at all across two full runs. The default
+        is now {"critical"} only -- confirm the exact real scenario no
+        longer terminates, using the actual default (no min_severity
+        override), unlike every other test in this class."""
+        config = EarlyTerminationConfig(enabled=True, min_confidence=0.9, max_agents_before_check=3)
+        self.assertEqual(config.min_severity, {"critical"})
+
+        reports = [
+            self.create_report("auth", 0.6, "medium"),
+            self.create_report("business_logic", 0.5, "medium"),
+            self.create_report("cors", 0.95, "high"),
+        ]
+        result = should_terminate_early(reports, ["csp", "idor", "misconfig", "nosql", "rate_limit", "sqli", "xss"], config)
+        self.assertFalse(result[0], f"must not terminate on a 'high' severity finding by default, got: {result}")
+
+    def test_default_config_still_terminates_on_critical(self):
+        """The feature itself is still intact for a genuinely critical finding."""
+        config = EarlyTerminationConfig(enabled=True, min_confidence=0.9, max_agents_before_check=3)
+        reports = [
+            self.create_report("auth", 0.6, "medium"),
+            self.create_report("business_logic", 0.5, "medium"),
+            self.create_report("sqli", 0.95, "critical"),
+        ]
+        result = should_terminate_early(reports, ["idor", "xss"], config)
+        self.assertTrue(result[0])
 
 
 class TestFastPathSelector(unittest.TestCase):

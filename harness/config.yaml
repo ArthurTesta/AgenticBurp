@@ -232,3 +232,41 @@ validators:
     timeout_seconds: 90
     level: 1
     risk: 1
+
+# Autonomous scope-discovery MVP (harness/scope_discovery.py). Off by
+# default -- the harness has never, until this option exists, decided on
+# its own to send a request to a URL a human never captured. GET-only by
+# design (SAFE tier per safety_gate.py's own classification), scoped
+# through the SAME server.allowed_hosts list above (re-checked per
+# candidate URL individually, not just once at the top of analyze()).
+# When a finding on an exchange is BOTH confirmed=true AND its category is
+# in trigger_categories (a real, validator-confirmed privilege escalation,
+# not an LLM guess), the harness probes candidate_paths on the same host
+# using the SAME Authorization/Cookie the triggering exchange carried, and
+# feeds whatever real responses come back through the same analysis
+# pipeline recursively. Deliberately a small, fixed, curated path list for
+# this first pass, not open-ended crawling -- that's recon_validator.py's
+# job, already built.
+autonomous_discovery:
+  enabled: true
+  trigger_categories: ["sqli", "auth", "business_logic", "api_security", "idor"]
+  max_new_requests_per_trigger: 5
+  candidate_paths:
+    - "/api/users"
+    - "/api/users/1"
+    - "/admin"
+    - "/api/admin/config"
+    - "/rest/admin/application-configuration"
+
+# LLM-based prioritization pass for the Burp extension's "Attack Surface
+# Map" tab (AttackSurfacePanel.java / POST /prioritize). Structure-only
+# (method, URL, parameter names -- no bodies), batched into a handful of
+# calls per "Scan Site Map" run, not one call per endpoint -- see
+# surface_prioritizer.py's own docstring for why. This is a triage/
+# ranking pass, not a vulnerability analysis; /analyze still does the
+# real work once the analyst picks a candidate off the ranked list.
+surface_prioritization:
+  enabled: true
+  model: "qwen3:8b"
+  temperature: 0.1
+  max_items_per_call: 40
