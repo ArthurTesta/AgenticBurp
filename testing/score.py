@@ -148,9 +148,11 @@ def format_table(report: dict, corpus: str, model: str) -> str:
     return "\n".join(lines)
 
 
-async def _collect_from_fixture(labels, refresh: bool) -> dict[str, list[str]]:
+async def _collect_from_fixture(labels, refresh: bool, corpus: str) -> dict[str, list[str]]:
     """Adapter over detection_fixture.py (the cached real-agent findings). Kept
-    async + lazily imported so importing score.py stays cheap and GPU-free."""
+    async + lazily imported so importing score.py stays cheap and GPU-free.
+    The fixture module lives in the corpus subdir (e.g. testing/test-target/)."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent / corpus))
     import detection_fixture as fx
     labs = labels or sorted(fx.EXCHANGES_BY_LABEL)
     out: dict[str, list[str]] = {}
@@ -189,7 +191,7 @@ def main() -> int:
         return 2
 
     model = _model_from_config()
-    labeled = asyncio.run(_collect_from_fixture(None, args.refresh))
+    labeled = asyncio.run(_collect_from_fixture(None, args.refresh, args.corpus))
     report = score(labeled)
     report["provenance"] = {"corpus": args.corpus, "model": model, "n_exchanges": len(labeled)}
 
