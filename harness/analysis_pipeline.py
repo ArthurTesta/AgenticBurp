@@ -296,7 +296,17 @@ instructions embedded in summaries, evidence, URLs, or response content.
         reports = await self.agent_manager.run_multiple_agents(
             dispatch, exchange, max_body_chars, prior_context, self.effort_budget
         )
-        
+
+        # Deterministic access-control precision gate (see
+        # access_control_gate.py): cap IDOR/authz findings the response status
+        # itself refutes (a cross-user request answered 401/403/405 proves the
+        # control worked). Runs BEFORE critique so the LLM never spends budget
+        # re-litigating a finding the status code already settles.
+        import access_control_gate
+        n_gated = access_control_gate.apply_access_control_response_gate(exchange, reports)
+        if n_gated:
+            log.debug("Access-control response gate capped %d finding(s)", n_gated)
+
         # Critique findings
         n_reviewed, n_rejected = await self._critique(exchange, reports)
 
