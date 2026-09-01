@@ -184,6 +184,38 @@ async def prioritize(req: PrioritizeRequest, authorization: str | None = Header(
     return PrioritizeResponse(results=results)
 
 
+from pydantic import BaseModel as _BaseModel
+
+
+class CrawlRequest(_BaseModel):
+    base_url: str
+    # Optional session the tester's Burp already holds (Authorization / Cookie),
+    # so the crawl reaches authenticated surface. Never populated by the server.
+    headers: dict[str, str] = {}
+    max_pages: int = 40
+    max_depth: int = 2
+
+
+@app.post("/crawl")
+async def crawl_endpoint(req: CrawlRequest, authorization: str | None = Header(default=None)):
+    """Discover the application's real endpoint surface by fetching its pages
+    AND mining the JavaScript bundles they load (js_endpoint_extractor.py) --
+    the API surface a link-only spider misses. Scope-gated to the engagement's
+    server.allowed_hosts, paced by the global request throttle, and bounded by
+    max_pages/max_depth. Drives the Burp "Crawl" button; returns the discovered
+    endpoints for the site map / attack-surface tab."""
+    _require_auth(authorization)
+    import crawler
+    result = await crawler.crawl(
+        req.base_url,
+        headers=req.headers or {},
+        allowed_hosts=orchestrator.allowed_hosts,
+        max_pages=max(1, min(req.max_pages, 200)),
+        max_depth=max(0, min(req.max_depth, 4)),
+    )
+    return result.to_dict()
+
+
 @app.get("/effort", response_model=EffortStatus)
 async def effort_status(authorization: str | None = Header(default=None)):
     """Current cumulative spend against the configured budget (see
