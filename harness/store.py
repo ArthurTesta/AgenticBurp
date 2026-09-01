@@ -180,6 +180,19 @@ def _connect() -> sqlite3.Connection:
             updated_at REAL NOT NULL
         )
     """)
+    # Retrievable knowledge notes (knowledge.py's Memory Retriever) -- tester-
+    # authored methodology writeups and auto-remembered confirmed findings,
+    # merged with the built-in corpus at decision time. `source` distinguishes
+    # them (manual | finding); `fingerprint` de-dupes.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS knowledge_notes (
+            fingerprint TEXT PRIMARY KEY,
+            tags_json TEXT NOT NULL DEFAULT '[]',
+            note TEXT NOT NULL,
+            source TEXT NOT NULL DEFAULT 'manual',
+            created_at REAL NOT NULL
+        )
+    """)
     conn.commit()
     return conn
 
@@ -579,6 +592,44 @@ def load_engagement(host: str) -> dict | None:
         return json.loads(row[0])
     except (json.JSONDecodeError, TypeError):
         return None
+
+
+def save_knowledge_note(tags: list, note: str, source: str = "manual") -> bool:
+    """Persist a retrievable knowledge note (idempotent by content). Returns
+    whether a new row was inserted."""
+    note = (note or "").strip()
+    if not note:
+        return False
+    fp = hashlib.sha256(("|".join(sorted(tags)) + "\x1f" + note).encode("utf-8")).hexdigest()[:24]
+    conn = _connect()
+    try:
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO knowledge_notes (fingerprint, tags_json, note, source, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (fp, json.dumps(list(tags)), note, source, time.time()))
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def list_knowledge_notes(limit: int = 500) -> list[dict]:
+    """All stored knowledge notes, newest first."""
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT tags_json, note, source, created_at FROM knowledge_notes "
+            "ORDER BY created_at DESC LIMIT ?", (int(limit),)).fetchall()
+    finally:
+        conn.close()
+    out = []
+    for tags_json, note, source, ts in rows:
+        try:
+            tags = json.loads(tags_json)
+        except (json.JSONDecodeError, TypeError):
+            tags = []
+        out.append({"tags": tags, "note": note, "source": source, "created_at": ts})
+    return out
 
 
 def is_chain_already_detected(url: str, signature: str) -> bool:

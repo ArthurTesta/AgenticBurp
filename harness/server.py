@@ -581,6 +581,30 @@ async def scan_confidential(exchange: HttpExchange, authorization: str | None = 
     }
 
 
+class KnowledgeNoteRequest(_BaseModel):
+    note: str
+    tags: list[str] = []
+
+
+@app.post("/knowledge")
+async def add_knowledge(req: KnowledgeNoteRequest, authorization: str | None = Header(default=None)):
+    """Add a retrievable knowledge note (a methodology writeup / house rule) that
+    the agents' Memory Retriever surfaces at decision time (knowledge.py). Tags
+    help it match; the note text is matched too."""
+    _require_auth(authorization)
+    if not req.note.strip():
+        raise HTTPException(status_code=400, detail="note must be non-empty")
+    added = await __import__("asyncio").to_thread(store.save_knowledge_note, req.tags, req.note, "manual")
+    return {"added": added, "note": req.note.strip(), "tags": req.tags}
+
+
+@app.get("/knowledge")
+async def list_knowledge(authorization: str | None = Header(default=None)):
+    """All stored knowledge notes (tester-authored + auto-remembered findings)."""
+    _require_auth(authorization)
+    return {"notes": await __import__("asyncio").to_thread(store.list_knowledge_notes)}
+
+
 @app.get("/tools")
 async def tools_catalog(category: str = "", vulnerability_class: str = "",
                         authorization: str | None = Header(default=None)):

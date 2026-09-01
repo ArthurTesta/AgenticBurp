@@ -117,26 +117,75 @@ def _tokenize(text: str) -> set[str]:
     return set(re.findall(r"[a-z][a-z0-9_-]{2,}", text.lower()))
 
 
+def _external_notes() -> list[dict]:
+    """Tester-authored writeups + auto-remembered confirmed findings, loaded from
+    the store at decision time (VulnBot's Memory Retriever role -- grounding on
+    accumulated experience, not just the model's weights). Best-effort: a store
+    hiccup degrades to the built-in corpus alone, never an error."""
+    try:
+        import store
+        rows = store.list_knowledge_notes()
+    except Exception:
+        return []
+    out = []
+    for r in rows:
+        # An external note is matched on its tags PLUS its own tokenized text, so
+        # a free-text writeup still scores against the query.
+        tag_tokens = {t.lower() for t in (r.get("tags") or [])} | _tokenize(r.get("note", ""))
+        out.append({"tags": tag_tokens, "note": r.get("note", ""), "source": r.get("source", "manual")})
+    return out
+
+
+def remember_finding(vulnerability_class: str, url: str, evidence: str = "") -> bool:
+    """Persist a confirmed finding as a retrievable note -- the harness's own
+    'past task' memory. Stores only the class + a path shape (no bodies/values),
+    so future analyses of similar surface get grounded in what already worked
+    here. Returns whether a new note was stored."""
+    try:
+        import store
+        from urllib.parse import urlsplit
+        path = urlsplit(url).path or "/"
+        note = (f"On this engagement, {vulnerability_class} was CONFIRMED at a "
+                f"{path}-shaped endpoint. Prioritize the same check on similar endpoints.")
+        tags = list(_tokenize(vulnerability_class) | _tokenize(path))
+        return store.save_knowledge_note(tags, note, source="finding")
+    except Exception:
+        return False
+
+
 def retrieve(agent_name: str, exchange: HttpExchange, top_k: int = 2) -> str:
     """
-    Keyword-overlap retrieval (no embeddings): score each corpus entry by
-    how many of its tags/words appear in the agent's own name plus a
-    slice of the exchange (URL + first part of the body), return the
-    top_k entries' notes as a single prompt-ready block. Deterministic
-    and cheap enough to run on every call.
+    Keyword-overlap retrieval (no embeddings): score the built-in corpus AND the
+    tester's stored notes / remembered findings by how many of their tags/words
+    appear in the agent's own name plus a slice of the exchange (URL + first part
+    of the body), return the top_k notes as a single prompt-ready block.
+    Deterministic and cheap enough to run on every call.
     """
     query_tokens = _tokenize(agent_name) | _tokenize(exchange.url) | _tokenize(exchange.request_body[:500])
 
-    scored = []
+    scored: list[tuple[int, int, str]] = []
+    # Built-in corpus first (tie-break priority 1), external notes second (0) so a
+    # curated methodology entry edges out an incidental writeup on an equal score.
     for entry in _CORPUS:
-        tag_tokens = set(entry["tags"])
-        overlap = len(query_tokens & tag_tokens)
+        overlap = len(query_tokens & set(entry["tags"]))
         if overlap > 0:
-            scored.append((overlap, entry))
+            scored.append((overlap, 1, entry["note"]))
+    for entry in _external_notes():
+        overlap = len(query_tokens & entry["tags"])
+        if overlap > 0:
+            scored.append((overlap, 0, entry["note"]))
 
     if not scored:
         return ""
 
-    scored.sort(key=lambda pair: pair[0], reverse=True)
-    top = [entry["note"] for _, entry in scored[:top_k]]
+    scored.sort(key=lambda t: (t[0], t[1]), reverse=True)
+    seen: set[str] = set()
+    top: list[str] = []
+    for _, _, note in scored:
+        if note in seen:
+            continue
+        seen.add(note)
+        top.append(note)
+        if len(top) >= top_k:
+            break
     return "\n".join(f"- {note}" for note in top)
