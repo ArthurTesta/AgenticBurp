@@ -25,7 +25,7 @@ Architecture:
 from __future__ import annotations
 import asyncio
 import logging
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit
 
 from ollama_client import OllamaClient, OllamaError
 from models import (
@@ -348,8 +348,117 @@ class Orchestrator:
         # analysis. Scope-gated to allowed_hosts and throttled regardless.
         self.engagement_auto_escalate = bool(
             (config.get("engagement", {}) or {}).get("auto_escalate", False))
+        # Whether the engagement driver may EXECUTE (fetch + analyze) the planned
+        # targets, vs. only ever returning the plan. DEFAULT OFF: even when a
+        # /run request asks to execute, this must also be true -- so the driver
+        # never dispatches active testing automatically without a deliberate opt-in.
+        self.engagement_driver_execute = bool(
+            (config.get("engagement", {}) or {}).get("driver_execute", False))
 
         log.info(f"Orchestrator initialized with {len(self.agent_manager.get_enabled_agents())} agents")
+
+    async def plan_engagement(self, host: str, *, max_targets: int = 10,
+                              base_url: str = "") -> dict:
+        """The engagement driver, planning mode (no side effects): read the fused
+        worklist back out, take the top untested endpoints, and run them through
+        the F5 budget governor -- returning a ranked, budgeted 'test next' queue
+        with the governor's full/reduced/deferred decisions and guidance. The
+        endpoint's fused score IS its allocation priority, so the whole
+        signal-fusion pipeline drives what gets budget. Pure planning: nothing is
+        fetched or analyzed here."""
+        import engagement, resource_governor
+        snap = await asyncio.to_thread(store.load_engagement, host)
+        if not snap:
+            return {"host": host, "targets": [], "guidance": ["no engagement state for this host yet -- "
+                                                              "crawl or analyze it first"], "executed": False}
+        st = engagement.EngagementState.from_dict(snap)
+        # "Test next" = not already validated; ranked by the fused score.
+        ranked = [e for e in st.worklist(limit=max(1, min(max_targets * 3, 200)))
+                  if e.get("status") != "validated"][:max_targets]
+
+        origin = ""
+        if base_url:
+            p = urlsplit(base_url)
+            origin = f"{p.scheme}://{p.netloc}"
+
+        candidates: list[dict] = []
+        for e in ranked:
+            bf = None
+            for f in e.get("findings", []):
+                if bf is None or f.get("confidence", 0) > bf.get("confidence", 0):
+                    bf = f
+            severity = (bf or {}).get("severity") or (
+                "medium" if any("privileged" in r for r in e.get("reasons", [])) else "low")
+            candidates.append({
+                "id": e["key"] if "key" in e else f"{e['method']} {e['path']}",
+                "vulnerability_class": (bf or {}).get("vulnerability_class", "unknown"),
+                "url": (origin + e["path"]) if origin else e["path"],
+                "severity": severity,
+                "confidence": (bf or {}).get("confidence", 0.0),
+                "priority": e.get("score", 0.0),   # the fused ranking drives allocation
+            })
+
+        plan = self.plan_allocation(candidates)  # governor + remaining budget
+        # Join the allocation back onto the ranked targets for a single view.
+        alloc_by_id = {a["id"]: a for a in plan.get("allocations", [])}
+        targets = []
+        for e in ranked:
+            key = f"{e['method']} {e['path']}"
+            a = alloc_by_id.get(key, {})
+            targets.append({
+                "method": e["method"], "path": e["path"], "score": e.get("score"),
+                "status": e.get("status"), "reasons": e.get("reasons", []),
+                "action": a.get("action", "deferred"), "granted_tokens": a.get("granted_tokens", 0),
+                "vulnerability_class": a.get("vulnerability_class", "unknown"),
+                "severity": a.get("severity"),
+            })
+        return {"host": host, "targets": targets, "guidance": plan.get("guidance", []),
+                "round_cost_tokens": plan.get("round_cost_tokens"),
+                "budget": plan.get("total_budget"), "executed": False}
+
+    async def run_engagement(self, host: str, base_url: str, *, max_targets: int = 5,
+                             execute: bool = False) -> dict:
+        """Plan the campaign, and -- only when `execute` is asked AND
+        engagement.driver_execute is enabled in config -- actually fetch and
+        analyze the funded (non-deferred) GET targets, bounded by the governor's
+        allocation. Fetching builds a real exchange the agents/validators can work
+        on; each analyze() re-enters the full pipeline (and folds back into the
+        worklist). Double-gated so the driver never tests automatically."""
+        plan = await self.plan_engagement(host, max_targets=max_targets, base_url=base_url)
+        if not execute:
+            plan["note"] = "plan only -- pass execute=true (and enable engagement.driver_execute) to run these"
+            return plan
+        if not self.engagement_driver_execute:
+            plan["note"] = "execution refused: engagement.driver_execute is disabled in config.yaml"
+            return plan
+
+        p = urlsplit(base_url)
+        origin = f"{p.scheme}://{p.netloc}"
+        analyzed: list[dict] = []
+        for t in plan["targets"]:
+            if t["action"] == "deferred" or t["method"].upper() != "GET":
+                continue
+            url = origin + t["path"].replace("{id}", "1")
+            if not scope_discovery.is_host_allowed(url, self.allowed_hosts):
+                continue
+            try:
+                await global_throttle.acquire()
+                async with httpx.AsyncClient(timeout=15.0, follow_redirects=False) as client:
+                    resp = await client.get(url)
+                exchange = HttpExchange(
+                    url=url, method="GET", request_headers={}, request_body="",
+                    response_status=resp.status_code, response_headers=dict(resp.headers),
+                    response_body=(resp.text or "")[: self.max_body_chars])
+                result = await self.analyze(exchange)
+                analyzed.append({"url": url, "findings": len(result.agent_reports and
+                                 [f for r in result.agent_reports for f in r.findings])})
+            except Exception as e:
+                analyzed.append({"url": url, "error": e.__class__.__name__})
+
+        # Re-read the (now-updated) worklist so the caller sees the effect.
+        after = await self.plan_engagement(host, max_targets=max_targets, base_url=base_url)
+        return {"host": host, "executed": True, "analyzed": analyzed,
+                "targets_after": after["targets"], "guidance": after["guidance"]}
 
     async def _auto_escalate(self, host: str, source_url: str, credential_caps: list, st) -> None:
         """Re-crawl the origin as each learned (derived) identity and fold the new

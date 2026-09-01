@@ -146,7 +146,13 @@ browser_xss:
 # GET /engagement/<host>), just not auto-executed -- drive it with
 # POST /engagement/<host>/advance instead.
 engagement:
-  auto_escalate: false
+  auto_escalate: true
+  # The engagement driver (POST /engagement/<host>/run) plans a budgeted
+  # "test next" queue from the fused worklist. It only EXECUTES (fetch + analyze
+  # the planned targets) when a /run request asks AND this is true -- so the
+  # driver never dispatches active testing automatically. DEFAULT OFF: planning
+  # is always safe; execution sends traffic.
+  driver_execute: false
 
 retry_budget:
   max_retries: 2              # extra re-dispatches after the first pass (0 = one pass)

@@ -651,6 +651,30 @@ async def engagement_view(host: str, limit: int = 25, authorization: str | None 
             "pending_actions": st.pending(), "summary": st.summary()}
 
 
+class RunEngagementRequest(_BaseModel):
+    base_url: str = ""
+    max_targets: int = 10
+    # Default false -> plan only. Executing ALSO requires engagement.driver_execute
+    # in config, so the driver never tests automatically.
+    execute: bool = False
+
+
+@app.post("/engagement/{host}/run")
+async def engagement_run(host: str, req: RunEngagementRequest, authorization: str | None = Header(default=None)):
+    """The engagement driver: read the fused worklist back out and produce a
+    ranked, budget-allocated 'test next' plan (F5 governor). Plan-only by default
+    -- it does NOT test anything. With execute=true AND engagement.driver_execute
+    enabled, it fetches + analyzes the funded GET targets, bounded by the
+    allocation, and returns the updated worklist."""
+    _require_auth(authorization)
+    max_targets = max(1, min(req.max_targets, 50))
+    if req.execute:
+        if not req.base_url:
+            raise HTTPException(status_code=400, detail="execute requires base_url")
+        return await orchestrator.run_engagement(host, req.base_url, max_targets=max_targets, execute=True)
+    return await orchestrator.plan_engagement(host, max_targets=max_targets, base_url=req.base_url)
+
+
 class AdvanceRequest(_BaseModel):
     base_url: str
     # Re-crawl as these roles (the tester supplies creds for any new identity,
