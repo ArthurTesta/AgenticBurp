@@ -150,5 +150,72 @@ class PrioritizeEndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 403)
 
 
+class MissingAuthProbeEndpointTests(unittest.TestCase):
+    """HTTP-level tests for POST /probe-missing-auth (mocked network)."""
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self._original_db_path = store._DB_PATH
+        store._DB_PATH = Path(self._tmpdir.name) / "test_harness_state.db"
+
+        import importlib
+        import global_throttle
+        import server as server_module
+        importlib.reload(server_module)
+        self.server_module = server_module
+        # Scope the probe to a test host; the module-level orchestrator's
+        # allowed_hosts is what the endpoint hands the probe.
+        server_module.orchestrator.allowed_hosts = ["t.test"]
+        global_throttle.configure(0)
+        from fastapi.testclient import TestClient
+        self.client = TestClient(server_module.app)
+
+    def tearDown(self):
+        store._DB_PATH = self._original_db_path
+        self._tmpdir.cleanup()
+
+    def _fake(self, mapping):
+        class _Resp:
+            def __init__(self, status, text):
+                self.status_code, self.text = status, text
+
+        async def fake_request(_self, method, url, headers=None):
+            entry = mapping.get((method.upper(), url))
+            if entry is None:
+                return _Resp(404, "")
+            has_auth = bool(headers) and any(k.lower() == "authorization" for k in headers)
+            return _Resp(*entry.get("garbage" if has_auth else "unauth", entry["unauth"]))
+        return fake_request
+
+    def test_probes_call_shapes_and_returns_finding(self):
+        from unittest.mock import patch
+        m = {("GET", "http://t.test/api/report"): {"unauth": (200, '{"salary": 90000}')},
+             ("GET", "http://t.test/api/tickets"): {"unauth": (401, "no")}}
+        with patch("httpx.AsyncClient.request", self._fake(m)):
+            resp = self.client.post("/probe-missing-auth", json={
+                "base_url": "http://t.test",
+                "call_shapes": [{"method": "GET", "path": "/api/report"},
+                                {"method": "GET", "path": "/api/tickets"}],
+                "send_garbage_token": False,
+            })
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body["probed"], 2)
+        self.assertEqual(body["findings_count"], 1)
+        self.assertEqual(body["findings"][0]["vulnerability_class"], "missing_authentication")
+
+    def test_bare_paths_probed_as_get(self):
+        from unittest.mock import patch
+        m = {("GET", "http://t.test/secret"): {"unauth": (200, "leaked internal data")}}
+        with patch("httpx.AsyncClient.request", self._fake(m)):
+            resp = self.client.post("/probe-missing-auth", json={
+                "base_url": "http://t.test", "paths": ["/secret"], "send_garbage_token": False})
+        self.assertEqual(resp.json()["findings_count"], 1)
+
+    def test_no_targets_is_400(self):
+        resp = self.client.post("/probe-missing-auth", json={"base_url": "http://t.test"})
+        self.assertEqual(resp.status_code, 400)
+
+
 if __name__ == "__main__":
     unittest.main()

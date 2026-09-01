@@ -216,6 +216,81 @@ async def crawl_endpoint(req: CrawlRequest, authorization: str | None = Header(d
     return result.to_dict()
 
 
+class MissingAuthRequest(_BaseModel):
+    base_url: str
+    # Endpoints to probe, as call shapes recovered from the app's JS
+    # (js_endpoint_extractor.extract_call_shapes) or supplied by the tester.
+    call_shapes: list[dict[str, str]] = []   # [{"method": "...", "path": "..."}]
+    # Extra bare paths with no known method are probed as GET.
+    paths: list[str] = []
+    # The tester's Burp session headers, if any -- the probe STRIPS the auth
+    # ones and keeps the rest; the point is to fire with credentials removed.
+    headers: dict[str, str] = {}
+    # If true and no call_shapes given, crawl base_url first and probe every
+    # discovered endpoint as a GET shape.
+    discover: bool = False
+    max_pages: int = 40
+    send_garbage_token: bool = True
+    # Off by default: probing mutating methods (POST/PUT/PATCH/DELETE) is gated
+    # by the safety gate and only fires when active testing + mutating replay
+    # are enabled in config.yaml. Left off, mutating shapes are skipped.
+    include_mutating: bool = False
+    # The caller knows these endpoints are meant to be authenticated (e.g. they
+    # were only referenced in authenticated JS) -- nudges confidence up.
+    expected_protected: bool = False
+
+
+@app.post("/probe-missing-auth")
+async def probe_missing_auth_endpoint(req: MissingAuthRequest, authorization: str | None = Header(default=None)):
+    """Fire discovered endpoints with authentication stripped and flag the ones
+    that still return data -- the "generateReport unauthenticated" class an
+    always-authenticated capture never reveals (missing_auth_probe.py).
+
+    Scope-gated to server.allowed_hosts, paced by the global request throttle,
+    and read-only unless include_mutating AND the safety gate allow it. Provide
+    call_shapes (method+path) mined from the app's JS, bare `paths` (probed as
+    GET), or set `discover` to crawl base_url first. Returns per-endpoint
+    outcomes plus the missing_authentication findings."""
+    _require_auth(authorization)
+    import missing_auth_probe
+    from js_endpoint_extractor import CallShape
+
+    shapes: list[CallShape] = []
+    for cs in req.call_shapes:
+        method, path = cs.get("method"), cs.get("path")
+        if method and path:
+            shapes.append(CallShape(method=str(method).upper(), path=str(path)))
+    shapes.extend(CallShape("GET", p) for p in req.paths if p)
+
+    if not shapes and req.discover:
+        import crawler
+        crawl = await crawler.crawl(
+            req.base_url, headers=req.headers or {}, allowed_hosts=orchestrator.allowed_hosts,
+            max_pages=max(1, min(req.max_pages, 200)),
+        )
+        shapes.extend(CallShape("GET", p) for p in sorted(crawl.endpoints))
+
+    if not shapes:
+        raise HTTPException(status_code=400, detail="no call_shapes, paths, or discoverable endpoints to probe")
+
+    outcomes = await missing_auth_probe.probe_call_shapes(
+        req.base_url, shapes,
+        allowed_hosts=orchestrator.allowed_hosts,
+        baseline_headers=req.headers or None,
+        send_garbage_token=req.send_garbage_token,
+        include_mutating=req.include_mutating,
+        expected_protected=req.expected_protected,
+    )
+    findings = missing_auth_probe.findings_from(outcomes)
+    return {
+        "base_url": req.base_url,
+        "probed": len(outcomes),
+        "findings_count": len(findings),
+        "outcomes": [o.to_dict() for o in outcomes],
+        "findings": [f.model_dump() for f in findings],
+    }
+
+
 @app.get("/effort", response_model=EffortStatus)
 async def effort_status(authorization: str | None = Header(default=None)):
     """Current cumulative spend against the configured budget (see
