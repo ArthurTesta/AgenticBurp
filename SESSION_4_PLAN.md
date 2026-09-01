@@ -63,6 +63,30 @@ S ≈ ½ day · M ≈ 1–2 days · L ≈ 2–4 days.
 
 ---
 
+## Progress log (session 4 — this agent)
+
+**Landed & committed on `WorkingSunday` (suite green: 893 tests, OK):**
+- ✅ **T0.1** — `config.local.yaml` overlay in `server.load_config()` kills the toggle-leak trap (`1d3c3cd`)
+- ✅ **T0.2** — jar + 2 runtime DBs untracked; `.gitignore` updated (`1d3c3cd`)
+- ✅ **T0.3** — deps exact-pinned + `requirements.lock` (full freeze) + `requirements-dev.txt` (`becabd2`)
+- ✅ **T1.1** — end-to-end detection smoke test vs a stubbed Ollama, with a negative control; class-scoped DB isolation (`5650aae`)
+- ✅ **T4.1** — coordinator fail-open counted (`coordinator.fail_open_stats`) + published to the activity feed + asserted (smoke + `test_fail_open_telemetry`) (`f68054a`)
+- ✅ **T5.1 (fast tier)** — GitHub Actions: install lock, run suite+smoke, run score self-test; `pyproject.toml` (`6648690`)
+- ✅ **T2.1** — `testing/score.py`: per-OWASP precision/recall/F1 with provenance + `--fail-under-recall` gate; math unit-tested (`851eefc`)
+
+**Remaining — and why not done here:**
+- ⏸ **T2.2 / T2.3** — need the detection fixture built on the **GPU/Ollama box** (`cd testing/test-target && python detection_fixture.py build`, ~2h) with the targets running. Then `score.py --from-cache` emits the number; publish it to `testing/SCORECARD.md`. *(env-blocked here: no GPU/model.)*
+- ⏸ **T3.1** — needs T2's real numbers to measure the flip. *(blocked on T2.2.)*
+- ▫ **T5.1 (scored tier)** — stubbed/disabled in `ci.yml`; enable on a self-hosted GPU runner once fixture + floor exist.
+- ▫ **T4.2** — broad-`except` sweep + first-class routing model: NOT started (routing model is already partly there via `cloud_primary` / `set_coordinator_model`). Deferred rather than churn ~26 sites speculatively.
+- ▫ **TB.1** — campaign report: not started (off the critical path).
+
+**First move for the GPU box:** build the fixture, then
+`cd testing && python score.py --corpus test-target --from-cache --json scorecard.json`,
+sanity-check the per-category table, then do T2.2 (blind-target-2) and publish T2.3.
+
+---
+
 ## Phase 0 — Stop the bleeding (do first, ~½ day total)
 
 ### T0.1 — Kill the config-toggle trap
