@@ -31,6 +31,7 @@ _HARNESS = Path(__file__).resolve().parent
 
 import store
 import cache
+import coordinator
 from orchestrator import Orchestrator
 from models import HttpExchange
 from ollama_client import OllamaResult
@@ -157,6 +158,7 @@ class SmokeDetectionTest(unittest.TestCase):
         return [f for report in resp.agent_reports for f in report.findings]
 
     def test_known_sqli_survives_pipeline(self):
+        coordinator.reset_fail_open_stats()
         orch = _build(detect=True)
         resp = asyncio.run(orch.analyze(_SQLI_EXCHANGE, bypass_cache=True))
 
@@ -171,6 +173,14 @@ class SmokeDetectionTest(unittest.TestCase):
             "analyze() pipeline. This is the 'green tests, dead pipeline' failure -- something "
             "between dispatch and synthesis (prompt validation, gating, a broken validator, the "
             "circuit breaker) is silently dropping findings.",
+        )
+        # This clean SQLi shape routes via the deterministic fast-path, so the
+        # coordinator must NOT have failed open to all agents (T4.1). A non-zero
+        # count here means routing silently degraded to the fire-everything path.
+        self.assertEqual(
+            coordinator.fail_open_stats()["count"], 0,
+            "coordinator failed open during normal detection -- routing silently fell back "
+            "to dispatching all agents instead of the fast-path selection.",
         )
 
     def test_negative_control_no_detection_when_model_silent(self):

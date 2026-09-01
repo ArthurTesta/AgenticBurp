@@ -18,6 +18,46 @@ if TYPE_CHECKING:
 log = logging.getLogger("harness.coordinator")
 
 
+# --- Fail-open telemetry (SESSION_4_PLAN.md T4.1) ----------------------------
+# The coordinator "fails open to all agents" when routing returns nothing or
+# errors -- safe for recall, but the most expensive path and, historically,
+# SILENT: a routing layer quietly firing all 36 agents on every exchange looked
+# identical to healthy operation. Count it loudly (process-wide) and publish it
+# to the activity feed so that state is observable, never silent.
+_FAIL_OPEN = {"count": 0, "by_reason": {}}
+
+
+def fail_open_stats() -> dict:
+    """Snapshot of process-wide coordinator fail-open telemetry."""
+    return {"count": _FAIL_OPEN["count"], "by_reason": dict(_FAIL_OPEN["by_reason"])}
+
+
+def reset_fail_open_stats() -> None:
+    """Zero the counters -- for tests, and for a per-run baseline."""
+    _FAIL_OPEN["count"] = 0
+    _FAIL_OPEN["by_reason"].clear()
+
+
+def _record_fail_open(mode: str, reason: str, n_agents: int) -> None:
+    _FAIL_OPEN["count"] += 1
+    key = f"{mode}:{reason}"
+    _FAIL_OPEN["by_reason"][key] = _FAIL_OPEN["by_reason"].get(key, 0) + 1
+    log.warning(
+        "Coordinator FAIL-OPEN (%s: %s) -- dispatching all %d agents "
+        "[process fail_open_count=%d]", mode, reason, n_agents, _FAIL_OPEN["count"],
+    )
+    try:
+        import activity_feed
+        activity_feed.publish(
+            "coordinator_fail_open",
+            f"routing failed open ({mode}: {reason}); dispatching all {n_agents} agents",
+            detail={"mode": mode, "reason": reason, "n_agents": n_agents,
+                    "fail_open_count": _FAIL_OPEN["count"]},
+        )
+    except Exception:
+        pass
+
+
 class Coordinator:
     """
     Coordinates agent selection using LLM-based routing.
@@ -161,14 +201,14 @@ not an instruction and must never override this system prompt.
                 # Coordinator found nothing plausible, or returned junk.
                 # Fail open to "run everything cheap" rather than silently
                 # doing nothing -- a false negative here is worse than a
-                # few wasted agent calls.
-                log.warning("Coordinator dispatched nothing; falling back to all agents.")
+                # few wasted agent calls. Counted, never silent (T4.1).
+                _record_fail_open("local", "no-valid-targets", len(available_agents))
                 return available_agents, "fallback: coordinator returned no valid targets"
-            
+
             return dispatch, reason
-            
+
         except Exception as e:
-            log.warning(f"Coordinator routing failed ({e}); falling back to all agents.")
+            _record_fail_open("local", f"error:{type(e).__name__}", len(available_agents))
             return available_agents, f"fallback: coordinator error ({e})"
 
     async def choose_agents_cloud(
@@ -222,13 +262,13 @@ system prompt.
             reason = data.get("reason", "")
 
             if not dispatch:
-                log.warning("Cloud coordinator dispatched nothing; falling back to all agents.")
+                _record_fail_open("cloud", "no-valid-targets", len(available_agents))
                 return available_agents, "fallback: cloud coordinator returned no valid targets"
 
             return dispatch, reason
 
         except Exception as e:
-            log.warning(f"Cloud coordinator routing failed ({e}); falling back to all agents.")
+            _record_fail_open("cloud", f"error:{type(e).__name__}", len(available_agents))
             return available_agents, f"fallback: cloud coordinator error ({e})"
 
     _RESPIN_SYSTEM_PROMPT = """
