@@ -177,6 +177,11 @@ class AnalysisResponse(BaseModel):
     effort_spent_tokens: int = 0
     effort_budget_remaining: Optional[int] = None
     effort_budget_warning: str = ""
+    # Tools the harness recommends the tester reach for to confirm/exploit these
+    # findings -- the "an agent needs a tool, return it to the user" path
+    # (tool_catalog.py). Deterministic mapping from finding class to catalog
+    # tools, each with a command templated to this exchange's URL.
+    tool_recommendations: list[dict] = Field(default_factory=list)
 
 
 class UrlEstimateItem(BaseModel):

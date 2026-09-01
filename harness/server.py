@@ -425,6 +425,47 @@ async def select_model(req: SelectModelRequest, authorization: str | None = Head
     return result
 
 
+@app.get("/tools")
+async def tools_catalog(category: str = "", vulnerability_class: str = "",
+                        authorization: str | None = Header(default=None)):
+    """The web-app tool catalog (A3). No filter -> everything grouped by
+    category. `vulnerability_class` -> the tools relevant to that class;
+    `category` -> just that category's tools."""
+    _require_auth(authorization)
+    import tool_catalog
+    if vulnerability_class:
+        return {"tools": [t.to_dict() for t in tool_catalog.recommend_for(vulnerability_class, limit=20)]}
+    grouped = tool_catalog.by_category()
+    if category:
+        return {"tools": [t.to_dict() for t in grouped.get(category, [])]}
+    return {"by_category": {c: [t.to_dict() for t in ts] for c, ts in grouped.items()}}
+
+
+class ToolRecommendRequest(_BaseModel):
+    # Either a single class+url, or a batch of findings.
+    vulnerability_class: str = ""
+    url: str = ""
+    situations: list[str] = []
+    findings: list[dict] = []   # [{vulnerability_class, url|source_exchange_url}]
+
+
+@app.post("/tools/recommend")
+async def tools_recommend(req: ToolRecommendRequest, authorization: str | None = Header(default=None)):
+    """Recommend tools for a finding (or batch): which external tool to reach
+    for, why, and a command templated to the target -- the 'agent needs a tool,
+    return it to the user' path."""
+    _require_auth(authorization)
+    import tool_catalog
+    if req.findings:
+        recs = tool_catalog.recommendations_for_findings(req.findings)
+    elif req.vulnerability_class:
+        recs = tool_catalog.recommend_for_finding(
+            req.vulnerability_class, req.url, situations=req.situations or None)
+    else:
+        raise HTTPException(status_code=400, detail="provide vulnerability_class (+url) or findings")
+    return {"recommendations": [r.to_dict() for r in recs]}
+
+
 @app.get("/effort", response_model=EffortStatus)
 async def effort_status(authorization: str | None = Header(default=None)):
     """Current cumulative spend against the configured budget (see
