@@ -169,6 +169,17 @@ def _connect() -> sqlite3.Connection:
             suppressed_at REAL NOT NULL
         )
     """)
+    # Engagement state (engagement.py) -- the per-host shared surface/identity
+    # model, persisted as a JSON snapshot so the fused worklist survives across
+    # requests and restarts. One row per host; the whole state is rewritten on
+    # save (it's small: endpoint metadata, not bodies).
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS engagement_state (
+            host TEXT PRIMARY KEY,
+            state_json TEXT NOT NULL,
+            updated_at REAL NOT NULL
+        )
+    """)
     conn.commit()
     return conn
 
@@ -537,6 +548,37 @@ def list_suppressions() -> list[dict]:
     finally:
         conn.close()
     return [{"fingerprint": fp, "reason": reason, "suppressed_at": ts} for (fp, reason, ts) in rows]
+
+
+def save_engagement(host: str, state: dict) -> None:
+    """Upsert the per-host engagement snapshot (engagement.EngagementState.to_dict())."""
+    conn = _connect()
+    try:
+        conn.execute(
+            "INSERT INTO engagement_state (host, state_json, updated_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(host) DO UPDATE SET state_json=excluded.state_json, updated_at=excluded.updated_at",
+            (host, json.dumps(state), time.time()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def load_engagement(host: str) -> dict | None:
+    """The stored engagement snapshot for `host`, or None if none saved yet."""
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT state_json FROM engagement_state WHERE host = ?", (host,)
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return None
+    try:
+        return json.loads(row[0])
+    except (json.JSONDecodeError, TypeError):
+        return None
 
 
 def is_chain_already_detected(url: str, signature: str) -> bool:

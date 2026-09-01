@@ -181,6 +181,16 @@ async def prioritize(req: PrioritizeRequest, authorization: str | None = Header(
         for chunk in chunks
     ])
     results: list[PrioritizeResultItem] = [r for chunk in chunk_results for r in chunk]
+
+    # Fold the LLM ratings into the engagement model, grouped by host, so the
+    # fused worklist reflects them alongside crawl/findings signals.
+    by_host: dict[str, list[dict]] = {}
+    for r in results:
+        by_host.setdefault(store.host_of(r.url), []).append(
+            {"method": r.method, "url": r.url, "ai_priority": r.ai_priority, "ai_score": r.ai_score})
+    for host, items in by_host.items():
+        await asyncio.to_thread(_update_engagement, host, lambda st, it=items: st.ingest_prioritization(it))
+
     return PrioritizeResponse(results=results)
 
 
@@ -213,7 +223,11 @@ async def crawl_endpoint(req: CrawlRequest, authorization: str | None = Header(d
         max_pages=max(1, min(req.max_pages, 200)),
         max_depth=max(0, min(req.max_depth, 4)),
     )
-    return result.to_dict()
+    out = result.to_dict()
+    await __import__("asyncio").to_thread(
+        _update_engagement, store.host_of(req.base_url),
+        lambda st: st.ingest_endpoints(out.get("endpoints", [])))
+    return out
 
 
 class MissingAuthRequest(_BaseModel):
@@ -300,16 +314,25 @@ async def crawl_roles_endpoint(req: RoleCrawlRequest, authorization: str | None 
         id_fill=req.id_fill or "1",
     )
     out = result.to_dict()
+    registered: list[dict] = []
     if req.register_identities:
         try:
-            out["registered_identities"] = await __import__("asyncio").to_thread(
-                _register_role_identities, roles)
+            registered = await __import__("asyncio").to_thread(_register_role_identities, roles)
+            out["registered_identities"] = registered
         except Exception as e:
             # Identity registration is a convenience layered on top of the crawl;
             # a store hiccup must never sink the (already-completed) crawl result.
             log.warning("crawl-roles: identity registration failed: %s", e)
             out["registered_identities"] = []
             out["identity_registration_error"] = str(e)
+
+    def _ingest(st):
+        st.ingest_role_crawl(out)
+        for r in roles:
+            st.ingest_identity(f"rolecrawl:{r.role}", r.role, source="seed")
+        for ri in registered:
+            st.ingest_identity(ri["name"], ri["role"], source="seed")
+    await __import__("asyncio").to_thread(_update_engagement, store.host_of(req.base_url), _ingest)
     return out
 
 
@@ -597,6 +620,34 @@ async def tools_recommend(req: ToolRecommendRequest, authorization: str | None =
     else:
         raise HTTPException(status_code=400, detail="provide vulnerability_class (+url) or findings")
     return {"recommendations": [r.to_dict() for r in recs]}
+
+
+def _update_engagement(host: str, apply_fn) -> None:
+    """Load the host's engagement snapshot, apply an ingest function, save it.
+    Defensive: engagement is a convenience layer over the primary result, so a
+    store hiccup here must never fail the endpoint that called it."""
+    import engagement
+    try:
+        st = engagement.EngagementState.from_dict(store.load_engagement(host) or {"host": host})
+        apply_fn(st)
+        store.save_engagement(host, st.to_dict())
+    except Exception as e:
+        log.warning("engagement update failed for %s: %s", host, e)
+
+
+@app.get("/engagement/{host}")
+async def engagement_view(host: str, limit: int = 25, authorization: str | None = Header(default=None)):
+    """The fused, per-host worklist (engagement.py): every known endpoint ranked
+    by a transparent combination of PathScorer tier, LLM rating, the role-access
+    matrix, and findings so far -- the one picture the discrete capabilities feed.
+    Empty until a crawl / analysis has populated it."""
+    _require_auth(authorization)
+    import engagement
+    snap = await __import__("asyncio").to_thread(store.load_engagement, host)
+    if not snap:
+        return {"host": host, "endpoint_count": 0, "worklist": [], "summary": {"host": host, "endpoint_count": 0}}
+    st = engagement.EngagementState.from_dict(snap)
+    return {"host": host, "worklist": st.worklist(limit=max(1, min(limit, 200))), "summary": st.summary()}
 
 
 @app.get("/activity")
