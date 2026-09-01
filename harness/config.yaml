@@ -116,6 +116,18 @@ iterative_agent:
   enabled: false
   max_steps: 250
 
+# Browser-driven XSS validation -- A2 (validators/browser_xss_validator.py).
+# Loads candidate URLs in a real headless browser and confirms XSS only on
+# observed script execution (a dialog/console/error carrying a per-run nonce),
+# not on reflection. Registered by default but only RUNS when
+# validators.active_enabled is true AND a headless browser engine is installed
+# (`pip install playwright && playwright install chromium`); with no engine it
+# skips cleanly. Scope is server.allowed_hosts.
+browser_xss:
+  enabled: true
+  wait_ms: 1200        # settle time after load, for async execution
+  max_visits: 8        # cap on (param x payload) URLs visited per finding
+
 # Per-vulnerability resource governance -- F5 (resource_governor.py). The
 # ceiling for testing ONE vulnerability: how many retries (re-dispatches of the
 # same class), how many distinct agent runs, and a hard per-vulnerability token

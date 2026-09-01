@@ -14,6 +14,7 @@ from .api_security_validator import ApiSecurityValidator
 from .websocket_validator import WebsocketValidator
 from .race_condition_validator import RaceConditionValidator
 from .deserialization_validator import DeserializationValidator
+from .browser_xss_validator import BrowserXssValidator
 from safety_gate import get_default_gate, reset_default_gate
 
 
@@ -136,6 +137,20 @@ class ValidatorRegistry:
         deser_cfg = cfg.get("deserialization", {})
         if deser_cfg.get("enabled", True):
             self.validators["deserialization"] = DeserializationValidator()
+
+        # Browser-driven XSS validator (A2) -- active: loads candidate URLs in a
+        # real headless browser and confirms only on observed script execution.
+        # Enabled here just registers it; it still only RUNS when
+        # validators.active_enabled is set (active=True) AND a browser engine is
+        # installed (else it skips). Scope comes from server.allowed_hosts.
+        bxss_cfg = cfg.get("browser_xss", {})
+        if bxss_cfg.get("enabled", True):
+            self.validators["browser_xss"] = BrowserXssValidator(
+                timeout=float(bxss_cfg.get("timeout", 15.0)),
+                allowed_hosts=config.get("server", {}).get("allowed_hosts", []),
+                wait_ms=int(bxss_cfg.get("wait_ms", 1200)),
+                max_visits=int(bxss_cfg.get("max_visits", 8)),
+            )
 
     def for_finding(self, finding, exchange):
         if not self.enabled:
