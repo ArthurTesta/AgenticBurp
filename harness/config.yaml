@@ -81,6 +81,19 @@ adaptive_respin:
   max_rounds: 1
   min_actionable_confidence: 0.4
 
+# Global outbound-request throttle (global_throttle.py). ONE ceiling on how
+# fast the harness sends requests to the TARGET, summed across every active
+# path at once -- all validators, autonomous discovery, and (once built) the
+# iterative agent draw from the same bucket. This is the aggregate blast-radius
+# control the tester actually cares about: five agents and three validators
+# each "politely" capped still add up at the target. 0 = OFF (unlimited), the
+# default, so nothing changes until the tester sets a ceiling (exposed as the
+# Burp "Global request throttle" setting). Blocks/paces callers; never drops
+# requests. The race-condition and request-smuggling validators are exempt by
+# design -- they depend on precise intentional concurrency this would defeat.
+throttle:
+  max_requests_per_second: 0   # 0 = unlimited
+
 # Default model for any specialist agent that doesn't set its own "model"
 # below. This used to silently fall back to the coordinator's model,
 # which meant every unconfigured agent (26 of 36, as of this writing) got

@@ -464,6 +464,8 @@ class ReconValidator(Validator):
                     max_redirects=self.max_redirects,
                 )
             
+            import global_throttle
+            await global_throttle.acquire()
             response = await self.client.request(method, url, headers=headers)
             return response
         except Exception as e:

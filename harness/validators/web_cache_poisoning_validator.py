@@ -166,6 +166,8 @@ class WebCachePoisoningValidator(Validator):
             async with httpx.AsyncClient(
                 timeout=self.timeout, follow_redirects=False, max_redirects=self.max_redirects,
             ) as client:
+                import global_throttle
+                await global_throttle.acquire()
                 return await client.request(method, url, headers=headers)
         except Exception as e:
             log.debug(f"Request failed: {e}")

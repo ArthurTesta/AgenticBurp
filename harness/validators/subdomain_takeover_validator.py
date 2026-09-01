@@ -210,6 +210,8 @@ class SubdomainTakeoverValidator(Validator):
             async with httpx.AsyncClient(
                 timeout=self.timeout, follow_redirects=True, max_redirects=self.max_redirects,
             ) as client:
+                import global_throttle
+                await global_throttle.acquire()
                 response = await client.get(url, headers={"User-Agent": self.user_agent})
         except Exception as e:
             log.debug(f"Fingerprint fetch failed for {host}: {e}")

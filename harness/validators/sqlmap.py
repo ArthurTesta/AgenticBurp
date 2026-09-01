@@ -528,10 +528,13 @@ class SqlmapValidator(Validator):
             label = f"{location}:{param}"
             cmd_desc = [f"boolean-probe {exchange.method.upper()} {exchange.url} param={label}"]
             try:
+                import global_throttle
                 async with httpx.AsyncClient(timeout=15.0, follow_redirects=False) as client:
+                    await global_throttle.acquire()
                     resp_a = await client.request(
                         exchange.method.upper(), target_a, headers=headers, content=body_a,
                     )
+                    await global_throttle.acquire()
                     resp_b = await client.request(
                         exchange.method.upper(), target_b, headers=headers, content=body_b,
                     )

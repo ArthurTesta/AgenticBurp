@@ -163,6 +163,8 @@ class CspValidator(Validator):
             async with httpx.AsyncClient(
                 timeout=self.timeout, follow_redirects=True, max_redirects=self.max_redirects,
             ) as client:
+                import global_throttle
+                await global_throttle.acquire()
                 response = await client.get(exchange.url, headers={"User-Agent": self.user_agent})
                 return dict(response.headers)
         except Exception as e:

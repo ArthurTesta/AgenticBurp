@@ -268,6 +268,14 @@ class Orchestrator:
             cache_ttl_hours=kev_cfg.get("cache_ttl_hours", 24.0),
         )
 
+        # Configure the global outbound-request throttle (global_throttle.py)
+        # from config. Default 0 = unlimited, so this is a no-op unless the
+        # tester set a ceiling (via config or the Burp setting). Governs the
+        # aggregate request rate every active path sends at the target.
+        import global_throttle
+        _throttle_cfg = config.get("throttle", {}) or {}
+        global_throttle.configure(_throttle_cfg.get("max_requests_per_second", 0))
+
         # Initialize validator registry
         self.validator_registry = ValidatorRegistry(config)
 

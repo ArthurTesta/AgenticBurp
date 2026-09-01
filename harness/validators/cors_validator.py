@@ -218,8 +218,10 @@ class CorsValidator(Validator):
         """Send an HTTP request with custom headers."""
         headers = headers or {}
         headers["User-Agent"] = self.user_agent
-        
+
         try:
+            import global_throttle
+            await global_throttle.acquire()
             async with httpx.AsyncClient(
                 timeout=self.timeout,
                 follow_redirects=follow_redirects,

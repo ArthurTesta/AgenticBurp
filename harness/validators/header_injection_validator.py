@@ -180,6 +180,8 @@ class HeaderInjectionValidator(Validator):
             async with httpx.AsyncClient(
                 timeout=self.timeout, follow_redirects=False, max_redirects=self.max_redirects,
             ) as client:
+                import global_throttle
+                await global_throttle.acquire()
                 response = await client.request(
                     "GET", probe_url,  # only query params are tested; never replay the captured method
                     headers={"User-Agent": self.user_agent},

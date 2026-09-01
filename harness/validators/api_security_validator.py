@@ -189,6 +189,8 @@ class ApiSecurityValidator(Validator):
                 get_default_gate(), self.get_name(),
                 timeout=self.timeout, follow_redirects=False, max_redirects=self.max_redirects,
             ) as client:
+                import global_throttle
+                await global_throttle.acquire()
                 response = await client.request(
                     exchange.method, exchange.url,
                     headers=headers, content=jsonlib.dumps(probed_body),
@@ -243,6 +245,8 @@ class ApiSecurityValidator(Validator):
             async with httpx.AsyncClient(
                 timeout=self.timeout, follow_redirects=False, max_redirects=self.max_redirects,
             ) as client:
+                import global_throttle
+                await global_throttle.acquire()
                 response = await client.request(
                     "GET", probe_url,  # pagination is inherently a read operation; never replay the captured method
                     headers={"User-Agent": self.user_agent},

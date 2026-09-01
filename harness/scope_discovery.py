@@ -124,6 +124,8 @@ async def discover_from_scope_change(
                 )
                 continue
             try:
+                import global_throttle
+                await global_throttle.acquire()
                 resp = await client.get(candidate_url, headers=carried_headers)
             except httpx.HTTPError as e:
                 log.debug("scope_discovery: %s unreachable (%s) -- normal, not an error", candidate_url, e)
