@@ -1,3 +1,8 @@
+> **HISTORICAL (session 2).** For the current project state read
+> **SESSION_HANDOVER_3.md** first — it is the authoritative handover. This file
+> covers the session-2 backlog (A1/F2–F6, cloud coordinator) that session 3 built
+> out; its "remaining backlog" is largely done now (see HANDOVER_3 §1).
+
 # Session handover 2 — detection fixes, cloud coordinator, active-agent feature build
 
 Discipline (same as SESSION_HANDOVER.md): every claim is either (a) **verified**

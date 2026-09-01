@@ -8,15 +8,27 @@ exchange, each specialist reports structured findings with evidence and a
 suggested next test, an adversarial review pass attacks the high-confidence
 ones before they ship, and the result shows up in a tab inside Burp.
 
-**What this is not:** a scanner replacement, and not autonomous. It looks
-at one exchange at a time, it doesn't send traffic to the target on its
-own, and it doesn't generate working exploits — it tells you what to try
-next in Repeater. Use it only against applications you're authorized to
-test, same assumption Burp itself runs on.
+**Default posture:** passive. Out of the box it looks at one exchange at a
+time, doesn't send traffic to the target on its own, and doesn't generate
+working exploits — it tells you what to try next in Repeater. Use it only
+against applications you're authorized to test, same assumption Burp runs on.
 
-> Looking for the project's research/decision history (why 36 agents,
-> what got compared against other tools, what changed each round)? See
-> `RESEARCH_NOTES.md`. This file is just "what is it, how do I run it."
+**Since then it has grown opt-in active + campaign capabilities** (all OFF by
+default, scope-gated to `allowed_hosts`, throttled): discovery crawls
+(`/crawl`, role-aware `/crawl-roles`), an iterative send→observe→adapt agent
+(`/active-probe`), real-execution validators (browser-driven XSS, sqlmap), a
+missing-auth probe, and an **engagement layer** that fuses every signal
+(crawl + role access matrix + LLM rating + findings) into one ranked
+"test-next" worklist backed by a penetration **task graph**, with a
+budget-governed driver (`/engagement/{host}/run`) and a closed
+finding→credential→re-crawl loop. Every active/autonomous step stays opt-in
+and human-gated by design — see the config toggles table in
+**SESSION_HANDOVER_3.md §3**.
+
+> **Docs map:** **SESSION_HANDOVER_3.md** is the authoritative current-state
+> doc (architecture, every endpoint, config toggles, backlog). `HANDOVER.md`
+> is the deep reference for the passive core (agents, dispatch, caching,
+> effort budget, sqlmap). `SESSION_HANDOVER{,_2}.md` are historical.
 
 ---
 

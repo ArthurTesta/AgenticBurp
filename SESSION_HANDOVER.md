@@ -1,3 +1,7 @@
+> **HISTORICAL (session 1).** For the current project state read
+> **SESSION_HANDOVER_3.md** first — it is the authoritative handover. This file
+> is kept for the session-1 decision/research history only.
+
 # Session handover — FP reduction, detection benchmarking, coordinator architecture
 
 Same discipline as HANDOVER.md §0: every claim is either (a) verified this

@@ -1,5 +1,11 @@
 # HANDOVER — the full project state, read this before touching anything
 
+> **SUPERSEDED as the current-state doc.** This was authoritative for session 1;
+> since then two more sessions landed major features. Read **SESSION_HANDOVER_3.md**
+> first for what's true now. This file remains the best deep reference for the
+> passive core (agents, dispatch, caching, effort budget, sqlmap) that HANDOVER_3
+> does not re-describe.
+
 This is the single authoritative current-state document for this
 project. Every claim below is either (a) something verified by an exact
 command given inline — run it yourself before trusting the claim, or
