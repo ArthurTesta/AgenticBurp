@@ -417,48 +417,78 @@ class Orchestrator:
                 "budget": plan.get("total_budget"), "executed": False}
 
     async def run_engagement(self, host: str, base_url: str, *, max_targets: int = 5,
-                             execute: bool = False) -> dict:
-        """Plan the campaign, and -- only when `execute` is asked AND
-        engagement.driver_execute is enabled in config -- actually fetch and
-        analyze the funded (non-deferred) GET targets, bounded by the governor's
-        allocation. Fetching builds a real exchange the agents/validators can work
-        on; each analyze() re-enters the full pipeline (and folds back into the
-        worklist). Double-gated so the driver never tests automatically."""
-        plan = await self.plan_engagement(host, max_targets=max_targets, base_url=base_url)
+                             max_rounds: int = 3, execute: bool = False) -> dict:
+        """The planner-executor RE-PLANNING LOOP (VulnBot Plan-Session /
+        Task-Session / Summarizer). Each round: PLAN from the current fused
+        worklist (governor-budgeted), EXECUTE the funded GET targets (fetch +
+        analyze -- which folds new findings/surface/capabilities back into the
+        state), then SUMMARIZE what changed and re-plan. Repeats until nothing new
+        is worth testing, the effort budget is spent, or max_rounds -- so the
+        driver adapts to what each round reveals rather than planning once.
+
+        Plan-only unless `execute` is asked AND engagement.driver_execute is
+        enabled in config (double-gated -- never tests automatically)."""
         if not execute:
+            plan = await self.plan_engagement(host, max_targets=max_targets, base_url=base_url)
             plan["note"] = "plan only -- pass execute=true (and enable engagement.driver_execute) to run these"
             return plan
         if not self.engagement_driver_execute:
+            plan = await self.plan_engagement(host, max_targets=max_targets, base_url=base_url)
             plan["note"] = "execution refused: engagement.driver_execute is disabled in config.yaml"
             return plan
 
         p = urlsplit(base_url)
         origin = f"{p.scheme}://{p.netloc}"
-        analyzed: list[dict] = []
-        for t in plan["targets"]:
-            if t["action"] == "deferred" or t["method"].upper() != "GET":
-                continue
-            url = origin + t["path"].replace("{id}", "1")
-            if not scope_discovery.is_host_allowed(url, self.allowed_hosts):
-                continue
-            try:
-                await global_throttle.acquire()
-                async with httpx.AsyncClient(timeout=15.0, follow_redirects=False) as client:
-                    resp = await client.get(url)
-                exchange = HttpExchange(
-                    url=url, method="GET", request_headers={}, request_body="",
-                    response_status=resp.status_code, response_headers=dict(resp.headers),
-                    response_body=(resp.text or "")[: self.max_body_chars])
-                result = await self.analyze(exchange)
-                analyzed.append({"url": url, "findings": len(result.agent_reports and
-                                 [f for r in result.agent_reports for f in r.findings])})
-            except Exception as e:
-                analyzed.append({"url": url, "error": e.__class__.__name__})
+        rounds: list[dict] = []
+        seen_urls: set[str] = set()   # don't re-fetch the same target across rounds
 
-        # Re-read the (now-updated) worklist so the caller sees the effect.
+        for rnd in range(1, max(1, max_rounds) + 1):
+            allowed, _ = self.effort_budget.allow()
+            if not allowed:
+                rounds.append({"round": rnd, "stopped": "effort budget exhausted"})
+                break
+            plan = await self.plan_engagement(host, max_targets=max_targets, base_url=base_url)
+            funded = [t for t in plan["targets"]
+                      if t["action"] != "deferred" and t["method"].upper() == "GET"]
+            analyzed: list[dict] = []
+            for t in funded:
+                url = origin + t["path"].replace("{id}", "1")
+                if url in seen_urls or not scope_discovery.is_host_allowed(url, self.allowed_hosts):
+                    continue
+                seen_urls.add(url)
+                try:
+                    await global_throttle.acquire()
+                    async with httpx.AsyncClient(timeout=15.0, follow_redirects=False) as client:
+                        resp = await client.get(url)
+                    exchange = HttpExchange(
+                        url=url, method="GET", request_headers={}, request_body="",
+                        response_status=resp.status_code, response_headers=dict(resp.headers),
+                        response_body=(resp.text or "")[: self.max_body_chars])
+                    result = await self.analyze(exchange)
+                    n = len([f for r in result.agent_reports for f in r.findings])
+                    analyzed.append({"url": url, "findings": n})
+                except Exception as e:
+                    analyzed.append({"url": url, "error": e.__class__.__name__})
+            # SUMMARIZE this round (the condensed feedback the next plan reacts to).
+            rounds.append(self._summarize_round(rnd, host, analyzed))
+            if not analyzed:  # nothing new was funded/runnable -> converged
+                break
+
         after = await self.plan_engagement(host, max_targets=max_targets, base_url=base_url)
-        return {"host": host, "executed": True, "analyzed": analyzed,
-                "targets_after": after["targets"], "guidance": after["guidance"]}
+        return {"host": host, "executed": True, "rounds": rounds,
+                "targets_after": after["targets"], "guidance": after["guidance"],
+                "summary": (await self._engagement_summary(host))}
+
+    def _summarize_round(self, rnd: int, host: str, analyzed: list) -> dict:
+        found = sum(a.get("findings", 0) for a in analyzed)
+        return {"round": rnd, "targets_run": len(analyzed),
+                "findings_this_round": found,
+                "detail": analyzed[:20]}
+
+    async def _engagement_summary(self, host: str) -> dict:
+        import engagement
+        snap = await asyncio.to_thread(store.load_engagement, host)
+        return engagement.EngagementState.from_dict(snap or {"host": host}).summary()
 
     async def _auto_escalate(self, host: str, source_url: str, credential_caps: list, st) -> None:
         """Re-crawl the origin as each learned (derived) identity and fold the new

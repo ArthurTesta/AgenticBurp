@@ -654,6 +654,7 @@ async def engagement_view(host: str, limit: int = 25, authorization: str | None 
 class RunEngagementRequest(_BaseModel):
     base_url: str = ""
     max_targets: int = 10
+    max_rounds: int = 3   # the re-planning loop: plan->execute->summarize->re-plan, up to N rounds
     # Default false -> plan only. Executing ALSO requires engagement.driver_execute
     # in config, so the driver never tests automatically.
     execute: bool = False
@@ -671,7 +672,9 @@ async def engagement_run(host: str, req: RunEngagementRequest, authorization: st
     if req.execute:
         if not req.base_url:
             raise HTTPException(status_code=400, detail="execute requires base_url")
-        return await orchestrator.run_engagement(host, req.base_url, max_targets=max_targets, execute=True)
+        return await orchestrator.run_engagement(
+            host, req.base_url, max_targets=max_targets,
+            max_rounds=max(1, min(req.max_rounds, 10)), execute=True)
     return await orchestrator.plan_engagement(host, max_targets=max_targets, base_url=req.base_url)
 
 

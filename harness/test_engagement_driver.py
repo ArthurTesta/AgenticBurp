@@ -74,6 +74,37 @@ class DriverPlanTests(unittest.TestCase):
         self.assertFalse(r["executed"])
         self.assertIn("refused", r.get("note", ""))
 
+    def test_replanning_loop_bounded_and_dedups(self):
+        # The loop should not re-fetch the same target across rounds; with a
+        # single funded endpoint it converges after one productive round.
+        import global_throttle
+        global_throttle.configure(0)
+        store.save_engagement("shop.test", _seed_state().to_dict())
+        self.orch.allowed_hosts = ["shop.test"]
+        self.orch.engagement_driver_execute = True
+        fetched = []
+
+        class _Resp:
+            status_code = 200; headers = {}; text = "{}"
+
+        async def fake_get(self, url, **kw):
+            fetched.append(url)
+            return _Resp()
+
+        async def fake_analyze(exchange, *a, **k):
+            from models import AnalysisResponse
+            return AnalysisResponse(coordinator_model="m", dispatched_agents=[], agent_reports=[],
+                                    summary="", test_plans=[])
+        try:
+            with patch("httpx.AsyncClient.get", fake_get), \
+                 patch.object(self.orch, "analyze", fake_analyze):
+                r = asyncio.run(self.orch.run_engagement(
+                    "shop.test", "http://shop.test/", max_targets=5, max_rounds=3, execute=True))
+            # no URL fetched twice despite multiple rounds
+            self.assertEqual(len(fetched), len(set(fetched)))
+        finally:
+            self.orch.engagement_driver_execute = False
+
     def test_execute_runs_when_enabled(self):
         import global_throttle
         global_throttle.configure(0)
@@ -98,9 +129,10 @@ class DriverPlanTests(unittest.TestCase):
             with patch("httpx.AsyncClient.get", fake_get), \
                  patch.object(self.orch, "analyze", fake_analyze):
                 r = asyncio.run(self.orch.run_engagement(
-                    "shop.test", "http://shop.test/", max_targets=3, execute=True))
+                    "shop.test", "http://shop.test/", max_targets=3, max_rounds=2, execute=True))
             self.assertTrue(r["executed"])
-            self.assertTrue(any("url" in a for a in r["analyzed"]))
+            self.assertTrue(r["rounds"])                       # the re-planning loop ran
+            self.assertTrue(any(rd.get("targets_run", 0) > 0 for rd in r["rounds"]))
         finally:
             self.orch.engagement_driver_execute = False
 
