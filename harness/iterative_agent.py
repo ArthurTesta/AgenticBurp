@@ -54,6 +54,13 @@ log = logging.getLogger("harness.iterative_agent")
 
 _MAX_RESP_CHARS = 1200  # response summary fed back to the model, per step
 
+# Target-distress signals: statuses that mean the service is struggling or
+# actively shedding load. An iterative agent that keeps hammering a target
+# returning these is both rude and useless -- it stops instead of piling on.
+_DISTRESS_STATUSES = frozenset({429, 502, 503, 504})
+# Consecutive distress responses / transport failures tolerated before aborting.
+_MAX_CONSECUTIVE_TROUBLE = 3
+
 
 @dataclass
 class IterativeStep:
@@ -71,7 +78,7 @@ class IterativeResult:
     findings: list[Finding] = field(default_factory=list)
     handoff_note: str = ""
     steps_used: int = 0
-    stop_reason: str = ""            # "found" | "exhausted_steps" | "gave_up" | "budget" | "error"
+    stop_reason: str = ""            # found|exhausted_steps|gave_up|budget|error|target_distress
     transcript: list[IterativeStep] = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -187,9 +194,26 @@ class IterativeAgent:
             return None, f"request failed: {e.__class__.__name__}"
 
     async def run(self, exchange: HttpExchange, hypothesis: str, specialty: str,
-                  step_budget: int = 250, effort_budget: "EffortBudget | None" = None) -> IterativeResult:
+                  step_budget: int = 250, effort_budget: "EffortBudget | None" = None,
+                  on_step=None) -> IterativeResult:
+        """`on_step`, if given, is called with each IterativeStep right after it
+        is recorded -- the live activity feed a UI subscribes to, so the tester
+        can watch what the agent is doing in real time."""
         budget = min(step_budget, self.max_steps)
         result = IterativeResult(agent=f"iterative:{specialty}")
+        consecutive_trouble = 0
+
+        def emit(step_obj: IterativeStep) -> None:
+            result.transcript.append(step_obj)
+            log.info("iterative:%s step %d: %s -> %s%s", specialty, step_obj.n,
+                     step_obj.action.get("action", "?"),
+                     step_obj.response_status if step_obj.response_status is not None else (step_obj.blocked or "-"),
+                     "" if not step_obj.blocked else " [blocked]")
+            if on_step is not None:
+                try:
+                    on_step(step_obj)
+                except Exception as e:  # a broken UI callback must never kill the run
+                    log.debug("on_step callback raised: %s", e)
         headers_state = {k: v for k, v in (exchange.request_headers or {}).items()
                          if k.lower() not in ("host", "content-length")}
         headers_state.setdefault("User-Agent", "harness-iterative-agent/1.0")
@@ -242,13 +266,13 @@ class IterativeAgent:
                         log.debug("iterative_agent: malformed finding on stop: %s", e)
                 result.handoff_note = action.get("thought", "") or result.handoff_note
                 result.steps_used = step - 1
-                result.transcript.append(IterativeStep(step, action, "(stop)", None, ""))
+                emit(IterativeStep(step, action, "(stop)", None, ""))
                 return result
 
             built, err = self._build_request(exchange, action, headers_state)
             if err:
                 history.append(f"[step {step}] action rejected: {err}")
-                result.transcript.append(IterativeStep(step, action, "(rejected)", None, err, blocked=err))
+                emit(IterativeStep(step, action, "(rejected)", None, err, blocked=err))
                 continue
             method, url, headers, body = built
             if kind == "set_header":
@@ -258,11 +282,31 @@ class IterativeAgent:
             req_summary = f"{method} {url}" + (f" body={body[:80]}" if body else "")
             if status is None:
                 history.append(f"[step {step}] {req_summary} -> {text}")
-                result.transcript.append(IterativeStep(step, action, req_summary, None, text, blocked=text))
-                continue
-            resp_summary = f"HTTP {status}, {len(text)} bytes: {text[:400]}"
-            history.append(f"[step {step}] {req_summary} -> {resp_summary}")
-            result.transcript.append(IterativeStep(step, action, req_summary, status, text[:400]))
+                emit(IterativeStep(step, action, req_summary, None, text, blocked=text))
+                # A transport failure (or safety/scope block that returned None)
+                # counts toward target-distress only when it is an actual send
+                # failure, not a pre-send policy block.
+                if text.startswith("request failed"):
+                    consecutive_trouble += 1
+                else:
+                    consecutive_trouble = 0
+            else:
+                resp_summary = f"HTTP {status}, {len(text)} bytes: {text[:400]}"
+                history.append(f"[step {step}] {req_summary} -> {resp_summary}")
+                emit(IterativeStep(step, action, req_summary, status, text[:400]))
+                consecutive_trouble = consecutive_trouble + 1 if status in _DISTRESS_STATUSES else 0
+
+            # Abort if the target is clearly in trouble -- stop piling on a
+            # service that is shedding load or failing, rather than exhausting
+            # the whole step budget against it.
+            if consecutive_trouble >= _MAX_CONSECUTIVE_TROUBLE:
+                result.stop_reason = "target_distress"
+                result.steps_used = step
+                result.handoff_note = (
+                    f"Aborted after {consecutive_trouble} consecutive distress responses "
+                    f"(429/5xx or transport failures) at step {step}: the target appears "
+                    f"unavailable or rate-limiting. Not a clean result -- retry later.")
+                return result
 
         result.steps_used = min(budget, len(result.transcript))
         if not result.stop_reason:

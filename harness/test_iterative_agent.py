@@ -105,6 +105,36 @@ class IterativeAgentTests(unittest.IsolatedAsyncioTestCase):
             self.skipTest("gate permitted mutating replay in this config")
         self.assertTrue(any(s.blocked and "safety gate" in (s.blocked or "") for s in r.transcript))
 
+    async def test_aborts_on_target_distress(self):
+        # Target returns 503 repeatedly -> stop instead of exhausting the budget.
+        ollama = _ScriptedOllama([{"action": "mutate", "location": "query", "param": "q", "value": f"p{i}"}
+                                  for i in range(50)])
+        agent = IterativeAgent(ollama, "m", ["localhost"])
+        with patch("httpx.AsyncClient.request", return_value=_Resp(503, "Service Unavailable")):
+            r = await agent.run(_exchange(), "h", "sqli", step_budget=50)
+        self.assertEqual(r.stop_reason, "target_distress")
+        self.assertLessEqual(r.steps_used, 3)  # aborted quickly, did not run all 50
+
+    async def test_on_step_receives_live_activity(self):
+        seen = []
+        ollama = _ScriptedOllama([
+            {"action": "mutate", "location": "query", "param": "q", "value": "a"},
+            {"action": "stop", "verdict": "not_found", "thought": "done"},
+        ])
+        agent = IterativeAgent(ollama, "m", ["localhost"])
+        with patch("httpx.AsyncClient.request", return_value=_Resp(200, "ok")):
+            await agent.run(_exchange(), "h", "sqli", step_budget=5, on_step=lambda s: seen.append(s))
+        self.assertGreaterEqual(len(seen), 2)          # mutate step + stop step
+        self.assertEqual(seen[0].action["action"], "mutate")
+        self.assertEqual(seen[0].response_status, 200)
+
+    async def test_broken_on_step_callback_does_not_kill_run(self):
+        ollama = _ScriptedOllama([{"action": "stop", "verdict": "not_found", "thought": "x"}])
+        agent = IterativeAgent(ollama, "m", ["localhost"])
+        def boom(_): raise RuntimeError("ui exploded")
+        r = await agent.run(_exchange(), "h", "sqli", on_step=boom)  # must not raise
+        self.assertEqual(r.stop_reason, "gave_up")
+
     async def test_gives_up_cleanly(self):
         ollama = _ScriptedOllama([{"action": "stop", "verdict": "not_found", "thought": "nothing here"}])
         agent = IterativeAgent(ollama, "m", ["localhost"])
