@@ -275,6 +275,29 @@ class CorsWildcardGateTests(unittest.TestCase):
         )
         self.assertTrue(result.vulnerable)
 
+    def _run_vary(self, headers):
+        async def fake_send(*args, **kwargs):
+            return _FakeResponse(headers)
+        with patch.object(self.validator, "_send_request", side_effect=fake_send):
+            return asyncio.run(
+                self.validator._test_vary_origin("https://example.test", self.exchange)
+            )
+
+    def test_missing_vary_with_static_wildcard_is_informational(self):
+        # Missing Vary: Origin but ACAO is a static wildcard -> nothing
+        # origin-specific to cache-poison -> not a vulnerability.
+        result = self._run_vary({"Access-Control-Allow-Origin": "*"})
+        self.assertFalse(result.vulnerable)
+        self.assertEqual(result.severity, "info")
+
+    def test_missing_vary_with_reflected_origin_is_vulnerable(self):
+        result = self._run_vary({"Access-Control-Allow-Origin": "https://evil-attacker.com"})
+        self.assertTrue(result.vulnerable)
+
+    def test_vary_origin_present_is_not_vulnerable(self):
+        result = self._run_vary({"Access-Control-Allow-Origin": "*", "Vary": "Origin"})
+        self.assertFalse(result.vulnerable)
+
 
 if __name__ == "__main__":
     unittest.main()

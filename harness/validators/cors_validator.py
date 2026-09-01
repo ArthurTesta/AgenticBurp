@@ -496,17 +496,40 @@ class CorsValidator(Validator):
             )
         
         vary = response.headers.get("Vary", "").lower()
-        
+        acao = response.headers.get("Access-Control-Allow-Origin", "")
+        reflects_origin = acao.lower() == test_origin.lower()
+
         if "origin" not in vary:
+            # A missing `Vary: Origin` is ONLY a real cache-poisoning risk
+            # when the server REFLECTS the request Origin into
+            # Access-Control-Allow-Origin (a per-origin/dynamic value a
+            # shared cache could then serve to the wrong origin). With a
+            # static `*` ACAO -- or no ACAO at all -- there is nothing
+            # origin-specific to cache, so a missing Vary: Origin is
+            # harmless. Flagging it unconditionally was the SECOND driver of
+            # the Juice Shop CORS false-confirmation storm (after
+            # _test_wildcard_origin), independently keeping the finding
+            # confirmed via validate()'s any(t.vulnerable) OR even after the
+            # wildcard case was downgraded. Only the reflected case is
+            # vulnerable; otherwise this is informational.
+            if reflects_origin:
+                return CorsTestResult(
+                    test_name="Vary Origin",
+                    passed=False,
+                    severity="medium",
+                    detail="Reflected Origin without Vary: Origin (a shared cache may serve one origin's CORS response to another)",
+                    evidence=f"Access-Control-Allow-Origin: {acao} (reflected), Vary: {vary or '(absent)'}",
+                    vulnerable=True,
+                )
             return CorsTestResult(
                 test_name="Vary Origin",
-                passed=False,
-                severity="medium",
-                detail="Missing Vary: Origin header (responses may be cached and shared across origins)",
-                evidence=f"Vary header: {vary}",
-                vulnerable=True,
+                passed=True,
+                severity="info",
+                detail="Missing Vary: Origin, but Access-Control-Allow-Origin is not origin-reflected (static/wildcard/absent) -- no origin-specific response to cache-poison. Informational.",
+                evidence=f"Access-Control-Allow-Origin: {acao or '(absent)'}, Vary: {vary or '(absent)'}",
+                vulnerable=False,
             )
-        
+
         return CorsTestResult(
             test_name="Vary Origin",
             passed=True,

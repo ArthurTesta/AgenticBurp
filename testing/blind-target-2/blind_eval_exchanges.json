@@ -1,0 +1,254 @@
+[
+  {
+    "label": "register u_45277ca1",
+    "method": "POST",
+    "url": "http://127.0.0.1:5002/api/register",
+    "request_headers": {
+      "User-Agent": "python-requests/2.34.2",
+      "Accept-Encoding": "gzip, deflate, br, zstd",
+      "Accept": "*/*",
+      "Connection": "keep-alive",
+      "Content-Length": "81",
+      "Content-Type": "application/json"
+    },
+    "request_body": "{\"username\": \"u_45277ca1\", \"password\": \"Passw0rd!\", \"email\": \"u_45277ca1@t.test\"}",
+    "response_status": 201,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.8 Python/3.14.7",
+      "Date": "Tue, 01 Sep 2026 05:45:58 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "30",
+      "Connection": "close"
+    },
+    "response_body": "{\"message\":\"account created\"}\n",
+    "ground_truth": "confirmed_secure",
+    "note": "auth flow"
+  },
+  {
+    "label": "register u_fa610b15",
+    "method": "POST",
+    "url": "http://127.0.0.1:5002/api/register",
+    "request_headers": {
+      "User-Agent": "python-requests/2.34.2",
+      "Accept-Encoding": "gzip, deflate, br, zstd",
+      "Accept": "*/*",
+      "Connection": "keep-alive",
+      "Content-Length": "81",
+      "Content-Type": "application/json"
+    },
+    "request_body": "{\"username\": \"u_fa610b15\", \"password\": \"Passw0rd!\", \"email\": \"u_fa610b15@t.test\"}",
+    "response_status": 201,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.8 Python/3.14.7",
+      "Date": "Tue, 01 Sep 2026 05:45:58 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "30",
+      "Connection": "close"
+    },
+    "response_body": "{\"message\":\"account created\"}\n",
+    "ground_truth": "confirmed_secure",
+    "note": "auth flow"
+  },
+  {
+    "label": "alice login (baseline auth)",
+    "method": "POST",
+    "url": "http://127.0.0.1:5002/api/login",
+    "request_headers": {
+      "User-Agent": "python-requests/2.34.2",
+      "Accept-Encoding": "gzip, deflate, br, zstd",
+      "Accept": "*/*",
+      "Connection": "keep-alive",
+      "Authorization": "Bearer 2c9c6d9aaef5308558be95f11060b9bcb209b2d8db2b6942",
+      "Content-Length": "34",
+      "Content-Type": "application/json"
+    },
+    "request_body": "{\"username\": \"x\", \"password\": \"y\"}",
+    "response_status": 401,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.8 Python/3.14.7",
+      "Date": "Tue, 01 Sep 2026 05:45:58 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "32",
+      "Connection": "close"
+    },
+    "response_body": "{\"error\":\"invalid credentials\"}\n",
+    "ground_truth": "confirmed_secure",
+    "note": "normal auth"
+  },
+  {
+    "label": "alice creates own ticket",
+    "method": "POST",
+    "url": "http://127.0.0.1:5002/api/tickets",
+    "request_headers": {
+      "User-Agent": "python-requests/2.34.2",
+      "Accept-Encoding": "gzip, deflate, br, zstd",
+      "Accept": "*/*",
+      "Connection": "keep-alive",
+      "Authorization": "Bearer 2c9c6d9aaef5308558be95f11060b9bcb209b2d8db2b6942",
+      "Content-Length": "57",
+      "Content-Type": "application/json"
+    },
+    "request_body": "{\"subject\": \"printer jam\", \"body\": \"my printer is stuck\"}",
+    "response_status": 201,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.8 Python/3.14.7",
+      "Date": "Tue, 01 Sep 2026 05:45:58 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "29",
+      "Connection": "close"
+    },
+    "response_body": "{\"message\":\"ticket created\"}\n",
+    "ground_truth": "inconclusive",
+    "note": "normal use"
+  },
+  {
+    "label": "alice reads OWN ticket (normal/TN)",
+    "method": "GET",
+    "url": "http://127.0.0.1:5002/api/tickets/6",
+    "request_headers": {
+      "User-Agent": "python-requests/2.34.2",
+      "Accept-Encoding": "gzip, deflate, br, zstd",
+      "Accept": "*/*",
+      "Connection": "keep-alive",
+      "Authorization": "Bearer 2c9c6d9aaef5308558be95f11060b9bcb209b2d8db2b6942"
+    },
+    "request_body": "",
+    "response_status": 200,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.8 Python/3.14.7",
+      "Date": "Tue, 01 Sep 2026 05:45:58 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "202",
+      "Connection": "close"
+    },
+    "response_body": "{\"assigned_to\":null,\"body\":\"my printer is stuck\",\"created_at\":\"1788241558\",\"created_by\":16,\"department\":\"support\",\"id\":6,\"internal_notes\":\"\",\"priority\":\"normal\",\"status\":\"open\",\"subject\":\"printer jam\"}\n",
+    "ground_truth": "confirmed_secure",
+    "note": "matched-normal for IDOR"
+  },
+  {
+    "label": "bob reads ticket#1 he does NOT own (IDOR)",
+    "method": "GET",
+    "url": "http://127.0.0.1:5002/api/tickets/1",
+    "request_headers": {
+      "User-Agent": "python-requests/2.34.2",
+      "Accept-Encoding": "gzip, deflate, br, zstd",
+      "Accept": "*/*",
+      "Connection": "keep-alive",
+      "Authorization": "Bearer bac9407157f33c5b53c8423406e5dcbbf48f2cfdd0b2b486"
+    },
+    "request_body": "",
+    "response_status": 200,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.8 Python/3.14.7",
+      "Date": "Tue, 01 Sep 2026 05:45:58 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "344",
+      "Connection": "close"
+    },
+    "response_body": "{\"assigned_to\":2,\"body\":\"I keep getting an error when I try to sign in since yesterday.\",\"created_at\":\"1788178438\",\"created_by\":3,\"department\":\"support\",\"id\":1,\"internal_notes\":\"Customer called twice, sounding irate. Consider escalating if no reply in 24h.\",\"priority\":\"normal\",\"status\":\"open\",\"subject\":\"Cannot log in to the customer portal\"}\n",
+    "ground_truth": "confirmed_vuln",
+    "note": "cross-user data + internal_notes leak"
+  },
+  {
+    "label": "bob comments on foreign ticket (authz enforced)",
+    "method": "POST",
+    "url": "http://127.0.0.1:5002/api/tickets/1/comments",
+    "request_headers": {
+      "User-Agent": "python-requests/2.34.2",
+      "Accept-Encoding": "gzip, deflate, br, zstd",
+      "Accept": "*/*",
+      "Connection": "keep-alive",
+      "Authorization": "Bearer bac9407157f33c5b53c8423406e5dcbbf48f2cfdd0b2b486",
+      "Content-Length": "14",
+      "Content-Type": "application/json"
+    },
+    "request_body": "{\"body\": \"hi\"}",
+    "response_status": 403,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.8 Python/3.14.7",
+      "Date": "Tue, 01 Sep 2026 05:45:58 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "53",
+      "Connection": "close"
+    },
+    "response_body": "{\"error\":\"not authorized to comment on this ticket\"}\n",
+    "ground_truth": "confirmed_secure",
+    "note": "control works -> 403"
+  },
+  {
+    "label": "bob DELETE foreign ticket (blocked)",
+    "method": "DELETE",
+    "url": "http://127.0.0.1:5002/api/tickets/1",
+    "request_headers": {
+      "User-Agent": "python-requests/2.34.2",
+      "Accept-Encoding": "gzip, deflate, br, zstd",
+      "Accept": "*/*",
+      "Connection": "keep-alive",
+      "Authorization": "Bearer bac9407157f33c5b53c8423406e5dcbbf48f2cfdd0b2b486",
+      "Content-Length": "0"
+    },
+    "request_body": "",
+    "response_status": 405,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.8 Python/3.14.7",
+      "Date": "Tue, 01 Sep 2026 05:45:58 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Allow": "GET, OPTIONS, HEAD",
+      "Content-Length": "153",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>405 Method Not Allowed</title>\n<h1>Method Not Allowed</h1>\n<p>The method is not allowed for the requested URL.</p>\n",
+    "ground_truth": "confirmed_secure",
+    "note": "405 not allowed"
+  },
+  {
+    "label": "alice sets arbitrary department=admin (mass-assign)",
+    "method": "POST",
+    "url": "http://127.0.0.1:5002/api/tickets",
+    "request_headers": {
+      "User-Agent": "python-requests/2.34.2",
+      "Accept-Encoding": "gzip, deflate, br, zstd",
+      "Accept": "*/*",
+      "Connection": "keep-alive",
+      "Authorization": "Bearer 2c9c6d9aaef5308558be95f11060b9bcb209b2d8db2b6942",
+      "Content-Length": "95",
+      "Content-Type": "application/json"
+    },
+    "request_body": "{\"subject\": \"z\", \"body\": \"z\", \"department\": \"admin\", \"status\": \"closed\", \"internal_notes\": \"x\"}",
+    "response_status": 201,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.8 Python/3.14.7",
+      "Date": "Tue, 01 Sep 2026 05:45:58 GMT",
+      "Content-Type": "application/json",
+      "Content-Length": "29",
+      "Connection": "close"
+    },
+    "response_body": "{\"message\":\"ticket created\"}\n",
+    "ground_truth": "confirmed_vuln",
+    "note": "client controls department"
+  },
+  {
+    "label": "tampered id (injection probe on real endpoint)",
+    "method": "GET",
+    "url": "http://127.0.0.1:5002/api/tickets/1 OR 1=1",
+    "request_headers": {
+      "User-Agent": "python-requests/2.34.2",
+      "Accept-Encoding": "gzip, deflate, br, zstd",
+      "Accept": "*/*",
+      "Connection": "keep-alive",
+      "Authorization": "Bearer 2c9c6d9aaef5308558be95f11060b9bcb209b2d8db2b6942"
+    },
+    "request_body": "",
+    "response_status": 404,
+    "response_headers": {
+      "Server": "Werkzeug/3.1.8 Python/3.14.7",
+      "Date": "Tue, 01 Sep 2026 05:45:58 GMT",
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": "207",
+      "Connection": "close"
+    },
+    "response_body": "<!doctype html>\n<html lang=en>\n<title>404 Not Found</title>\n<h1>Not Found</h1>\n<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>\n",
+    "ground_truth": "inconclusive",
+    "note": "sqli probe on confirmed endpoint"
+  }
+]
