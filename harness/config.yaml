@@ -147,6 +147,10 @@ browser_xss:
 # POST /engagement/<host>/advance instead.
 engagement:
   auto_escalate: false
+  # Blast-radius guard for auto_escalate: hard ceiling on how many credential-
+  # triggered re-crawls fire per host in one process lifetime (on top of the
+  # per-identity dedup + a one-probe credential verification before each crawl).
+  max_auto_escalations: 10
   # The engagement driver (POST /engagement/<host>/run) plans a budgeted
   # "test next" queue from the fused worklist. It only EXECUTES (fetch + analyze
   # the planned targets) when a /run request asks AND this is true -- so the

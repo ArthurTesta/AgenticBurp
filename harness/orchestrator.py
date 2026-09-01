@@ -27,6 +27,9 @@ import asyncio
 import logging
 from urllib.parse import urlparse, urlsplit
 
+import httpx
+import global_throttle
+
 from ollama_client import OllamaClient, OllamaError
 from models import (
     HttpExchange,
@@ -354,6 +357,12 @@ class Orchestrator:
         # never dispatches active testing automatically without a deliberate opt-in.
         self.engagement_driver_execute = bool(
             (config.get("engagement", {}) or {}).get("driver_execute", False))
+        # Auto-escalation blast-radius guard: a hard ceiling on how many
+        # credential-triggered re-crawls fire per host in this process lifetime,
+        # on top of the per-identity dedup + credential verification below.
+        self.engagement_max_escalations = int(
+            (config.get("engagement", {}) or {}).get("max_auto_escalations", 10))
+        self._escalation_counts: dict[str, int] = {}
 
         log.info(f"Orchestrator initialized with {len(self.agent_manager.get_enabled_agents())} agents")
 
@@ -493,25 +502,83 @@ class Orchestrator:
     async def _auto_escalate(self, host: str, source_url: str, credential_caps: list, st) -> None:
         """Re-crawl the origin as each learned (derived) identity and fold the new
         surface into the engagement state. The credential headers are used here
-        and discarded -- never persisted. Bounded: one role-crawl over the origin,
-        scope-gated + throttled like any other outbound path."""
-        import role_crawl
+        and discarded -- never persisted.
+
+        Blast-radius guards (this is active traffic fired as a side effect of
+        analysis, so it is bounded three independent ways):
+          1. DEDUP -- a derived identity already escalated (its
+             recrawl_as_derived task is DONE in the graph) is skipped, so the
+             same leaked token never triggers a second full crawl.
+          2. VERIFY -- each credential is probed once against the source URL
+             before a crawl is spent on it; a stale/rejected token (>=400, or
+             no better than the anonymous baseline) is discarded, not crawled.
+          3. CAP -- a hard per-host ceiling (engagement.max_auto_escalations) on
+             how many escalations fire in this process lifetime.
+        Plus the usual scope gate + throttle on every request."""
+        import engagement, role_crawl
+        import task_graph
         parts = urlsplit(source_url)
         origin = f"{parts.scheme}://{parts.netloc}/"
-        roles = [role_crawl.RoleSession(role="anonymous", headers={})]
+
+        # Guard 1: drop caps whose derived identity was already escalated.
+        fresh: list = []
         for cap in credential_caps:
+            tid = task_graph.make_id(
+                "recrawl_as_derived",
+                f"derived:{cap.get('kind', 'cred')}@{engagement.normalize_path(source_url)}")
+            t = st.graph.tasks.get(tid)
+            if t is not None and t.status == task_graph.DONE:
+                continue
+            fresh.append(cap)
+        if not fresh:
+            return
+
+        # Guard 3: per-host session cap.
+        if self._escalation_counts.get(host, 0) >= self.engagement_max_escalations:
+            log.info("engagement auto-escalate: per-host cap (%d) reached for %s -- skipping",
+                     self.engagement_max_escalations, host)
+            return
+
+        # Guard 2: verify each credential actually grants access before crawling.
+        verified: list = []
+        for cap in fresh:
+            if await self._credential_grants_access(source_url, cap.get("headers", {})):
+                verified.append(cap)
+            else:
+                log.info("engagement auto-escalate: learned credential did not verify -- discarding")
+        if not verified:
+            return
+
+        roles = [role_crawl.RoleSession(role="anonymous", headers={})]
+        for cap in verified:
             roles.append(role_crawl.RoleSession(role="derived", headers=cap.get("headers", {})))
         try:
             result = await role_crawl.crawl_roles(
                 origin, roles, allowed_hosts=self.allowed_hosts, max_pages=20, max_endpoints=80)
             st.ingest_role_crawl(result.to_dict())
-            for cap in credential_caps:
+            for cap in verified:
                 st.resolve_action("recrawl_as_derived",
-                                  f"derived:{cap.get('kind', 'cred')}@{__import__('engagement').normalize_path(source_url)}")
-            log.info("engagement auto-escalate: re-crawled %s as derived identity, +%d endpoints",
-                     origin, len(result.endpoints))
+                                  f"derived:{cap.get('kind', 'cred')}@{engagement.normalize_path(source_url)}")
+            self._escalation_counts[host] = self._escalation_counts.get(host, 0) + 1
+            log.info("engagement auto-escalate: re-crawled %s as derived identity, +%d endpoints (host total %d)",
+                     origin, len(result.endpoints), self._escalation_counts[host])
         except Exception as e:
             log.warning("engagement auto-escalate failed: %s", e)
+
+    async def _credential_grants_access(self, url: str, headers: dict) -> bool:
+        """One probe to check a learned credential actually works: the source URL
+        with the credential must return a non-error (<400) response. Scope-gated +
+        throttled. A stale, revoked, or honeypot token fails here and never earns
+        a full crawl."""
+        if not headers or not scope_discovery.is_host_allowed(url, self.allowed_hosts):
+            return False
+        try:
+            await global_throttle.acquire()
+            async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
+                resp = await client.get(url, headers=headers)
+            return resp.status_code < 400
+        except httpx.HTTPError:
+            return False
 
     async def run_active_probe(
         self,
