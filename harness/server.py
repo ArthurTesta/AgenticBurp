@@ -240,6 +240,41 @@ class MissingAuthRequest(_BaseModel):
     expected_protected: bool = False
 
 
+class RoleCrawlRequest(_BaseModel):
+    base_url: str
+    # Each role's real captured session headers (Authorization/Cookie) from Burp.
+    # Include an anonymous role (empty headers) to detect auth bypass. Credentials
+    # are used for this call only, never stored.
+    roles: list[dict]   # [{"role": "admin", "headers": {...}}, {"role": "anonymous", "headers": {}}]
+    max_pages: int = 40
+    max_endpoints: int = 150
+    id_fill: str = "1"
+
+
+@app.post("/crawl-roles")
+async def crawl_roles_endpoint(req: RoleCrawlRequest, authorization: str | None = Header(default=None)):
+    """Role-aware crawl: discover the surface per role, probe every endpoint with
+    every role, and return the access matrix plus derived auth-bypass and IDOR/
+    BOLA candidates (role linked to URL). Scope-gated to server.allowed_hosts,
+    throttled, and bounded by max_endpoints. Credentials arrive per call and are
+    never persisted."""
+    _require_auth(authorization)
+    import role_crawl
+    roles = [role_crawl.RoleSession(role=str(r.get("role", "user")),
+                                    headers=r.get("headers") or {})
+             for r in req.roles]
+    if not roles:
+        raise HTTPException(status_code=400, detail="roles must be non-empty")
+    result = await role_crawl.crawl_roles(
+        req.base_url, roles,
+        allowed_hosts=orchestrator.allowed_hosts,
+        max_pages=max(1, min(req.max_pages, 200)),
+        max_endpoints=max(1, min(req.max_endpoints, 500)),
+        id_fill=req.id_fill or "1",
+    )
+    return result.to_dict()
+
+
 @app.post("/probe-missing-auth")
 async def probe_missing_auth_endpoint(req: MissingAuthRequest, authorization: str | None = Header(default=None)):
     """Fire discovered endpoints with authentication stripped and flag the ones
