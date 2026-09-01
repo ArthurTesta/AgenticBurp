@@ -626,6 +626,24 @@ public class HarnessClient {
         return postJson("/scan/confidential", exchange, shortTimeout());
     }
 
+    /** GET /engagement/{host} -- the fused, ranked worklist + pending actions. */
+    public com.google.gson.JsonObject engagement(String host, int limit) throws HarnessException {
+        String h = URLEncoder.encode(host, StandardCharsets.UTF_8);
+        return getJson("/engagement/" + h + "?limit=" + limit, shortTimeout());
+    }
+
+    /** POST /engagement/{host}/advance -- re-crawl as the given roles and fold the
+     * new surface back into the worklist (the closed loop, tester-driven). */
+    public com.google.gson.JsonObject engagementAdvance(String host, String baseUrl,
+                                                        java.util.List<java.util.Map<String, Object>> roles)
+            throws HarnessException {
+        String h = URLEncoder.encode(host, StandardCharsets.UTF_8);
+        java.util.Map<String, Object> body = new java.util.HashMap<>();
+        body.put("base_url", baseUrl);
+        body.put("roles", roles);
+        return postJson("/engagement/" + h + "/advance", body, longTimeout());
+    }
+
     /** GET /activity?since=N -- the live agent-activity feed (V1). since=0 primes a snapshot. */
     public com.harness.llm.model.AnalysisModels.ActivitySnapshot activitySince(long sinceSeq) throws HarnessException {
         com.google.gson.JsonObject o = getJson("/activity?since=" + sinceSeq, Duration.ofSeconds(5));

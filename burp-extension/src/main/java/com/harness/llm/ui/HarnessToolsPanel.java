@@ -12,6 +12,7 @@ import com.harness.llm.model.AnalysisModels.ModelsInfo;
 import com.harness.llm.model.AnalysisModels.SelectModelRequest;
 
 import javax.swing.*;
+import javax.swing.table.DefaultTableModel;
 import java.awt.*;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -57,6 +58,7 @@ public class HarnessToolsPanel extends JPanel {
         this.siteMapImporter = siteMapImporter;
         setLayout(new BorderLayout());
         JTabbedPane tabs = new JTabbedPane();
+        tabs.addTab("Engagement", buildEngagementTab());
         tabs.addTab("Models & Settings", buildModelsTab());
         tabs.addTab("Discovery", buildDiscoveryTab());
         tabs.addTab("Active Testing", buildActiveTab());
@@ -152,6 +154,136 @@ public class HarnessToolsPanel extends JPanel {
     // ------------------------------------------------------------------
     // Models & Settings
     // ------------------------------------------------------------------
+
+    // ------------------------------------------------------------------
+    // Engagement: the fused, ranked worklist + the closed-loop advance
+    // ------------------------------------------------------------------
+
+    private JComponent buildEngagementTab() {
+        JTextField hostField = new JTextField("localhost:3000", 20);
+        DefaultTableModel model = new DefaultTableModel(
+                new Object[]{"#", "score", "method", "path", "status", "why"}, 0) {
+            @Override public boolean isCellEditable(int r, int c) { return false; }
+        };
+        JTable table = new JTable(model);
+        table.getColumnModel().getColumn(0).setMaxWidth(36);
+        table.getColumnModel().getColumn(1).setMaxWidth(60);
+        table.getColumnModel().getColumn(2).setMaxWidth(70);
+        table.getColumnModel().getColumn(4).setMaxWidth(90);
+        JTextArea detail = outputArea();
+        detail.setBorder(BorderFactory.createTitledBorder("Pending actions + summary"));
+
+        JButton loadBtn = new JButton("Load worklist");
+        loadBtn.addActionListener(e -> loadEngagement(hostField.getText().trim(), model, detail, loadBtn));
+
+        // Advance: re-crawl as roles and fold new surface back into the ranking.
+        JTextField advBase = new JTextField("http://localhost:3000/", 28);
+        JTextArea advRoles = new JTextArea(3, 28);
+        advRoles.setText("anonymous |\nadmin | Authorization=Bearer <token>");
+        advRoles.setBorder(BorderFactory.createTitledBorder(
+                "Advance as roles -- <role> | <Header>=<value>  (re-crawl, fold back into the ranking)"));
+        JButton advanceBtn = new JButton("Advance (re-crawl + re-rank)");
+        advanceBtn.addActionListener(e -> {
+            String host = hostField.getText().trim();
+            String base = advBase.getText().trim();
+            List<Map<String, Object>> roles = parseRoles(advRoles.getText());
+            advanceBtn.setEnabled(false);
+            detail.setText("Advancing...");
+            new SwingWorker<Object, Void>() {
+                @Override protected Object doInBackground() {
+                    try { return client.engagementAdvance(host, base, roles); }
+                    catch (Exception ex) { return ex; }
+                }
+                @Override protected void done() {
+                    try {
+                        Object r = get();
+                        if (r instanceof Exception ex) { detail.setText("ERROR: " + ex.getMessage()); return; }
+                        fillWorklist((JsonObject) r, model, detail);
+                    } catch (Exception ex) {
+                        detail.setText("ERROR: " + ex.getMessage());
+                    } finally {
+                        advanceBtn.setEnabled(true);
+                    }
+                }
+            }.execute();
+        });
+
+        JPanel north = new JPanel();
+        north.setLayout(new BoxLayout(north, BoxLayout.Y_AXIS));
+        JPanel top = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 2));
+        top.add(new JLabel("Host:"));
+        top.add(hostField);
+        top.add(loadBtn);
+        top.setAlignmentX(Component.LEFT_ALIGNMENT);
+        north.add(new JLabel("Fused worklist: every signal (path tier, LLM rating, role-access, findings) in one ranking."));
+        north.add(top);
+        advRoles.setAlignmentX(Component.LEFT_ALIGNMENT);
+        JPanel advRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 2));
+        advRow.add(new JLabel("Advance base URL:"));
+        advRow.add(advBase);
+        advRow.add(advanceBtn);
+        advRow.setAlignmentX(Component.LEFT_ALIGNMENT);
+        north.add(advRoles);
+        north.add(advRow);
+
+        JSplitPane split = new JSplitPane(JSplitPane.VERTICAL_SPLIT,
+                new JScrollPane(table), new JScrollPane(detail));
+        split.setResizeWeight(0.6);
+        JPanel p = new JPanel(new BorderLayout(4, 4));
+        p.add(north, BorderLayout.NORTH);
+        p.add(split, BorderLayout.CENTER);
+        return p;
+    }
+
+    private void loadEngagement(String host, DefaultTableModel model, JTextArea detail, JButton trigger) {
+        trigger.setEnabled(false);
+        detail.setText("Loading...");
+        new SwingWorker<Object, Void>() {
+            @Override protected Object doInBackground() {
+                try { return client.engagement(host, 50); } catch (Exception e) { return e; }
+            }
+            @Override protected void done() {
+                try {
+                    Object r = get();
+                    if (r instanceof Exception e) { detail.setText("ERROR: " + e.getMessage()); return; }
+                    fillWorklist((JsonObject) r, model, detail);
+                } catch (Exception e) {
+                    detail.setText("ERROR: " + e.getMessage());
+                } finally {
+                    trigger.setEnabled(true);
+                }
+            }
+        }.execute();
+    }
+
+    private void fillWorklist(JsonObject resp, DefaultTableModel model, JTextArea detail) {
+        model.setRowCount(0);
+        if (resp.has("worklist") && resp.get("worklist").isJsonArray()) {
+            int i = 1;
+            for (JsonElement el : resp.getAsJsonArray("worklist")) {
+                if (!el.isJsonObject()) continue;
+                JsonObject e = el.getAsJsonObject();
+                String why = "";
+                if (e.has("reasons") && e.get("reasons").isJsonArray() && e.getAsJsonArray("reasons").size() > 0) {
+                    why = e.getAsJsonArray("reasons").get(0).getAsString();
+                }
+                model.addRow(new Object[]{
+                        i++,
+                        e.has("score") ? String.format("%.2f", e.get("score").getAsDouble()) : "",
+                        str(e, "method"), str(e, "path"), str(e, "status"), why});
+            }
+        }
+        // Pending actions + summary go to the detail area as pretty JSON.
+        JsonObject slim = new JsonObject();
+        if (resp.has("pending_actions")) slim.add("pending_actions", resp.get("pending_actions"));
+        if (resp.has("summary")) slim.add("summary", resp.get("summary"));
+        detail.setText(pretty.toJson(slim));
+        detail.setCaretPosition(0);
+    }
+
+    private static String str(JsonObject o, String k) {
+        return (o.has(k) && !o.get(k).isJsonNull()) ? o.get(k).getAsString() : "";
+    }
 
     private JComponent buildModelsTab() {
         JTextArea out = outputArea();
