@@ -105,6 +105,27 @@ class RoleCrawlTests(unittest.TestCase):
             r = asyncio.run(role_crawl.crawl_roles("http://shop.test/", [], allowed_hosts=["shop.test"]))
         self.assertTrue(any("no roles" in e for e in r.errors))
 
+    def test_cross_identity_same_object_flags_bola(self):
+        # Same object id returns identical data to user AND admin -> BOLA finding.
+        roles = [RoleSession("user", {"Authorization": "Bearer u"}),
+                 RoleSession("admin", {"Authorization": "Bearer a"})]
+        matrix = {"/api/orders/1": lambda auth: (200, '{"order":1,"owner":"alice"}')}
+        r = self._run(["/api/orders/{id}"], matrix, roles)
+        self.assertTrue(r.idor_findings)
+        f = r.idor_findings[0]
+        self.assertEqual(f["vulnerability_class"], "idor")
+        self.assertFalse(f["confirmed"])
+        self.assertIn("cross_identity_compare:/api/orders/{id}", f["validation_hints"])
+
+    def test_cross_identity_different_object_no_finding(self):
+        # Each identity gets DIFFERENT data for the same id -> per-identity scoped, no finding.
+        roles = [RoleSession("user", {"Authorization": "Bearer u"}),
+                 RoleSession("admin", {"Authorization": "Bearer a"})]
+        matrix = {"/api/orders/1": lambda auth: (200, '{"owner":"alice"}') if auth == "Bearer u"
+                  else (200, '{"owner":"bob"}')}
+        r = self._run(["/api/orders/{id}"], matrix, roles)
+        self.assertEqual(r.idor_findings, [])
+
     def test_max_endpoints_bounds_probing(self):
         roles = [RoleSession("user", {"Authorization": "Bearer u"})]
         endpoints = [f"/api/e{i}" for i in range(20)]
@@ -128,7 +149,8 @@ class RoleCrawlEndpointTests(unittest.TestCase):
             resp = self.client.post("/crawl-roles", json={
                 "base_url": "http://shop.test/",
                 "roles": [{"role": "anonymous", "headers": {}},
-                          {"role": "admin", "headers": {"Authorization": "Bearer a"}}]})
+                          {"role": "admin", "headers": {"Authorization": "Bearer a"}}],
+                "register_identities": False})  # identity store isolation is covered separately
         self.assertEqual(resp.status_code, 200)
         body = resp.json()
         self.assertEqual(body["endpoint_count"], 1)
@@ -137,6 +159,35 @@ class RoleCrawlEndpointTests(unittest.TestCase):
     def test_empty_roles_is_400(self):
         resp = self.client.post("/crawl-roles", json={"base_url": "http://shop.test/", "roles": []})
         self.assertEqual(resp.status_code, 400)
+
+    def test_endpoint_registers_identities(self):
+        import tempfile, store
+        from pathlib import Path
+        tmp = tempfile.TemporaryDirectory()
+        orig = store._DB_PATH
+        store._DB_PATH = Path(tmp.name) / "t.db"
+        try:
+            with patch("crawler.crawl", _fake_crawl(["/api/orders/{id}"])), \
+                 patch("httpx.AsyncClient.request", _fake_probe({"/api/orders/1": lambda a: (200, '{"o":1}')})):
+                resp = self.client.post("/crawl-roles", json={
+                    "base_url": "http://shop.test/",
+                    "roles": [{"role": "user", "headers": {"Authorization": "Bearer u"}},
+                              {"role": "admin", "headers": {"Authorization": "Bearer a"}}],
+                    "register_identities": True})
+            body = resp.json()
+            names = {i["name"] for i in body["registered_identities"]}
+            self.assertEqual(names, {"rolecrawl:user", "rolecrawl:admin"})
+            # persisted + idempotent: a second run registers none new
+            with patch("crawler.crawl", _fake_crawl(["/api/orders/{id}"])), \
+                 patch("httpx.AsyncClient.request", _fake_probe({"/api/orders/1": lambda a: (200, '{"o":1}')})):
+                resp2 = self.client.post("/crawl-roles", json={
+                    "base_url": "http://shop.test/",
+                    "roles": [{"role": "user", "headers": {"Authorization": "Bearer u"}}],
+                    "register_identities": True})
+            self.assertEqual(resp2.json()["registered_identities"], [])
+        finally:
+            store._DB_PATH = orig
+            tmp.cleanup()
 
 
 if __name__ == "__main__":

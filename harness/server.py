@@ -249,15 +249,42 @@ class RoleCrawlRequest(_BaseModel):
     max_pages: int = 40
     max_endpoints: int = 150
     id_fill: str = "1"
+    # Auto-register a named test identity per role, so the reachable identities
+    # persist and the cross-identity compare can reuse them (deduped by name).
+    register_identities: bool = True
+
+
+def _register_role_identities(roles) -> list[dict]:
+    """Register an Identity per distinct role (idempotent by name), so a role
+    crawl's reachable identities feed the existing identity/cross-identity-compare
+    system. Never stores credentials -- only the label + role."""
+    existing = {i["name"] for i in store.list_identities()}
+    registered: list[dict] = []
+    for r in roles:
+        name = f"rolecrawl:{r.role}"
+        if name in existing:
+            continue
+        existing.add(name)
+        try:
+            role_enum = identity_mod.IdentityRole(r.role)
+        except ValueError:
+            role_enum = identity_mod.IdentityRole.USER
+        ident = identity_mod.Identity(name=name, role=role_enum,
+                                      notes="auto-registered by /crawl-roles")
+        store.save_identity(ident)
+        registered.append({"id": ident.id, "name": ident.name, "role": ident.role.value})
+    return registered
 
 
 @app.post("/crawl-roles")
 async def crawl_roles_endpoint(req: RoleCrawlRequest, authorization: str | None = Header(default=None)):
     """Role-aware crawl: discover the surface per role, probe every endpoint with
     every role, and return the access matrix plus derived auth-bypass and IDOR/
-    BOLA candidates (role linked to URL). Scope-gated to server.allowed_hosts,
-    throttled, and bounded by max_endpoints. Credentials arrive per call and are
-    never persisted."""
+    BOLA candidates (role linked to URL). Also runs the same-object cross-identity
+    comparison (idor_findings) and, unless disabled, auto-registers a named
+    identity per role so the reachable identities feed the cross-identity-compare
+    flow. Scope-gated to server.allowed_hosts, throttled, bounded by
+    max_endpoints. Credentials arrive per call and are never persisted."""
     _require_auth(authorization)
     import role_crawl
     roles = [role_crawl.RoleSession(role=str(r.get("role", "user")),
@@ -272,7 +299,18 @@ async def crawl_roles_endpoint(req: RoleCrawlRequest, authorization: str | None 
         max_endpoints=max(1, min(req.max_endpoints, 500)),
         id_fill=req.id_fill or "1",
     )
-    return result.to_dict()
+    out = result.to_dict()
+    if req.register_identities:
+        try:
+            out["registered_identities"] = await __import__("asyncio").to_thread(
+                _register_role_identities, roles)
+        except Exception as e:
+            # Identity registration is a convenience layered on top of the crawl;
+            # a store hiccup must never sink the (already-completed) crawl result.
+            log.warning("crawl-roles: identity registration failed: %s", e)
+            out["registered_identities"] = []
+            out["identity_registration_error"] = str(e)
+    return out
 
 
 @app.post("/probe-missing-auth")

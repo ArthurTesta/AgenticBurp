@@ -23,6 +23,7 @@ fingerprints, not secrets, is preserved. Scope-gated to allowed_hosts and paced
 by the global request throttle throughout.
 """
 from __future__ import annotations
+import hashlib
 import logging
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
@@ -32,6 +33,7 @@ import httpx
 import crawler
 import global_throttle
 import missing_auth_probe as map_
+from models import Finding
 
 log = logging.getLogger("harness.role_crawl")
 
@@ -61,6 +63,9 @@ class EndpointAccess:
     path: str                 # normalized (may contain {id})
     by_role: dict = field(default_factory=dict)   # role -> status (int) or None on error
     reachable_roles: list = field(default_factory=list)  # roles that got substantive 2xx
+    # role -> {"len": int, "hash": str|None} for the SAME probed object id, so
+    # the same object's response can be compared ACROSS identities (BOLA test).
+    fingerprints: dict = field(default_factory=dict)
 
     @property
     def object_scoped(self) -> bool:
@@ -68,7 +73,12 @@ class EndpointAccess:
 
     def to_dict(self) -> dict:
         return {"method": self.method, "path": self.path, "by_role": self.by_role,
-                "reachable_roles": self.reachable_roles, "object_scoped": self.object_scoped}
+                "reachable_roles": self.reachable_roles, "object_scoped": self.object_scoped,
+                "fingerprints": self.fingerprints}
+
+
+def _body_fp(body: str) -> str:
+    return hashlib.sha1((body or "")[:4000].encode("utf-8", "ignore")).hexdigest()[:16]
 
 
 @dataclass
@@ -78,6 +88,8 @@ class RoleCrawlResult:
     endpoints: list = field(default_factory=list)          # EndpointAccess
     auth_bypass_candidates: list = field(default_factory=list)  # dicts
     idor_candidates: list = field(default_factory=list)         # dicts
+    # Findings from the same-object cross-identity comparison (Finding.model_dump()).
+    idor_findings: list = field(default_factory=list)
     errors: list = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -88,6 +100,7 @@ class RoleCrawlResult:
             "endpoints": [e.to_dict() for e in self.endpoints],
             "auth_bypass_candidates": self.auth_bypass_candidates,
             "idor_candidates": self.idor_candidates,
+            "idor_findings": self.idor_findings,
             "errors": self.errors,
         }
 
@@ -150,15 +163,70 @@ async def crawl_roles(
         for r in roles:
             status, body = await _probe("GET", url, r.norm_headers(), timeout)
             access.by_role[r.role] = status
-            if map_._substantive(status, body):
+            substantive = map_._substantive(status, body)
+            if substantive:
                 access.reachable_roles.append(r.role)
+            # Record a body fingerprint for object-scoped endpoints so the SAME
+            # object's response can be compared across identities below.
+            if access.object_scoped:
+                access.fingerprints[r.role] = {
+                    "len": len((body or "").strip()),
+                    "hash": _body_fp(body) if substantive else None,
+                }
         result.endpoints.append(access)
 
     _derive_candidates(result, roles)
-    log.info("role_crawl: %s -- %d endpoints, %d auth-bypass, %d idor candidates",
+    _compare_identities(result, roles, id_fill)
+    log.info("role_crawl: %s -- %d endpoints, %d auth-bypass, %d idor candidates, %d idor findings",
              base_url, len(result.endpoints), len(result.auth_bypass_candidates),
-             len(result.idor_candidates))
+             len(result.idor_candidates), len(result.idor_findings))
     return result
+
+
+def _compare_identities(result: RoleCrawlResult, roles: list[RoleSession], id_fill: str) -> None:
+    """The queued same-object comparison, run deterministically: for each
+    object-scoped endpoint, group the AUTHENTICATED identities that reached it by
+    their response fingerprint. When the SAME object id returns byte-identical
+    substantive content to two or more DISTINCT identities, the endpoint isn't
+    scoping the object per-identity -- either it's a shared/public object or it's
+    a broken object-level authorization (BOLA/IDOR). That distinction needs a
+    human (is object {id} meant to be private?), so this ships as an unconfirmed,
+    moderate-confidence finding, not a confirmation."""
+    authed = {r.role for r in roles if _trust(r.role) > 0}
+    for e in result.endpoints:
+        if not e.object_scoped:
+            continue
+        by_hash: dict[str, list[str]] = {}
+        for role in e.reachable_roles:
+            if role not in authed:
+                continue
+            h = e.fingerprints.get(role, {}).get("hash")
+            if h:
+                by_hash.setdefault(h, []).append(role)
+        for _hash, sharing in by_hash.items():
+            distinct = sorted(set(sharing))
+            if len(distinct) < 2:
+                continue
+            url_shown = e.path.replace("{id}", id_fill)
+            result.idor_findings.append(Finding(
+                vulnerability_class="idor",
+                confidence=0.65,
+                summary=(f"Object-scoped endpoint {e.method} {e.path} returns identical content "
+                         f"for object id={id_fill} to distinct identities ({', '.join(distinct)}) "
+                         f"-- object-level authorization is not enforced per-identity."),
+                evidence=(f"Same request ({e.method} {url_shown}) sent as each identity returned "
+                          f"byte-identical substantive responses across {', '.join(distinct)}. "
+                          f"If object id={id_fill} is meant to be private to one identity, this is "
+                          f"BOLA/IDOR; if it is a shared/public object it is benign -- confirm ownership."),
+                suggested_test=(f"Fetch an object that belongs to one identity, then request the SAME "
+                                f"object id as another identity; a proper control returns 403/404 or that "
+                                f"identity's own object, not the first identity's data."),
+                basis="derived",
+                severity="high",
+                owasp_category="A01:2021-Broken Access Control",
+                confirmed=False,
+                validation_hints=[f"cross_identity_compare:{e.path}"],
+            ).model_dump())
 
 
 def _derive_candidates(result: RoleCrawlResult, roles: list[RoleSession]) -> None:
