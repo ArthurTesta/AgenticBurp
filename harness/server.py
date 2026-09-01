@@ -425,6 +425,21 @@ async def select_model(req: SelectModelRequest, authorization: str | None = Head
     return result
 
 
+@app.post("/scan/confidential")
+async def scan_confidential(exchange: HttpExchange, authorization: str | None = Header(default=None)):
+    """Deterministic confidential-info scan (A4) of one response: secrets, PII,
+    and internal-infra leakage, with every value REDACTED. Regex, no model."""
+    _require_auth(authorization)
+    import confidential_info_detector
+    matches = confidential_info_detector.scan_response(exchange)
+    findings = confidential_info_detector.findings_from_exchange(exchange)
+    return {
+        "match_count": len(matches),
+        "matches": [m.to_dict() for m in matches],
+        "findings": [f.model_dump() for f in findings],
+    }
+
+
 @app.get("/tools")
 async def tools_catalog(category: str = "", vulnerability_class: str = "",
                         authorization: str | None = Header(default=None)):
