@@ -647,7 +647,44 @@ async def engagement_view(host: str, limit: int = 25, authorization: str | None 
     if not snap:
         return {"host": host, "endpoint_count": 0, "worklist": [], "summary": {"host": host, "endpoint_count": 0}}
     st = engagement.EngagementState.from_dict(snap)
-    return {"host": host, "worklist": st.worklist(limit=max(1, min(limit, 200))), "summary": st.summary()}
+    return {"host": host, "worklist": st.worklist(limit=max(1, min(limit, 200))),
+            "pending_actions": st.pending(), "summary": st.summary()}
+
+
+class AdvanceRequest(_BaseModel):
+    base_url: str
+    # Re-crawl as these roles (the tester supplies creds for any new identity,
+    # e.g. one a finding revealed). Folds the new surface + access matrix back
+    # into the engagement worklist -- the closed loop, tester-driven.
+    roles: list[dict]
+    max_pages: int = 30
+    max_endpoints: int = 100
+
+
+@app.post("/engagement/{host}/advance")
+async def engagement_advance(host: str, req: AdvanceRequest, authorization: str | None = Header(default=None)):
+    """Advance the engagement: re-crawl `base_url` as the given roles and fold the
+    result (surface + access matrix + IDOR findings) back into the fused
+    worklist. This is the closed loop the tester drives -- run it as a newly
+    obtained identity and the new surface it can reach re-enters the ranking."""
+    _require_auth(authorization)
+    import role_crawl, engagement
+    roles = [role_crawl.RoleSession(role=str(r.get("role", "user")), headers=r.get("headers") or {})
+             for r in req.roles]
+    if not roles:
+        raise HTTPException(status_code=400, detail="roles must be non-empty")
+    result = await role_crawl.crawl_roles(
+        req.base_url, roles, allowed_hosts=orchestrator.allowed_hosts,
+        max_pages=max(1, min(req.max_pages, 200)), max_endpoints=max(1, min(req.max_endpoints, 500)))
+    out = result.to_dict()
+
+    await __import__("asyncio").to_thread(
+        _update_engagement, host, lambda st: st.ingest_role_crawl(out))
+
+    snap = await __import__("asyncio").to_thread(store.load_engagement, host)
+    st = engagement.EngagementState.from_dict(snap or {"host": host})
+    return {"host": host, "crawl": out, "worklist": st.worklist(),
+            "pending_actions": st.pending(), "summary": st.summary()}
 
 
 @app.get("/activity")

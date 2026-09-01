@@ -111,6 +111,74 @@ class FusionTests(unittest.TestCase):
         self.assertEqual(st2.endpoints["GET /a"].findings, st.endpoints["GET /a"].findings)
 
 
+class CapabilityTests(unittest.TestCase):
+    def test_extract_jwt_from_body(self):
+        cred = engagement._extract_credential({}, 'x eyJhbGciOiJI.eyJzdWIiOiIx.sigABC1234567 y')
+        self.assertEqual(cred["kind"], "bearer")
+        self.assertIn("Authorization", cred["headers"])
+
+    def test_extract_session_cookie(self):
+        cred = engagement._extract_credential({"Set-Cookie": "session=abc123def; Path=/"}, "")
+        self.assertEqual(cred["kind"], "cookie")
+        self.assertIn("session=abc123def", cred["headers"]["Cookie"])
+
+    def test_extract_json_token(self):
+        cred = engagement._extract_credential({}, '{"access_token":"longtokenvalue12345"}')
+        self.assertEqual(cred["kind"], "bearer")
+
+    def test_no_credential(self):
+        self.assertIsNone(engagement._extract_credential({}, '{"status":"ok"}'))
+
+    def test_credential_capability_from_auth_finding(self):
+        f = {"vulnerability_class": "auth", "confidence": 0.8, "confirmed": True}
+        caps = engagement.detect_capabilities(f, {"Set-Cookie": "sid=abc123def"}, "", "http://t/login")
+        self.assertTrue(any(c["type"] == "credential" for c in caps))
+
+    def test_reachable_area_from_idor(self):
+        f = {"vulnerability_class": "idor", "confidence": 0.7, "confirmed": True}
+        caps = engagement.detect_capabilities(f, {}, "", "http://t/api/orders/1")
+        self.assertTrue(any(c["type"] == "reachable_area" for c in caps))
+
+    def test_apply_credential_registers_identity_and_queues_no_secret(self):
+        st = EngagementState(host="t")
+        caps = [{"type": "credential", "kind": "bearer",
+                 "headers": {"Authorization": "Bearer SECRET"}, "source_url": "http://t/login",
+                 "reason": "learned"}]
+        cred_caps = st.apply_capabilities(caps, "http://t/login")
+        self.assertEqual(len(cred_caps), 1)  # returned for in-process use
+        self.assertTrue(any(i["source"] == "finding" for i in st.identities))
+        # the queued action + persisted state must NOT contain the secret
+        blob = str(st.to_dict())
+        self.assertNotIn("SECRET", blob)
+        self.assertTrue(any(a["kind"] == "recrawl_as_derived" for a in st.pending()))
+
+    def test_apply_reachable_area_queues_action(self):
+        st = EngagementState(host="t")
+        caps = [{"type": "reachable_area", "area": "/rest/admin", "source_url": "http://t/rest/admin",
+                 "reason": "broken access"}]
+        st.apply_capabilities(caps, "http://t/rest/admin")
+        self.assertTrue(any(a["kind"] == "recrawl_area" and a["target"] == "/rest/admin"
+                            for a in st.pending()))
+
+    def test_enqueue_dedups(self):
+        st = EngagementState(host="t")
+        st.enqueue_action("recrawl_area", "/x", "r1")
+        st.enqueue_action("recrawl_area", "/x", "r2")
+        self.assertEqual(len(st.pending()), 1)
+
+    def test_resolve_action(self):
+        st = EngagementState(host="t")
+        st.enqueue_action("recrawl_area", "/x", "r")
+        st.resolve_action("recrawl_area", "/x")
+        self.assertEqual(st.pending(), [])
+
+    def test_pending_actions_roundtrip(self):
+        st = EngagementState(host="t")
+        st.enqueue_action("recrawl_area", "/x", "r")
+        st2 = EngagementState.from_dict(st.to_dict())
+        self.assertEqual(len(st2.pending()), 1)
+
+
 class StoreAndEndpointTests(unittest.TestCase):
     def setUp(self):
         import tempfile, store

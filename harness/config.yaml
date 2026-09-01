@@ -113,7 +113,7 @@ models:
 # POST /active-probe. max_steps bounds the loop alongside the effort budget and
 # the global throttle.
 iterative_agent:
-  enabled: false
+  enabled: true
   max_steps: 250
 
 # Browser-driven XSS validation -- A2 (validators/browser_xss_validator.py).
@@ -136,6 +136,18 @@ browser_xss:
 # OR the global budget says so. When the global budget can't cover full policy
 # for every candidate, POST /plan-allocation prioritizes by impact and returns
 # guidance on what's funded vs deferred.
+# Engagement closed loop -- F-spine slice 2 (engagement.py). When a finding
+# yields a replayable credential (a leaked token/cookie in a response), re-crawl
+# the origin as that new identity in-process and fold the new attack surface back
+# into the fused worklist -- the SQLi->admin->new-surface loop, automatic.
+# DEFAULT OFF: this sends active traffic (a role crawl) as a side effect of
+# analysis. Scope-gated to server.allowed_hosts and throttled regardless. With it
+# off, the same capability is still detected and queued (visible via
+# GET /engagement/<host>), just not auto-executed -- drive it with
+# POST /engagement/<host>/advance instead.
+engagement:
+  auto_escalate: false
+
 retry_budget:
   max_retries: 2              # extra re-dispatches after the first pass (0 = one pass)
   max_agents: 3              # distinct agent runs per vulnerability, retries included

@@ -31,6 +31,12 @@ import re
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
+try:
+    from categories import canonicalize as _canon
+except Exception:  # pragma: no cover - categories is always present in the harness
+    def _canon(x):  # type: ignore
+        return (x or "").lower().strip() or None
+
 _SEV_W = {"critical": 1.0, "high": 0.75, "medium": 0.5, "low": 0.25, "info": 0.1}
 _TIER_W = {"critical": 1.0, "high": 0.75, "medium": 0.5, "low": 0.25, "info": 0.1, "unscored": 0.1}
 
@@ -173,11 +179,92 @@ class SurfaceEndpoint:
         )
 
 
+# --- capability detection (slice 2: the closed loop) ------------------------
+# Access-control finding classes that, once real, mean a new part of the surface
+# just became reachable and is worth re-testing (possibly as a new identity).
+_REACHABLE_CLASSES = {"idor", "auth", "missing_authentication", "broken_access_control",
+                      "access_control", "session_fixation"}
+
+# A JWT anywhere in a response is a directly-usable bearer credential.
+_JWT_RE = re.compile(r"\beyJ[A-Za-z0-9_\-]{6,}\.eyJ[A-Za-z0-9_\-]{6,}\.[A-Za-z0-9_\-]{6,}\b")
+# Session-ish cookie names worth replaying as an identity.
+_SESSION_COOKIE = re.compile(
+    r"\b(session|sess|sid|sessionid|jsessionid|phpsessid|connect\.sid|auth|token|jwt)=([^;,\s]+)",
+    re.IGNORECASE)
+# Token fields in a JSON body.
+_JSON_TOKEN = re.compile(
+    r"""["'](?:access_?token|auth_?token|id_?token|jwt|token)["']\s*:\s*["']([^"']{12,})["']""",
+    re.IGNORECASE)
+
+
+def _extract_credential(resp_headers: dict | None, resp_body: str | None) -> dict | None:
+    """A directly-replayable credential the harness just observed in a response,
+    as {"kind","headers"} -- an Authorization bearer or a Cookie header a
+    re-crawl can send as a new identity. None when nothing usable is present.
+
+    This is the ONE place the harness holds a learned credential; it is passed to
+    an in-process re-crawl and never persisted (see EngagementState -- the queue
+    stores the fact 'a credential was learned here', never the value)."""
+    body = resp_body or ""
+    headers = resp_headers or {}
+    set_cookie = " ; ".join(v for k, v in headers.items() if k.lower() == "set-cookie")
+    # 1. JWT (in a Set-Cookie, an Authorization echo, or the body) -> bearer.
+    for source in (set_cookie, body):
+        m = _JWT_RE.search(source or "")
+        if m:
+            return {"kind": "bearer", "headers": {"Authorization": f"Bearer {m.group(0)}"}}
+    # 2. JSON token field -> bearer.
+    m = _JSON_TOKEN.search(body)
+    if m:
+        return {"kind": "bearer", "headers": {"Authorization": f"Bearer {m.group(1)}"}}
+    # 3. Session cookie -> Cookie header.
+    m = _SESSION_COOKIE.search(set_cookie)
+    if m:
+        return {"kind": "cookie", "headers": {"Cookie": f"{m.group(1)}={m.group(2)}"}}
+    return None
+
+
+def detect_capabilities(finding: dict, resp_headers: dict | None, resp_body: str | None,
+                        url: str) -> list[dict]:
+    """What new access, if any, a finding grants -- the trigger for the closed
+    loop. Two kinds:
+
+      - "credential": a directly-replayable token/cookie was observed. Carries
+        `headers` (ephemeral -- used by an in-process re-crawl, never persisted).
+      - "reachable_area": an access-control finding means this area is reachable
+        (perhaps as a role we should re-crawl as); persisted as a queued action.
+
+    Deterministic; keyed off the finding's class + the raw response, no LLM."""
+    caps: list[dict] = []
+    canon = _canon(finding.get("vulnerability_class", "")) or (finding.get("vulnerability_class", "") or "").lower()
+    confirmed = bool(finding.get("confirmed"))
+    conf = float(finding.get("confidence", 0.0) or 0.0)
+
+    # A credential is only interesting from an auth-relevant or confirmed finding
+    # (a token echoed in some unrelated benign response isn't a capability gain).
+    if canon in ("auth", "jwt", "session_fixation", "missing_authentication") or confirmed or conf >= 0.7:
+        cred = _extract_credential(resp_headers, resp_body)
+        if cred:
+            caps.append({"type": "credential", "kind": cred["kind"], "headers": cred["headers"],
+                         "source_url": url,
+                         "reason": f"a replayable {cred['kind']} credential was observed in the response"})
+
+    if canon in _REACHABLE_CLASSES and (confirmed or conf >= 0.5):
+        caps.append({"type": "reachable_area", "area": normalize_path(url), "source_url": url,
+                     "finding_class": finding.get("vulnerability_class", ""),
+                     "reason": f"{finding.get('vulnerability_class', 'access-control')} makes this area "
+                               f"reachable -- re-crawl/re-test it, possibly as a new identity"})
+    return caps
+
+
 @dataclass
 class EngagementState:
     host: str
     endpoints: dict = field(default_factory=dict)   # key "METHOD path" -> SurfaceEndpoint
     identities: list = field(default_factory=list)  # [{name, role, source, obtained_from}]
+    # The work queue: escalation opportunities the closed loop surfaces (never
+    # holds a credential value -- only the fact one was learned and where).
+    pending_actions: list = field(default_factory=list)
 
     # --- ingest: every source writes into the SAME model ---
 
@@ -249,23 +336,67 @@ class EngagementState:
             return
         self.identities.append({"name": name, "role": role, "source": source, "obtained_from": obtained_from})
 
+    def enqueue_action(self, kind: str, target: str, reason: str, source: str = "",
+                       auto_runnable: bool = False) -> None:
+        """Add an escalation action to the work queue, de-duped by (kind, target).
+        Never carries a credential value -- only the pointer to what to do."""
+        for a in self.pending_actions:
+            if a["kind"] == kind and a["target"] == target and a.get("status") == "pending":
+                return
+        self.pending_actions.append({
+            "kind": kind, "target": target, "reason": reason, "source": source,
+            "auto_runnable": auto_runnable, "status": "pending",
+        })
+
+    def apply_capabilities(self, caps: list, url: str) -> list:
+        """Fold detected capabilities into the state. Returns the subset that are
+        `credential` type (carrying ephemeral headers) so the caller can decide
+        whether to act on them in-process -- these are NOT stored."""
+        credential_caps: list = []
+        for cap in caps or []:
+            if cap.get("type") == "credential":
+                # Register a derived identity (label only, NO credential value),
+                # and queue a re-crawl as it. The headers travel with the returned
+                # cap for immediate in-process use, never into the queue/store.
+                name = f"derived:{cap.get('kind', 'cred')}@{normalize_path(url)}"
+                self.ingest_identity(name, role="derived", source="finding", obtained_from=url)
+                self.enqueue_action("recrawl_as_derived", name,
+                                    cap.get("reason", "credential learned -- re-crawl as this identity"),
+                                    source=url, auto_runnable=True)
+                credential_caps.append(cap)
+            elif cap.get("type") == "reachable_area":
+                self.enqueue_action("recrawl_area", cap.get("area", normalize_path(url)),
+                                    cap.get("reason", "access-control finding -- re-test this area"),
+                                    source=url, auto_runnable=False)
+        return credential_caps
+
+    def resolve_action(self, kind: str, target: str) -> None:
+        for a in self.pending_actions:
+            if a["kind"] == kind and a["target"] == target and a.get("status") == "pending":
+                a["status"] = "done"
+
     # --- the fused output ---
 
     def worklist(self, limit: int = 25) -> list:
         ranked = sorted(self.endpoints.values(), key=lambda e: e.fused_score()[0], reverse=True)
         return [e.to_dict() for e in ranked[:limit]]
 
+    def pending(self) -> list:
+        return [a for a in self.pending_actions if a.get("status") == "pending"]
+
     def summary(self) -> dict:
         by_status: dict[str, int] = {}
         for e in self.endpoints.values():
             by_status[e.status] = by_status.get(e.status, 0) + 1
         return {"host": self.host, "endpoint_count": len(self.endpoints),
-                "by_status": by_status, "identities": self.identities}
+                "by_status": by_status, "identities": self.identities,
+                "pending_action_count": len(self.pending())}
 
     def to_dict(self) -> dict:
         return {"host": self.host,
                 "endpoints": {k: v.to_dict() for k, v in self.endpoints.items()},
-                "identities": self.identities}
+                "identities": self.identities,
+                "pending_actions": self.pending_actions}
 
     @classmethod
     def from_dict(cls, d: dict) -> "EngagementState":
@@ -273,6 +404,7 @@ class EngagementState:
         for k, v in (d.get("endpoints", {}) or {}).items():
             st.endpoints[k] = SurfaceEndpoint.from_dict(v)
         st.identities = d.get("identities", []) or []
+        st.pending_actions = d.get("pending_actions", []) or []
         return st
 
 
