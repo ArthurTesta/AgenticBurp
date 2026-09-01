@@ -1,2 +1,9 @@
 __pycache__/
 *.pyc
+
+# Local-only config overrides, never committed (SESSION_4_PLAN.md T0.1)
+config.local.yaml
+
+# Build output and runtime SQLite DBs (SESSION_4_PLAN.md T0.2)
+*.jar
+harness/*.db

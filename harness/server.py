@@ -22,11 +22,33 @@ logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("harness.server")
 
 CONFIG_PATH = Path(__file__).parent / "config.yaml"
+LOCAL_CONFIG_PATH = Path(__file__).parent / "config.local.yaml"
+
+
+def _deep_merge(base: dict, overlay: dict) -> dict:
+    """Recursively merge overlay into base (overlay wins); returns base."""
+    for k, v in overlay.items():
+        if isinstance(v, dict) and isinstance(base.get(k), dict):
+            _deep_merge(base[k], v)
+        else:
+            base[k] = v
+    return base
 
 
 def load_config() -> dict:
+    """Load config.yaml, then merge an optional git-ignored config.local.yaml
+    over it (local wins). This keeps active-mode toggles on for a live local
+    server without ever committing them -- a `git add config.yaml` can no longer
+    leak them (SESSION_4_PLAN.md T0.1)."""
     with open(CONFIG_PATH) as f:
-        return yaml.safe_load(f)
+        cfg = yaml.safe_load(f) or {}
+    if LOCAL_CONFIG_PATH.exists():
+        with open(LOCAL_CONFIG_PATH) as f:
+            local = yaml.safe_load(f) or {}
+        if local:
+            _deep_merge(cfg, local)
+            log.info("load_config: merged local overrides from config.local.yaml")
+    return cfg
 
 
 config = load_config()
