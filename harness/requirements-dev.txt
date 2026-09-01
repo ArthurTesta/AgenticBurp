@@ -1,0 +1,6 @@
+# Dev/test tooling. Includes the core runtime deps.
+# The suite runs under the stdlib:
+#     python -m unittest discover -p "test_*.py"
+# pytest is also supported and used by CI (SESSION_4_PLAN.md T5.1).
+-r requirements.txt
+pytest==9.1.1
