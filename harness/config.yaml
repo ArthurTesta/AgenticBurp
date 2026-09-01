@@ -106,6 +106,21 @@ iterative_agent:
   enabled: false
   max_steps: 250
 
+# Per-vulnerability resource governance -- F5 (resource_governor.py). The
+# ceiling for testing ONE vulnerability: how many retries (re-dispatches of the
+# same class), how many distinct agent runs, and a hard per-vulnerability token
+# cap. These bound the /retry-agents loop. Independent of the GLOBAL budget
+# (effort_budget.total_tokens): the loop stops when EITHER the per-vuln policy
+# OR the global budget says so. When the global budget can't cover full policy
+# for every candidate, POST /plan-allocation prioritizes by impact and returns
+# guidance on what's funded vs deferred.
+retry_budget:
+  max_retries: 2              # extra re-dispatches after the first pass (0 = one pass)
+  max_agents: 3              # distinct agent runs per vulnerability, retries included
+  max_tokens_per_vuln: 0     # 0 = no per-vuln token cap (only counts + global budget apply)
+  stop_on_found: true        # stop as soon as an actionable finding appears
+  min_actionable_confidence: 0.4
+
 # Default model for any specialist agent that doesn't set its own "model"
 # below. This used to silently fall back to the coordinator's model,
 # which meant every unconfigured agent (26 of 36, as of this writing) got

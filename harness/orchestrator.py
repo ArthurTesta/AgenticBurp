@@ -334,6 +334,13 @@ class Orchestrator:
         self.iterative_agent_enabled = bool(iter_cfg.get("enabled", False))
         self.iterative_agent_max_steps = int(iter_cfg.get("max_steps", 250))
 
+        # Per-vulnerability resource governance -- F5. The default policy for
+        # how much one vulnerability may consume (retries/agents/tokens); a
+        # /retry-agents request can tighten or loosen it per call.
+        import resource_governor
+        self.retry_budget_policy = resource_governor.VulnBudgetPolicy.from_dict(
+            config.get("retry_budget", {}))
+
         log.info(f"Orchestrator initialized with {len(self.agent_manager.get_enabled_agents())} agents")
 
     async def run_active_probe(
@@ -376,6 +383,102 @@ class Orchestrator:
         )
         outcome = await pivot_memory.integrate(result, exchange, model=chosen_model)
         return {"iterative_result": result.to_dict(), "integration": outcome.to_dict()}
+
+    async def run_retry_agents(
+        self,
+        exchange: HttpExchange,
+        agent_class: str,
+        *,
+        policy_overrides: dict | None = None,
+        granted_tokens: int | None = None,
+        prior_context: str = "",
+    ) -> dict:
+        """F5 retry loop: re-dispatch the SAME specialist agent on one exchange
+        up to the per-vulnerability policy's cap, stopping as soon as it produces
+        an actionable finding. Distinct from adaptive_respin, which spins a
+        DIFFERENT agent; this spins the same one (the tester's "give this
+        vulnerability N more tries" knob).
+
+        Bounded by the PerVulnSpend tracker: max_retries, max_agents, an optional
+        per-vuln token cap, an optional allocator-granted sub-cap, AND the global
+        effort budget -- the loop stops the moment any of them says no. Every
+        round's real token cost (measured from the ledger delta) is charged to
+        the per-vuln spend so the caps mean tokens, not just call counts."""
+        import resource_governor
+        if agent_class not in self.agent_manager.agents:
+            raise ValueError(f"unknown agent class {agent_class!r}")
+
+        policy = self.retry_budget_policy.merged_with(policy_overrides)
+        spend = resource_governor.PerVulnSpend(
+            policy=policy, global_budget=self.effort_budget, granted_tokens=granted_tokens)
+
+        rounds: list[dict] = []
+        all_reports: list[AgentReport] = []
+        stop_reason = ""
+        while True:
+            ok, reason = spend.can_start_round(planned_agents=1)
+            if not ok:
+                stop_reason = reason
+                break
+            before = self.effort_budget.spent
+            reports = await self.agent_manager.run_multiple_agents(
+                [agent_class], exchange, self.max_body_chars, prior_context, self.effort_budget)
+            spent = max(0, self.effort_budget.spent - before)
+            found = self._has_actionable_finding(reports)
+            spend.record_round(agents_run=1, tokens_spent=spent, found=found)
+            all_reports.extend(reports)
+            rounds.append({
+                "pass": spend.passes_used, "tokens": spent, "found": found,
+                "findings": [f.model_dump() for r in reports for f in r.findings],
+            })
+            if found and policy.stop_on_found:
+                stop_reason = "actionable finding produced"
+                break
+
+        best = max((f for r in all_reports for f in r.findings),
+                   key=lambda f: f.confidence, default=None)
+        return {
+            "agent_class": agent_class,
+            "stop_reason": stop_reason,
+            "found": spend.found,
+            "spend": spend.to_dict(),
+            "rounds": rounds,
+            "best_finding": best.model_dump() if best else None,
+        }
+
+    def plan_allocation(
+        self,
+        candidates: list[dict],
+        *,
+        policy_overrides: dict | None = None,
+        avg_agents_per_round: float = 1.0,
+    ) -> dict:
+        """F5 prioritizer: given competing vulnerabilities and the REMAINING
+        global token budget, decide which get the full retry policy, which get a
+        reduced one, and which are deferred -- with guidance. This is what turns
+        "I have 2M tokens" into an actual spend plan; with no budget cap set,
+        everyone gets full policy. Round cost is calibrated from the ledger's
+        real observed averages (falls back to labeled priors before any real
+        call). `candidates` are dicts: {id, vulnerability_class, url, severity,
+        confidence, priority?}."""
+        import resource_governor
+        policy = self.retry_budget_policy.merged_with(policy_overrides)
+        cands = [
+            resource_governor.AllocationCandidate(
+                id=str(c.get("id") or c.get("url") or i),
+                vulnerability_class=str(c.get("vulnerability_class", "unknown")),
+                url=str(c.get("url", "")),
+                severity=str(c.get("severity", "info")),
+                confidence=float(c.get("confidence", 0.0) or 0.0),
+                priority=c.get("priority"),
+            )
+            for i, c in enumerate(candidates)
+        ]
+        round_cost = resource_governor.estimate_round_cost(
+            self.effort_budget.ledger, avg_agents_per_round=avg_agents_per_round)
+        plan = resource_governor.plan_allocation(
+            cands, self.effort_budget.remaining, policy, round_cost)
+        return plan.to_dict()
 
     async def _choose_agents(self, exchange: HttpExchange) -> tuple[list[str], str]:
         """

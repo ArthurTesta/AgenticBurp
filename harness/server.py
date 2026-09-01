@@ -324,6 +324,56 @@ async def active_probe(req: ActiveProbeRequest, authorization: str | None = Head
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
+class RetryAgentsRequest(_BaseModel):
+    exchange: HttpExchange
+    agent_class: str
+    # Per-request policy overrides (any omitted -> the configured retry_budget
+    # default). granted_tokens is an allocator-assigned sub-cap for this vuln.
+    policy_overrides: dict = {}
+    granted_tokens: int | None = None
+
+
+@app.post("/retry-agents")
+async def retry_agents(req: RetryAgentsRequest, authorization: str | None = Header(default=None)):
+    """F5 retry loop: re-run one specialist agent on one exchange up to the
+    per-vulnerability policy's cap, stopping on an actionable finding. Bounded by
+    max_retries / max_agents / max_tokens_per_vuln AND the global effort budget.
+    Returns per-round token spend and the best finding."""
+    _require_auth(authorization)
+    try:
+        return await orchestrator.run_retry_agents(
+            req.exchange, req.agent_class,
+            policy_overrides=req.policy_overrides or None,
+            granted_tokens=req.granted_tokens,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        log.exception("Unhandled error during retry-agents")
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+class PlanAllocationRequest(_BaseModel):
+    # Competing vulnerabilities: {id?, vulnerability_class, url, severity, confidence?, priority?}
+    candidates: list[dict]
+    policy_overrides: dict = {}
+    avg_agents_per_round: float = 1.0
+
+
+@app.post("/plan-allocation")
+async def plan_allocation_endpoint(req: PlanAllocationRequest, authorization: str | None = Header(default=None)):
+    """F5 prioritizer: given competing vulnerabilities and the REMAINING global
+    token budget, return which get full retry policy, which are reduced, which
+    are deferred, and written guidance. With no budget cap set, everyone gets
+    full policy. Calibrated against the real token ledger, like /estimate."""
+    _require_auth(authorization)
+    if not req.candidates:
+        raise HTTPException(status_code=400, detail="candidates must be non-empty")
+    return orchestrator.plan_allocation(
+        req.candidates, policy_overrides=req.policy_overrides or None,
+        avg_agents_per_round=req.avg_agents_per_round)
+
+
 @app.get("/effort", response_model=EffortStatus)
 async def effort_status(authorization: str | None = Header(default=None)):
     """Current cumulative spend against the configured budget (see

@@ -217,5 +217,157 @@ class MissingAuthProbeEndpointTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 400)
 
 
+class ActiveProbeEndpointTests(unittest.TestCase):
+    """POST /active-probe: guard + real F4->F2 integration (LLM loop mocked)."""
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self._original_db_path = store._DB_PATH
+        store._DB_PATH = Path(self._tmpdir.name) / "test_harness_state.db"
+
+        import importlib
+        import server as server_module
+        importlib.reload(server_module)
+        self.server_module = server_module
+        server_module.orchestrator.allowed_hosts = ["shop.test"]
+        from fastapi.testclient import TestClient
+        self.client = TestClient(server_module.app)
+
+    def tearDown(self):
+        store._DB_PATH = self._original_db_path
+        self._tmpdir.cleanup()
+
+    _EXCHANGE = {"url": "https://shop.test/api/report", "method": "GET",
+                 "request_headers": {}, "request_body": "", "response_status": 200,
+                 "response_headers": {}, "response_body": ""}
+
+    def test_disabled_returns_403(self):
+        self.server_module.orchestrator.iterative_agent_enabled = False
+        resp = self.client.post("/active-probe", json={
+            "exchange": self._EXCHANGE, "hypothesis": "idor on report id", "specialty": "idor"})
+        self.assertEqual(resp.status_code, 403)
+
+    def test_enabled_runs_and_integrates(self):
+        from unittest.mock import patch
+        import iterative_agent
+        from iterative_agent import IterativeResult
+        from models import Finding
+
+        self.server_module.orchestrator.iterative_agent_enabled = True
+
+        async def fake_run(self, exchange, hypothesis, specialty, **kw):
+            r = IterativeResult(agent=f"iterative:{specialty}", stop_reason="found")
+            r.handoff_note = "id=3 returned another user's record"
+            r.findings = [Finding(vulnerability_class="idor", confidence=0.8, summary="idor on report",
+                                  evidence="e", suggested_test="t", basis="derived", severity="high",
+                                  confirmed=True)]
+            return r
+
+        with patch.object(iterative_agent.IterativeAgent, "run", fake_run):
+            resp = self.client.post("/active-probe", json={
+                "exchange": self._EXCHANGE, "hypothesis": "idor on report id", "specialty": "idor"})
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        integ = body["integration"]
+        self.assertEqual(len(integ["held_findings"]), 1)
+        self.assertFalse(integ["held_findings"][0]["confirmed"])  # paused, not confirmed
+        self.assertTrue(integ["remembered"])
+        self.assertIn("id=3", integ["grounding"])
+        # remembered into host history for real
+        rows = store.all_host_findings("https://shop.test/api/report")
+        self.assertTrue(any(row["vulnerability_class"] == "idor" for row in rows))
+
+
+class RetryAgentsEndpointTests(unittest.TestCase):
+    """POST /retry-agents (F5 retry loop) + /plan-allocation, LLM/agents mocked."""
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self._original_db_path = store._DB_PATH
+        store._DB_PATH = Path(self._tmpdir.name) / "test_harness_state.db"
+        import importlib
+        import server as server_module
+        importlib.reload(server_module)
+        self.server_module = server_module
+        from fastapi.testclient import TestClient
+        self.client = TestClient(server_module.app)
+
+    def tearDown(self):
+        store._DB_PATH = self._original_db_path
+        self._tmpdir.cleanup()
+
+    _EXCHANGE = {"url": "https://shop.test/api/x", "method": "GET", "request_headers": {},
+                 "request_body": "", "response_status": 200, "response_headers": {}, "response_body": ""}
+
+    def test_unknown_agent_class_is_400(self):
+        resp = self.client.post("/retry-agents", json={
+            "exchange": self._EXCHANGE, "agent_class": "no_such_agent"})
+        self.assertEqual(resp.status_code, 400)
+
+    def test_retry_loop_stops_on_found(self):
+        from unittest.mock import patch
+        from effort import CallKind
+        from models import AgentReport, Finding
+        orch = self.server_module.orchestrator
+        agent_class = next(iter(orch.agent_manager.agents))  # some real agent
+
+        calls = {"n": 0}
+
+        async def fake_run(names, exchange, max_body_chars=6000, prior_context="", effort_budget=None):
+            calls["n"] += 1
+            if effort_budget is not None:
+                effort_budget.record(CallKind.AGENT_DISPATCH, "m", 500, 500)
+            # produce an actionable finding on the 2nd pass
+            findings = []
+            if calls["n"] == 2:
+                findings = [Finding(vulnerability_class="xss", confidence=0.9, summary="s",
+                                    evidence="e", suggested_test="t", basis="derived")]
+            return [AgentReport(agent=names[0], model="m", findings=findings)]
+
+        with patch.object(orch.agent_manager, "run_multiple_agents", fake_run):
+            resp = self.client.post("/retry-agents", json={
+                "exchange": self._EXCHANGE, "agent_class": agent_class,
+                "policy_overrides": {"max_retries": 5, "max_agents": 9}})
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertTrue(body["found"])
+        self.assertEqual(len(body["rounds"]), 2)  # stopped after finding on pass 2
+        self.assertEqual(body["spend"]["tokens_used"], 2000)
+
+    def test_retry_loop_respects_retry_cap(self):
+        from unittest.mock import patch
+        from models import AgentReport
+        orch = self.server_module.orchestrator
+        agent_class = next(iter(orch.agent_manager.agents))
+
+        async def fake_run(names, exchange, max_body_chars=6000, prior_context="", effort_budget=None):
+            return [AgentReport(agent=names[0], model="m", findings=[])]  # never finds
+
+        with patch.object(orch.agent_manager, "run_multiple_agents", fake_run):
+            resp = self.client.post("/retry-agents", json={
+                "exchange": self._EXCHANGE, "agent_class": agent_class,
+                "policy_overrides": {"max_retries": 2, "max_agents": 9}})
+        body = resp.json()
+        self.assertFalse(body["found"])
+        self.assertEqual(len(body["rounds"]), 3)  # 1 initial + 2 retries
+        self.assertIn("retry cap", body["stop_reason"])
+
+    def test_plan_allocation_endpoint(self):
+        resp = self.client.post("/plan-allocation", json={"candidates": [
+            {"id": "a", "vulnerability_class": "rce", "url": "u1", "severity": "critical"},
+            {"id": "b", "vulnerability_class": "xss", "url": "u2", "severity": "low"},
+        ]})
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertIn("allocations", body)
+        self.assertIn("guidance", body)
+        # critical ranks first
+        self.assertEqual(body["allocations"][0]["id"], "a")
+
+    def test_plan_allocation_empty_is_400(self):
+        resp = self.client.post("/plan-allocation", json={"candidates": []})
+        self.assertEqual(resp.status_code, 400)
+
+
 if __name__ == "__main__":
     unittest.main()
