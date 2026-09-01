@@ -648,7 +648,7 @@ async def engagement_view(host: str, limit: int = 25, authorization: str | None 
         return {"host": host, "endpoint_count": 0, "worklist": [], "summary": {"host": host, "endpoint_count": 0}}
     st = engagement.EngagementState.from_dict(snap)
     return {"host": host, "worklist": st.worklist(limit=max(1, min(limit, 200))),
-            "pending_actions": st.pending(), "summary": st.summary()}
+            "ready_tasks": st.pending(), "blocked_tasks": st.blocked(), "summary": st.summary()}
 
 
 class RunEngagementRequest(_BaseModel):
@@ -708,7 +708,7 @@ async def engagement_advance(host: str, req: AdvanceRequest, authorization: str 
     snap = await __import__("asyncio").to_thread(store.load_engagement, host)
     st = engagement.EngagementState.from_dict(snap or {"host": host})
     return {"host": host, "crawl": out, "worklist": st.worklist(),
-            "pending_actions": st.pending(), "summary": st.summary()}
+            "ready_tasks": st.pending(), "blocked_tasks": st.blocked(), "summary": st.summary()}
 
 
 @app.get("/activity")

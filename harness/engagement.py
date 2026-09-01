@@ -262,9 +262,15 @@ class EngagementState:
     host: str
     endpoints: dict = field(default_factory=dict)   # key "METHOD path" -> SurfaceEndpoint
     identities: list = field(default_factory=list)  # [{name, role, source, obtained_from}]
-    # The work queue: escalation opportunities the closed loop surfaces (never
-    # holds a credential value -- only the fact one was learned and where).
-    pending_actions: list = field(default_factory=list)
+    # The work model: a dependency graph of escalation tasks (task_graph.py),
+    # replacing the old flat queue. Never holds a credential value -- only the
+    # fact one was learned and where.
+    graph: "object" = None
+
+    def __post_init__(self):
+        import task_graph
+        if self.graph is None:
+            self.graph = task_graph.TaskGraph()
 
     # --- ingest: every source writes into the SAME model ---
 
@@ -337,43 +343,57 @@ class EngagementState:
         self.identities.append({"name": name, "role": role, "source": source, "obtained_from": obtained_from})
 
     def enqueue_action(self, kind: str, target: str, reason: str, source: str = "",
-                       auto_runnable: bool = False) -> None:
-        """Add an escalation action to the work queue, de-duped by (kind, target).
-        Never carries a credential value -- only the pointer to what to do."""
-        for a in self.pending_actions:
-            if a["kind"] == kind and a["target"] == target and a.get("status") == "pending":
-                return
-        self.pending_actions.append({
-            "kind": kind, "target": target, "reason": reason, "source": source,
-            "auto_runnable": auto_runnable, "status": "pending",
-        })
+                       auto_runnable: bool = False, depends_on: list | None = None,
+                       needs: str = "") -> None:
+        """Add an escalation task to the graph, de-duped by (kind, target). Never
+        carries a credential value -- only the pointer to what to do. BLOCKED
+        automatically when it has unmet dependencies or a human `needs`."""
+        self.graph.add(kind, target, reason=reason, source=source,
+                       depends_on=depends_on or [], needs=needs,
+                       meta={"auto_runnable": auto_runnable})
 
     def apply_capabilities(self, caps: list, url: str) -> list:
-        """Fold detected capabilities into the state. Returns the subset that are
-        `credential` type (carrying ephemeral headers) so the caller can decide
-        whether to act on them in-process -- these are NOT stored."""
+        """Fold detected capabilities into the task graph as a DEPENDENCY chain.
+        Returns the subset that are `credential` type (carrying ephemeral headers)
+        so the caller can act on them in-process -- these are NOT stored."""
+        import task_graph
         credential_caps: list = []
         for cap in caps or []:
             if cap.get("type") == "credential":
-                # Register a derived identity (label only, NO credential value),
-                # and queue a re-crawl as it. The headers travel with the returned
-                # cap for immediate in-process use, never into the queue/store.
+                # obtain(DONE) -> recrawl_as_derived(READY): the re-crawl depends on
+                # having obtained the credential, which we just did. This is the
+                # smallest real edge in the DAG. The identity is label-only; the
+                # header value travels with the returned cap, never into the graph.
                 name = f"derived:{cap.get('kind', 'cred')}@{normalize_path(url)}"
                 self.ingest_identity(name, role="derived", source="finding", obtained_from=url)
-                self.enqueue_action("recrawl_as_derived", name,
-                                    cap.get("reason", "credential learned -- re-crawl as this identity"),
-                                    source=url, auto_runnable=True)
+                obtain = self.graph.add("obtain", name, reason="credential observed in a response",
+                                        source=url)
+                self.graph.mark(obtain.id, task_graph.DONE)
+                self.graph.add("recrawl_as_derived", name,
+                               reason=cap.get("reason", "credential learned -- re-crawl as this identity"),
+                               source=url, depends_on=[obtain.id], meta={"auto_runnable": True})
                 credential_caps.append(cap)
             elif cap.get("type") == "reachable_area":
-                self.enqueue_action("recrawl_area", cap.get("area", normalize_path(url)),
-                                    cap.get("reason", "access-control finding -- re-test this area"),
-                                    source=url, auto_runnable=False)
+                area = cap.get("area", normalize_path(url))
+                self.graph.add("recrawl_area", area,
+                               reason=cap.get("reason", "access-control finding -- re-test this area"),
+                               source=url, meta={"auto_runnable": False})
+                # If a privileged area is only reachable anonymously, the deeper
+                # move needs a privileged session -- a human/credential input.
+                # Model it as a BLOCKED task so the operator sees what would
+                # unlock it rather than it silently not happening.
+                if _looks_privileged(area):
+                    obtain = self.graph.add("obtain", f"privileged-session@{area}",
+                                            reason="a privileged session for this area",
+                                            needs="privileged credentials (human)", source=url)
+                    self.graph.add("recrawl_as_privileged", area,
+                                   reason="re-crawl this privileged area as a privileged identity",
+                                   source=url, depends_on=[obtain.id])
         return credential_caps
 
     def resolve_action(self, kind: str, target: str) -> None:
-        for a in self.pending_actions:
-            if a["kind"] == kind and a["target"] == target and a.get("status") == "pending":
-                a["status"] = "done"
+        import task_graph
+        self.graph.mark_by(kind, target, task_graph.DONE)
 
     # --- the fused output ---
 
@@ -382,7 +402,12 @@ class EngagementState:
         return [e.to_dict() for e in ranked[:limit]]
 
     def pending(self) -> list:
-        return [a for a in self.pending_actions if a.get("status") == "pending"]
+        """Ready-to-act tasks (all prerequisites satisfied)."""
+        return [t.to_dict() for t in self.graph.ready()]
+
+    def blocked(self) -> list:
+        """Tasks waiting on a prerequisite -- each names what would unlock it."""
+        return [t.to_dict() for t in self.graph.blocked()]
 
     def summary(self) -> dict:
         by_status: dict[str, int] = {}
@@ -390,21 +415,24 @@ class EngagementState:
             by_status[e.status] = by_status.get(e.status, 0) + 1
         return {"host": self.host, "endpoint_count": len(self.endpoints),
                 "by_status": by_status, "identities": self.identities,
-                "pending_action_count": len(self.pending())}
+                "ready_task_count": len(self.graph.ready()),
+                "blocked_task_count": len(self.graph.blocked())}
 
     def to_dict(self) -> dict:
         return {"host": self.host,
                 "endpoints": {k: v.to_dict() for k, v in self.endpoints.items()},
                 "identities": self.identities,
-                "pending_actions": self.pending_actions}
+                "task_graph": self.graph.to_dict()}
 
     @classmethod
     def from_dict(cls, d: dict) -> "EngagementState":
+        import task_graph
         st = cls(host=d.get("host", ""))
         for k, v in (d.get("endpoints", {}) or {}).items():
             st.endpoints[k] = SurfaceEndpoint.from_dict(v)
         st.identities = d.get("identities", []) or []
-        st.pending_actions = d.get("pending_actions", []) or []
+        if d.get("task_graph"):
+            st.graph = task_graph.TaskGraph.from_dict(d["task_graph"])
         return st
 
 

@@ -273,9 +273,10 @@ public class HarnessToolsPanel extends JPanel {
                         str(e, "method"), str(e, "path"), str(e, "status"), why});
             }
         }
-        // Pending actions + summary go to the detail area as pretty JSON.
+        // Ready + blocked tasks and summary go to the detail area as pretty JSON.
         JsonObject slim = new JsonObject();
-        if (resp.has("pending_actions")) slim.add("pending_actions", resp.get("pending_actions"));
+        if (resp.has("ready_tasks")) slim.add("ready_tasks", resp.get("ready_tasks"));
+        if (resp.has("blocked_tasks")) slim.add("blocked_tasks", resp.get("blocked_tasks"));
         if (resp.has("summary")) slim.add("summary", resp.get("summary"));
         detail.setText(pretty.toJson(slim));
         detail.setCaretPosition(0);
