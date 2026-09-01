@@ -28,6 +28,9 @@ jobs:
       - name: Run test suite (includes end-to-end detection smoke test)
         working-directory: harness
         run: python -m unittest discover -p "test_*.py"
+      - name: Score math self-test (no model/fixture needed)
+        working-directory: testing
+        run: python -m unittest test_score
 
   # Scored tier: enforces the precision/recall floor. It needs a local model
   # runner (Ollama + GPU) and the built detection fixture, so it cannot run on a

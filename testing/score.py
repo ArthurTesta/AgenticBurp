@@ -1,0 +1,209 @@
+"""
+score.py -- unified detection scorer (SESSION_4_PLAN.md T2.1).
+
+Emits precision / recall / F1 PER OWASP category from a corpus of labeled
+exchanges, on a pinned model, reproducibly -- the one number the field
+comparison hinges on. Consolidates the ad-hoc runners (test-target/bench.py,
+the blind-kit driver, blind-target-2, juiceshop) behind one output shape.
+
+Scoring is at the EXCHANGE level, per category:
+  recall(C)    = (TP-labeled exchanges in C that produced >=1 finding of C)
+                 / (TP-labeled exchanges in C)
+  precision(C) = (exchanges whose ground truth is C that produced a finding of C)
+                 / (all exchanges that produced any finding of C)
+  F1(C)        = harmonic mean of the two.
+
+The heavy fixture read (real agent findings, cached by detection_fixture.py) is
+an adapter kept OUT of the scoring math, so the math is unit-tested on synthetic
+data with no model/GPU/fixture (testing/test_score.py). Producing the real
+number needs the fixture built once on a machine with the local model:
+    cd testing/test-target && python detection_fixture.py build   # ~2h, GPU
+then:
+    cd testing && python score.py --corpus test-target --from-cache
+
+CLI:
+  python score.py --corpus test-target --from-cache
+  python score.py --corpus test-target --from-cache --fail-under-recall 0.80 --json out.json
+"""
+from __future__ import annotations
+import argparse
+import asyncio
+import json
+import sys
+from pathlib import Path
+
+# --- OWASP 2021 taxonomy -----------------------------------------------------
+# Ordered most-specific -> most-general: classify() returns the FIRST category
+# whose any keyword is a substring of the finding's vulnerability_class, so the
+# broad "injection" bucket (A03) is matched last. This mapping is deliberately
+# simple and TUNABLE -- calibrating it is part of finishing T2 (blind-target-2).
+_CATEGORY_KEYWORDS: list[tuple[str, list[str]]] = [
+    ("A10:SSRF", ["ssrf", "server-side request", "server side request", "request forgery"]),
+    ("A01:Broken-Access-Control", ["idor", "object-level", "object level", "bola",
+        "access control", "authorization", "authz", "path traversal", "traversal",
+        "directory traversal", "lfi", "file inclusion", "forced browsing", "privilege escalation"]),
+    ("A07:Auth-Failures", ["jwt", "auth bypass", "authentication bypass", "session fixation",
+        "weak password", "mfa", "alg none", "signature bypass", "credential stuffing"]),
+    ("A04:Insecure-Design", ["business logic", "business-logic", "workflow abuse", "insecure design"]),
+    ("A08:Integrity-Failures", ["deserialization", "insecure deserial", "supply chain", "integrity"]),
+    ("A06:Vulnerable-Components", ["vulnerable component", "outdated component", "known vulnerability",
+        "cve-", "ghsa-", "dependency"]),
+    ("A02:Cryptographic-Failures", ["cryptographic", "weak cipher", "cleartext", "weak hash", "tls"]),
+    ("A05:Security-Misconfiguration", ["misconfig", "cors", "csp", "security header", "default credential",
+        "directory listing", "verbose error", "open redirect", "sensitive exposure", "information disclosure"]),
+    ("A09:Logging-Failures", ["logging failure", "insufficient logging", "monitoring failure"]),
+    ("A03:Injection", ["sql", "sqli", "xss", "cross-site script", "cross site script", "scripting",
+        "command injection", "os command", "nosql", "ssti", "template injection", "ldap injection",
+        "header injection", "injection"]),
+]
+
+# Ground-truth category per test-target label. Derived from bench.py's KEYWORDS
+# plus an explicit OWASP assignment. TP8 excluded (race condition, not provable
+# from one sequential exchange) -- matches bench.py. TN* labels are benign.
+_LABEL_CATEGORY: dict[str, str] = {
+    "TP1": "A03:Injection", "TP2": "A03:Injection",
+    "TP3": "A01:Broken-Access-Control", "TP4": "A01:Broken-Access-Control",
+    "TP5": "A03:Injection", "TP6": "A03:Injection",
+    "TP7": "A04:Insecure-Design",
+    "TP9": "A10:SSRF",
+    "TP10": "A01:Broken-Access-Control",
+    "TP11": "A07:Auth-Failures",
+    "TP12": "A05:Security-Misconfiguration",
+}
+
+
+def _norm(s: str) -> str:
+    """Lower-case and treat _ and - as spaces, so class names in any separator
+    style (sql_injection, business-logic, "SQL injection") match one keyword."""
+    return (s or "").lower().replace("_", " ").replace("-", " ")
+
+
+def classify(vulnerability_class: str) -> str | None:
+    """Map a finding's vulnerability_class to an OWASP category, or None."""
+    c = _norm(vulnerability_class)
+    for category, keywords in _CATEGORY_KEYWORDS:
+        if any(_norm(k) in c for k in keywords):
+            return category
+    return None
+
+
+def score(labeled_findings: dict[str, list[str]],
+          label_category: dict[str, str] | None = None) -> dict:
+    """Pure scoring. `labeled_findings` maps each exchange label to the list of
+    vulnerability_class strings the harness produced for it (TN* labels are
+    benign; a label absent from `label_category` and not TP-mapped is benign).
+    Returns per-category precision/recall/F1 + a micro-averaged overall."""
+    label_category = label_category or _LABEL_CATEGORY
+    predicted = {lab: set(filter(None, (classify(c) for c in classes)))
+                 for lab, classes in labeled_findings.items()}
+
+    categories = sorted(set(label_category.values()) | {c for cats in predicted.values() for c in cats})
+    tp = {c: 0 for c in categories}
+    fp = {c: 0 for c in categories}
+    fn = {c: 0 for c in categories}
+    support = {c: 0 for c in categories}
+
+    for label, pred_cats in predicted.items():
+        truth = label_category.get(label)  # None => benign / excluded
+        if truth is not None:
+            support[truth] += 1
+            if truth in pred_cats:
+                tp[truth] += 1
+            else:
+                fn[truth] += 1
+        for pc in pred_cats:
+            if pc != truth:
+                fp[pc] += 1
+
+    def _row(c: str) -> dict:
+        prec = tp[c] / (tp[c] + fp[c]) if (tp[c] + fp[c]) else None
+        rec = tp[c] / support[c] if support[c] else None
+        f1 = (2 * prec * rec / (prec + rec)) if (prec and rec) else (0.0 if (prec is not None and rec is not None) else None)
+        return {"category": c, "support": support[c], "tp": tp[c], "fp": fp[c], "fn": fn[c],
+                "precision": round(prec, 3) if prec is not None else None,
+                "recall": round(rec, 3) if rec is not None else None,
+                "f1": round(f1, 3) if f1 is not None else None}
+
+    rows = [_row(c) for c in categories]
+    TP, FP, FN = sum(tp.values()), sum(fp.values()), sum(fn.values())
+    micro_p = TP / (TP + FP) if (TP + FP) else 0.0
+    micro_r = TP / (TP + FN) if (TP + FN) else 0.0
+    micro_f1 = 2 * micro_p * micro_r / (micro_p + micro_r) if (micro_p + micro_r) else 0.0
+    return {
+        "per_category": rows,
+        "overall": {"precision": round(micro_p, 3), "recall": round(micro_r, 3),
+                    "f1": round(micro_f1, 3), "tp": TP, "fp": FP, "fn": FN},
+    }
+
+
+def format_table(report: dict, corpus: str, model: str) -> str:
+    lines = [f"# Detection scorecard -- corpus={corpus} model={model}", "",
+             f"{'category':<30}{'support':>8}{'prec':>7}{'recall':>8}{'f1':>7}"]
+    for r in report["per_category"]:
+        def s(x): return "  n/a" if x is None else f"{x:.3f}"
+        lines.append(f"{r['category']:<30}{r['support']:>8}{s(r['precision']):>7}{s(r['recall']):>8}{s(r['f1']):>7}")
+    o = report["overall"]
+    lines += ["", f"OVERALL (micro): precision={o['precision']:.3f} recall={o['recall']:.3f} "
+              f"f1={o['f1']:.3f}  (tp={o['tp']} fp={o['fp']} fn={o['fn']})"]
+    return "\n".join(lines)
+
+
+async def _collect_from_fixture(labels, refresh: bool) -> dict[str, list[str]]:
+    """Adapter over detection_fixture.py (the cached real-agent findings). Kept
+    async + lazily imported so importing score.py stays cheap and GPU-free."""
+    import detection_fixture as fx
+    labs = labels or sorted(fx.EXCHANGES_BY_LABEL)
+    out: dict[str, list[str]] = {}
+    for lab in labs:
+        classes: list[str] = []
+        for agent in sorted(fx.dispatch_for(lab)):
+            for f in await fx.findings_for(agent, lab, refresh=refresh):
+                classes.append(f["class"])
+        out[lab] = classes
+    return out
+
+
+def _model_from_config() -> str:
+    try:
+        import yaml
+        cfg = yaml.safe_load(open(Path(__file__).resolve().parent.parent / "harness" / "config.yaml"))
+        return (cfg.get("agent_defaults") or {}).get("model", "unknown")
+    except Exception:
+        return "unknown"
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="Per-OWASP-category detection scorer.")
+    ap.add_argument("--corpus", default="test-target", help="corpus name (provenance label)")
+    ap.add_argument("--from-cache", action="store_true",
+                    help="score from the detection_fixture cache (no model calls)")
+    ap.add_argument("--refresh", action="store_true", help="force-refresh fixture entries")
+    ap.add_argument("--json", metavar="PATH", help="also write the full report as JSON")
+    ap.add_argument("--fail-under-recall", type=float, default=None,
+                    help="exit non-zero if overall (micro) recall is below this (CI gate)")
+    args = ap.parse_args()
+
+    if not args.from_cache:
+        print("Only --from-cache is wired today. A live run needs the fixture built first:\n"
+              "  cd testing/test-target && python detection_fixture.py build", file=sys.stderr)
+        return 2
+
+    model = _model_from_config()
+    labeled = asyncio.run(_collect_from_fixture(None, args.refresh))
+    report = score(labeled)
+    report["provenance"] = {"corpus": args.corpus, "model": model, "n_exchanges": len(labeled)}
+
+    print(format_table(report, args.corpus, model))
+    if args.json:
+        json.dump(report, open(args.json, "w"), indent=2)
+        print(f"\n(wrote {args.json})")
+
+    if args.fail_under_recall is not None and report["overall"]["recall"] < args.fail_under_recall:
+        print(f"\nFAIL: overall recall {report['overall']['recall']:.3f} < floor {args.fail_under_recall}",
+              file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
