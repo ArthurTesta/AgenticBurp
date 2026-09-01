@@ -94,6 +94,16 @@ adaptive_respin:
 throttle:
   max_requests_per_second: 0   # 0 = unlimited
 
+# Cloud models reachable via Ollama's /api/chat but NOT listed by /api/tags, so
+# they must be declared here to appear in the UI model pickers (GET /models).
+# A large cloud model (gemma 31b) is useful as the coordinator/governor model
+# and, for debugging, can be flipped in as the agent model too (POST
+# /models/select). Leave empty if you only run local tags.
+models:
+  cloud:
+    - gemma4:31b-cloud
+    - gpt-oss:120b-cloud
+
 # Iterative (active) agent -- F4 + F2. A bounded send->observe->adapt loop that
 # drives the target, then hands its result to the pause->validate->remember
 # integration (pivot_memory). DEFAULT OFF: this is a fundamentally more active

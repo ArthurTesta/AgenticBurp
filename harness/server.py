@@ -388,6 +388,43 @@ async def plan_allocation_endpoint(req: PlanAllocationRequest, authorization: st
         avg_agents_per_round=req.avg_agents_per_round)
 
 
+@app.get("/models")
+async def list_models(authorization: str | None = Header(default=None)):
+    """Model choices for the tester's dropdowns: local Ollama tags + the cloud
+    models config declares (not in /api/tags), plus the currently-selected
+    coordinator and agent models."""
+    _require_auth(authorization)
+    return await orchestrator.list_models()
+
+
+class SelectModelRequest(_BaseModel):
+    # Two independent dropdowns: the coordinator/governor model, and the agent
+    # model. Either may be omitted. `agent` scopes the agent change to one agent
+    # (omit to flip every agent -- e.g. all to gemma 31b for debugging).
+    coordinator: str = ""
+    agent_model: str = ""
+    agent: str = ""
+
+
+@app.post("/models/select")
+async def select_model(req: SelectModelRequest, authorization: str | None = Header(default=None)):
+    """Set the coordinator model and/or the agent model from the UI dropdowns.
+    Takes effect on the next call. A bad tag isn't rejected here -- it surfaces
+    as a model-not-found error when actually used."""
+    _require_auth(authorization)
+    result: dict = {}
+    try:
+        if req.coordinator:
+            result.update(orchestrator.set_coordinator_model(req.coordinator))
+        if req.agent_model:
+            result["agents"] = orchestrator.set_agents_model(req.agent_model, req.agent or None)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not result:
+        raise HTTPException(status_code=400, detail="nothing to set: provide coordinator and/or agent_model")
+    return result
+
+
 @app.get("/effort", response_model=EffortStatus)
 async def effort_status(authorization: str | None = Header(default=None)):
     """Current cumulative spend against the configured budget (see

@@ -1,5 +1,6 @@
 from __future__ import annotations
 import json
+import logging
 import re
 import httpx
 from dataclasses import dataclass
@@ -8,6 +9,8 @@ import prompt_validator
 import circuit_breaker
 import rate_limiter
 import audit_logger
+
+log = logging.getLogger("harness.ollama_client")
 
 class OllamaError(RuntimeError):
     pass
@@ -235,6 +238,26 @@ class OllamaClient:
                         f"Model '{model}' did not return valid JSON. "
                         f"Raw content (truncated): {content[:500]}"
                     ) from e
+
+    async def list_models(self) -> list[str]:
+        """Model tags Ollama reports via GET /api/tags. Best-effort: returns []
+        on any failure (unreachable, bad response) rather than raising -- this
+        feeds a UI model picker, where "couldn't list" degrades to an empty
+        local list, never a crash. NOTE cloud model tags (e.g. *-cloud) are
+        reachable via /api/chat but do NOT appear here -- the server merges
+        those in from config (models.cloud); see server.py /models."""
+        url = f"{self.base_url}/api/tags"
+        try:
+            async with httpx.AsyncClient(timeout=min(self.timeout_seconds, 15.0)) as client:
+                resp = await client.get(url)
+            resp.raise_for_status()
+            data = resp.json()
+        except (httpx.HTTPError, json.JSONDecodeError, ValueError) as e:
+            log.warning("list_models: could not list Ollama models: %s", e)
+            return []
+        models = data.get("models", []) if isinstance(data, dict) else []
+        names = [m.get("name") for m in models if isinstance(m, dict) and m.get("name")]
+        return sorted(set(names))
 
     async def chat_json(
         self,
