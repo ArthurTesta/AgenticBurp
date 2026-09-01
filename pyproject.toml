@@ -1,0 +1,33 @@
+# Project metadata, dependency declaration, and tooling config.
+#
+# NOTE ON PACKAGING: the harness/ modules are currently flat top-level imports
+# (`import store`, `import orchestrator`, ...), so this is intentionally NOT yet a
+# pip-installable distribution -- there is no [build-system] table, so nothing
+# tries to build a (broken) wheel. Producing a real distributable needs the
+# harness/ -> proper-package restructure (relative/absolute `harness.*` imports),
+# a follow-up tracked in SESSION_4_PLAN.md. Until then this file centralizes the
+# dependency pins (mirroring harness/requirements*.txt) and the test config.
+
+[project]
+name = "burp-llm-harness"
+version = "0.1.0"
+description = "Burp-native, local-first LLM security-analysis harness (analyst-in-the-loop copilot)."
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi==0.141.1",
+  "uvicorn[standard]==0.52.4",
+  "httpx==0.28.1",
+  "pydantic==2.13.5",
+  "pyyaml==6.0.3",
+]
+
+[project.optional-dependencies]
+browser = ["playwright>=1.40"]   # browser XSS validator (lazy; skips if absent)
+proxy = ["mitmproxy==12.2.3"]    # safety proxy addon
+dev = ["pytest==9.1.1"]
+
+[tool.pytest.ini_options]
+# The suite is stdlib unittest; pytest can also run it. Discovery matches the
+# unittest pattern so `pytest harness` and `python -m unittest discover` agree.
+testpaths = ["harness"]
+python_files = ["test_*.py"]
