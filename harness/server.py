@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 
 from models import (AnalysisRequest, AnalysisResponse, ValidationSubmission, EstimateRequest, EffortStatus,
                      IdentityCreateRequest, SessionCreateRequest, SuppressFindingRequest,
-                     PrioritizeRequest, PrioritizeResponse, PrioritizeResultItem)
+                     PrioritizeRequest, PrioritizeResponse, PrioritizeResultItem, HttpExchange)
 import identity as identity_mod
 from orchestrator import Orchestrator
 
@@ -289,6 +289,39 @@ async def probe_missing_auth_endpoint(req: MissingAuthRequest, authorization: st
         "outcomes": [o.to_dict() for o in outcomes],
         "findings": [f.model_dump() for f in findings],
     }
+
+
+class ActiveProbeRequest(_BaseModel):
+    exchange: HttpExchange
+    # What the agent is testing for, in the target's own terms, and which
+    # specialty prompt to load (e.g. "sqli", "idor", "xss").
+    hypothesis: str
+    specialty: str
+    model: str = ""
+    step_budget: int = 0  # 0 -> the configured iterative_agent.max_steps
+
+
+@app.post("/active-probe")
+async def active_probe(req: ActiveProbeRequest, authorization: str | None = Header(default=None)):
+    """Run the iterative (active) agent against one captured exchange, then
+    integrate its result through F2 (pause->validate->remember; pivot/combine).
+
+    Off unless iterative_agent.enabled is set in config.yaml -- this drives real
+    adaptive traffic at the target. Every step is scope-gated to allowed_hosts,
+    throttled, and (for mutating methods) safety-gated. Returns the agent's
+    transcript + findings and the integration outcome (held findings, validation
+    plans, detected chains, and forward pivot hints)."""
+    _require_auth(authorization)
+    if not orchestrator.iterative_agent_enabled:
+        raise HTTPException(status_code=403, detail="iterative_agent is disabled in config.yaml")
+    try:
+        return await orchestrator.run_active_probe(
+            req.exchange, req.hypothesis, req.specialty,
+            model=req.model or "", step_budget=req.step_budget or None,
+        )
+    except Exception as e:
+        log.exception("Unhandled error during active probe")
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 
 @app.get("/effort", response_model=EffortStatus)

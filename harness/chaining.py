@@ -361,6 +361,41 @@ def _tags_for(vulnerability_class: str, summary: str) -> set[str]:
                 break  # longest match wins; don't also add shorter overlapping phrases
 
     return tags
+def pivot_hints(new_finding_class: str, new_summary: str, host_findings: list[dict]) -> list[dict]:
+    """Given a finding just made (its class + summary) and everything already
+    known for the host, return the chain rules where this finding supplies ONE
+    side and the host doesn't yet have the other -- i.e. what to go looking for
+    next to complete a chain. This turns the same rule table detect() uses for
+    *retrospective* combination into *directed* pivoting: not "these two already
+    chain" but "you now have half of {signature}; find {look_for} to finish it".
+
+    Deterministic and rule-based for the same reason detect() is (see the module
+    comment). Each hint is a dict {signature, have, look_for, severity};
+    deduplicated on (signature, look_for)."""
+    new_tags = _tags_for(new_finding_class, new_summary)
+    if not new_tags:
+        return []
+    present: set[str] = set()
+    for f in host_findings:
+        present |= _tags_for(f["vulnerability_class"], f.get("summary", ""))
+
+    seen: set[tuple[str, str]] = set()
+    hints: list[dict] = []
+    for rule in _RULES:
+        for have, look_for in ((rule.tag_a, rule.tag_b), (rule.tag_b, rule.tag_a)):
+            # This finding supplies `have`; the host doesn't already have
+            # `look_for` (neither from prior findings nor from this same
+            # finding, which would make it a completed chain, not a pivot).
+            if have in new_tags and look_for not in present and look_for not in new_tags:
+                key = (rule.signature, look_for)
+                if key in seen:
+                    continue
+                seen.add(key)
+                hints.append({"signature": rule.signature, "have": have,
+                              "look_for": look_for, "severity": rule.severity})
+    return hints
+
+
 def detect(host_findings: list[dict]) -> list[Finding]:
     """
     host_findings: dicts as returned by store.all_host_findings() --

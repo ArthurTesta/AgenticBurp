@@ -94,6 +94,18 @@ adaptive_respin:
 throttle:
   max_requests_per_second: 0   # 0 = unlimited
 
+# Iterative (active) agent -- F4 + F2. A bounded send->observe->adapt loop that
+# drives the target, then hands its result to the pause->validate->remember
+# integration (pivot_memory). DEFAULT OFF: this is a fundamentally more active
+# mode than the passive per-exchange pipeline. When enabled, mutating steps are
+# STILL gated by validators.active_enabled + allow_mutating_replay (the safety
+# gate) on top of this flag; read-only (GET) probing needs only this flag. Drives
+# POST /active-probe. max_steps bounds the loop alongside the effort budget and
+# the global throttle.
+iterative_agent:
+  enabled: false
+  max_steps: 250
+
 # Default model for any specialist agent that doesn't set its own "model"
 # below. This used to silently fall back to the coordinator's model,
 # which meant every unconfigured agent (26 of 36, as of this writing) got

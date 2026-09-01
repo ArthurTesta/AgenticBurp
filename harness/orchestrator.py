@@ -326,8 +326,57 @@ class Orchestrator:
             respin_cfg.get("min_actionable_confidence", 0.4)
         )
 
+        # Iterative (active) agent -- F4 + F2. DEFAULT OFF. A send->observe->
+        # adapt loop that drives the target, then hands its result to F2's
+        # pause->validate->remember integration (pivot_memory). Gated here
+        # (enabled flag) AND, for any mutating step, by the safety gate.
+        iter_cfg = config.get("iterative_agent", {}) or {}
+        self.iterative_agent_enabled = bool(iter_cfg.get("enabled", False))
+        self.iterative_agent_max_steps = int(iter_cfg.get("max_steps", 250))
+
         log.info(f"Orchestrator initialized with {len(self.agent_manager.get_enabled_agents())} agents")
-    
+
+    async def run_active_probe(
+        self,
+        exchange: HttpExchange,
+        hypothesis: str,
+        specialty: str,
+        *,
+        model: str = "",
+        step_budget: int | None = None,
+        on_step=None,
+    ) -> dict:
+        """Drive the iterative agent (F4) against one captured exchange, then
+        integrate its result through F2 (pivot_memory): hold the findings as
+        unconfirmed, build independent-verification plans, remember them, and
+        combine + pivot over the host's history. Returns both the raw iterative
+        result and the integration outcome.
+
+        Off unless iterative_agent.enabled is set in config -- this is a
+        fundamentally more active mode than the passive pipeline. Mutating steps
+        remain gated by the safety gate on top of that flag. Scope is enforced
+        against allowed_hosts inside the agent."""
+        if not self.iterative_agent_enabled:
+            raise RuntimeError(
+                "iterative agent is disabled (set iterative_agent.enabled in config.yaml)")
+
+        from iterative_agent import IterativeAgent
+        import pivot_memory
+
+        chosen_model = model or self.coordinator_model
+        agent = IterativeAgent(
+            self.ollama, chosen_model, self.allowed_hosts,
+            max_steps=self.iterative_agent_max_steps,
+        )
+        result = await agent.run(
+            exchange, hypothesis, specialty,
+            step_budget=step_budget or self.iterative_agent_max_steps,
+            effort_budget=self.effort_budget,
+            on_step=on_step,
+        )
+        outcome = await pivot_memory.integrate(result, exchange, model=chosen_model)
+        return {"iterative_result": result.to_dict(), "integration": outcome.to_dict()}
+
     async def _choose_agents(self, exchange: HttpExchange) -> tuple[list[str], str]:
         """
         Choose which agents to dispatch.
