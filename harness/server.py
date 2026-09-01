@@ -388,6 +388,51 @@ async def plan_allocation_endpoint(req: PlanAllocationRequest, authorization: st
         avg_agents_per_round=req.avg_agents_per_round)
 
 
+@app.get("/settings")
+async def get_settings(authorization: str | None = Header(default=None)):
+    """Runtime-tunable settings the UI exposes: the global request throttle and
+    the default per-vulnerability retry budget. Reflects the live values, which
+    a request may have changed since startup."""
+    _require_auth(authorization)
+    import global_throttle
+    p = orchestrator.retry_budget_policy
+    return {
+        "throttle": global_throttle.throttle.stats(),
+        "retry_budget": {
+            "max_retries": p.max_retries, "max_agents": p.max_agents,
+            "max_tokens_per_vuln": p.max_tokens_per_vuln, "stop_on_found": p.stop_on_found,
+            "min_actionable_confidence": p.min_actionable_confidence,
+        },
+    }
+
+
+class SettingsRequest(_BaseModel):
+    # Global outbound throttle ceiling (requests/sec; 0 = unlimited). None -> leave as-is.
+    throttle_rps: float | None = None
+    # Default retry-budget policy overrides (any omitted -> unchanged).
+    retry_budget: dict | None = None
+
+
+@app.post("/settings")
+async def update_settings(req: SettingsRequest, authorization: str | None = Header(default=None)):
+    """Apply runtime settings from the UI: retune the global throttle and/or the
+    default retry-budget policy. Takes effect immediately for subsequent work."""
+    _require_auth(authorization)
+    changed: dict = {}
+    if req.throttle_rps is not None:
+        import global_throttle
+        global_throttle.configure(max(0.0, float(req.throttle_rps)))
+        changed["throttle"] = global_throttle.throttle.stats()
+    if req.retry_budget:
+        orchestrator.retry_budget_policy = orchestrator.retry_budget_policy.merged_with(req.retry_budget)
+        p = orchestrator.retry_budget_policy
+        changed["retry_budget"] = {"max_retries": p.max_retries, "max_agents": p.max_agents,
+                                   "max_tokens_per_vuln": p.max_tokens_per_vuln}
+    if not changed:
+        raise HTTPException(status_code=400, detail="nothing to set: provide throttle_rps and/or retry_budget")
+    return changed
+
+
 @app.get("/models")
 async def list_models(authorization: str | None = Header(default=None)):
     """Model choices for the tester's dropdowns: local Ollama tags + the cloud

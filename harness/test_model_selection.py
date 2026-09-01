@@ -117,6 +117,28 @@ class ModelEndpointTests(unittest.TestCase):
         finally:
             self.server_module.orchestrator.set_coordinator_model(orig)
 
+    def test_get_settings(self):
+        r = self.client.get("/settings")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("throttle", r.json())
+        self.assertIn("retry_budget", r.json())
+
+    def test_update_settings_throttle_and_retry(self):
+        import global_throttle
+        orig_policy = self.server_module.orchestrator.retry_budget_policy
+        try:
+            r = self.client.post("/settings", json={"throttle_rps": 5.0,
+                                                    "retry_budget": {"max_retries": 7}})
+            self.assertEqual(r.status_code, 200)
+            self.assertEqual(self.server_module.orchestrator.retry_budget_policy.max_retries, 7)
+            self.assertTrue(global_throttle.throttle.enabled)
+        finally:
+            self.server_module.orchestrator.retry_budget_policy = orig_policy
+            global_throttle.configure(0)
+
+    def test_update_settings_empty_is_400(self):
+        self.assertEqual(self.client.post("/settings", json={}).status_code, 400)
+
 
 if __name__ == "__main__":
     unittest.main()
