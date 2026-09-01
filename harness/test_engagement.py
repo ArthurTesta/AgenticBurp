@@ -179,6 +179,32 @@ class CapabilityTests(unittest.TestCase):
         self.assertEqual(len(st2.pending()), 1)
 
 
+class BusinessLogicTests(unittest.TestCase):
+    def test_review_by_class(self):
+        spec = engagement.business_logic_review("business_logic", "http://t/api/x")
+        self.assertIsNotNone(spec)
+        self.assertIn("human", spec["needs"])
+
+    def test_review_by_path_shape(self):
+        self.assertIsNotNone(engagement.business_logic_review("xss", "http://t/checkout/confirm"))
+        self.assertIsNotNone(engagement.business_logic_review("misconfig", "http://t/api/wallet/transfer"))
+
+    def test_no_review_for_plain(self):
+        self.assertIsNone(engagement.business_logic_review("xss", "http://t/api/search"))
+
+    def test_flag_adds_blocked_task(self):
+        st = EngagementState(host="t")
+        added = st.flag_business_logic("business_logic", "http://t/cart/apply-coupon")
+        self.assertTrue(added)
+        # it's surfaced as BLOCKED (needs human), not a ready action
+        self.assertTrue(any(b["needs"] and "human" in b["needs"] for b in st.blocked()))
+        self.assertFalse(any(r["kind"] == "review" for r in st.pending()))
+
+    def test_flag_noop_for_plain(self):
+        st = EngagementState(host="t")
+        self.assertFalse(st.flag_business_logic("xss", "http://t/api/search"))
+
+
 class StoreAndEndpointTests(unittest.TestCase):
     def setUp(self):
         import tempfile, store

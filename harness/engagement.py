@@ -224,6 +224,39 @@ def _extract_credential(resp_headers: dict | None, resp_body: str | None) -> dic
     return None
 
 
+# Business-logic hand-off (AppSecSanta 2026: ~70% of critical web vulns are
+# business logic, and no autonomous agent detects them reliably -- it requires
+# understanding what the app is SUPPOSED to do. So instead of letting an agent
+# fake-confirm these, we flag the surface for a human and stop there.
+_BUSINESS_LOGIC_CLASSES = {"business_logic", "business_logic_enhanced", "workflow",
+                          "race_condition"}
+_BUSINESS_LOGIC_PATH = re.compile(
+    r"/(checkout|cart|basket|order|orders|payment|pay|purchase|transfer|coupon|discount|promo|"
+    r"voucher|balance|refund|reward|loyalty|subscription|plan|quantity|qty|price|amount|wallet|"
+    r"credit|invoice|withdraw|deposit)(s)?(/|$)",
+    re.IGNORECASE)
+
+
+def business_logic_review(finding_class: str, url: str) -> dict | None:
+    """Whether an endpoint warrants human business-logic review -- either the
+    finding's class is a business-logic one, or the path shape is (checkout,
+    transfer, coupon, ...). Returns a review-task spec (blocked on human
+    judgment) or None. This is deliberately a HAND-OFF, not a confirmation: the
+    harness flags it and lets the tester reason about intent."""
+    canon = _canon(finding_class or "") or (finding_class or "").lower()
+    path = normalize_path(url)
+    is_bl_class = canon in _BUSINESS_LOGIC_CLASSES
+    is_bl_path = bool(_BUSINESS_LOGIC_PATH.search(path))
+    if not (is_bl_class or is_bl_path):
+        return None
+    why = ("finding class is business-logic" if is_bl_class
+           else "endpoint shape suggests a business-logic flow (value/quantity/workflow)")
+    return {"target": path, "reason": f"needs human business-logic review -- {why}. "
+                                      f"Automated agents don't reliably detect intent-level flaws "
+                                      f"(price/quantity tampering, workflow bypass, race conditions).",
+            "needs": "human judgment (business logic)"}
+
+
 def detect_capabilities(finding: dict, resp_headers: dict | None, resp_body: str | None,
                         url: str) -> list[dict]:
     """What new access, if any, a finding grants -- the trigger for the closed
@@ -394,6 +427,18 @@ class EngagementState:
     def resolve_action(self, kind: str, target: str) -> None:
         import task_graph
         self.graph.mark_by(kind, target, task_graph.DONE)
+
+    def flag_business_logic(self, finding_class: str, url: str) -> bool:
+        """If this finding/endpoint warrants human business-logic review, add a
+        BLOCKED 'review' task (needs=human judgment) so it's surfaced to the
+        tester rather than auto-tested or fake-confirmed. Returns whether one was
+        added."""
+        spec = business_logic_review(finding_class, url)
+        if spec is None:
+            return False
+        self.graph.add("review", spec["target"], reason=spec["reason"],
+                       needs=spec["needs"], source=url)
+        return True
 
     # --- the fused output ---
 
