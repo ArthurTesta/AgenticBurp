@@ -122,10 +122,10 @@ public class HarnessToolsPanel extends JPanel {
         return p;
     }
 
-    private static JPanel form(Component... rows) {
+    private static JPanel form(JComponent... rows) {
         JPanel p = new JPanel();
         p.setLayout(new BoxLayout(p, BoxLayout.Y_AXIS));
-        for (Component r : rows) {
+        for (JComponent r : rows) {
             r.setAlignmentX(Component.LEFT_ALIGNMENT);
             p.add(r);
         }
