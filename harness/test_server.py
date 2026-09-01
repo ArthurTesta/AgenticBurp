@@ -368,6 +368,42 @@ class RetryAgentsEndpointTests(unittest.TestCase):
         resp = self.client.post("/plan-allocation", json={"candidates": []})
         self.assertEqual(resp.status_code, 400)
 
+    def test_plan_allocation_llm_priority_reorders(self):
+        from unittest.mock import AsyncMock, patch
+        import allocation_prioritizer
+        # LLM ranks the low-severity xss ABOVE the critical rce (app context):
+        # with no budget cap all are "full", but the ORDER follows priority.
+        async def fake_rank(cands, ollama, model, temperature=0.1):
+            return {"a": 0.1, "b": 0.99}  # a=critical rce, b=low xss
+        with patch.object(allocation_prioritizer, "rank", AsyncMock(side_effect=fake_rank)):
+            resp = self.client.post("/plan-allocation", json={
+                "candidates": [
+                    {"id": "a", "vulnerability_class": "rce", "url": "u1", "severity": "critical"},
+                    {"id": "b", "vulnerability_class": "xss", "url": "u2", "severity": "low"},
+                ],
+                "use_llm_priority": True})
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body["allocations"][0]["id"], "b")  # LLM priority won
+        self.assertEqual(body["ranking"]["llm_scored"], 2)
+
+    def test_plan_allocation_llm_failure_falls_back_to_static(self):
+        from unittest.mock import AsyncMock, patch
+        import allocation_prioritizer
+        async def empty_rank(cands, ollama, model, temperature=0.1):
+            return {}  # model failed -> no scores
+        with patch.object(allocation_prioritizer, "rank", AsyncMock(side_effect=empty_rank)):
+            resp = self.client.post("/plan-allocation", json={
+                "candidates": [
+                    {"id": "a", "vulnerability_class": "rce", "url": "u1", "severity": "critical"},
+                    {"id": "b", "vulnerability_class": "xss", "url": "u2", "severity": "low"},
+                ],
+                "use_llm_priority": True})
+        body = resp.json()
+        self.assertEqual(body["allocations"][0]["id"], "a")  # static severity ranking
+        self.assertEqual(body["ranking"]["llm_scored"], 0)
+        self.assertEqual(body["ranking"]["static_fallback"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()

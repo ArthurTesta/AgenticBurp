@@ -463,7 +463,16 @@ class Orchestrator:
         confidence, priority?}."""
         import resource_governor
         policy = self.retry_budget_policy.merged_with(policy_overrides)
-        cands = [
+        cands = self._build_alloc_candidates(candidates)
+        round_cost = resource_governor.estimate_round_cost(
+            self.effort_budget.ledger, avg_agents_per_round=avg_agents_per_round)
+        plan = resource_governor.plan_allocation(
+            cands, self.effort_budget.remaining, policy, round_cost)
+        return plan.to_dict()
+
+    def _build_alloc_candidates(self, candidates: list[dict]) -> list:
+        import resource_governor
+        return [
             resource_governor.AllocationCandidate(
                 id=str(c.get("id") or c.get("url") or i),
                 vulnerability_class=str(c.get("vulnerability_class", "unknown")),
@@ -474,11 +483,49 @@ class Orchestrator:
             )
             for i, c in enumerate(candidates)
         ]
+
+    async def plan_allocation_ranked(
+        self,
+        candidates: list[dict],
+        *,
+        policy_overrides: dict | None = None,
+        avg_agents_per_round: float = 1.0,
+        model: str = "",
+    ) -> dict:
+        """Like plan_allocation, but first asks a large model (the cloud
+        coordinator by default) to RANK the candidates for this app, feeding its
+        scores in as each candidate's priority before the deterministic governor
+        allocates. The model ranks; the governor still does the auditable
+        budget arithmetic and enforcement. Fails safe: any candidate the model
+        doesn't score keeps its static severity-based priority, and a model
+        failure degrades the whole call to the static ranking. A candidate that
+        already carries an explicit priority is left untouched (operator ordering
+        wins over the model)."""
+        import resource_governor
+        import allocation_prioritizer
+        policy = self.retry_budget_policy.merged_with(policy_overrides)
+        cands = self._build_alloc_candidates(candidates)
+
+        to_rank = [c for c in cands if c.priority is None]
+        ranking_model = model or getattr(self.coordinator, "cloud_model", "") or self.coordinator_model
+        scores = await allocation_prioritizer.rank(to_rank, self.ollama, ranking_model)
+        llm_scored = 0
+        for c in cands:
+            if c.priority is None and c.id in scores:
+                c.priority = scores[c.id]
+                llm_scored += 1
+
         round_cost = resource_governor.estimate_round_cost(
             self.effort_budget.ledger, avg_agents_per_round=avg_agents_per_round)
         plan = resource_governor.plan_allocation(
             cands, self.effort_budget.remaining, policy, round_cost)
-        return plan.to_dict()
+        out = plan.to_dict()
+        out["ranking"] = {
+            "model": ranking_model,
+            "llm_scored": llm_scored,
+            "static_fallback": len(cands) - llm_scored,
+        }
+        return out
 
     async def _choose_agents(self, exchange: HttpExchange) -> tuple[list[str], str]:
         """

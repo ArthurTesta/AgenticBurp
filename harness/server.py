@@ -358,6 +358,12 @@ class PlanAllocationRequest(_BaseModel):
     candidates: list[dict]
     policy_overrides: dict = {}
     avg_agents_per_round: float = 1.0
+    # When true, a large model (the cloud coordinator by default) ranks the
+    # candidates for this app first; its scores become each candidate's priority
+    # before the deterministic governor allocates. Fails safe to the static
+    # severity ranking. `ranking_model` overrides which model does the ranking.
+    use_llm_priority: bool = False
+    ranking_model: str = ""
 
 
 @app.post("/plan-allocation")
@@ -365,10 +371,18 @@ async def plan_allocation_endpoint(req: PlanAllocationRequest, authorization: st
     """F5 prioritizer: given competing vulnerabilities and the REMAINING global
     token budget, return which get full retry policy, which are reduced, which
     are deferred, and written guidance. With no budget cap set, everyone gets
-    full policy. Calibrated against the real token ledger, like /estimate."""
+    full policy. Calibrated against the real token ledger, like /estimate.
+
+    With use_llm_priority, a large model ranks the candidates for this app
+    first (the model ranks, the deterministic governor still allocates and
+    enforces)."""
     _require_auth(authorization)
     if not req.candidates:
         raise HTTPException(status_code=400, detail="candidates must be non-empty")
+    if req.use_llm_priority:
+        return await orchestrator.plan_allocation_ranked(
+            req.candidates, policy_overrides=req.policy_overrides or None,
+            avg_agents_per_round=req.avg_agents_per_round, model=req.ranking_model or "")
     return orchestrator.plan_allocation(
         req.candidates, policy_overrides=req.policy_overrides or None,
         avg_agents_per_round=req.avg_agents_per_round)
