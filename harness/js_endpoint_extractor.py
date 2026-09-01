@@ -77,6 +77,59 @@ def _normalize(path: str) -> str:
     return path
 
 
+# Call-shape forms that also reveal the HTTP METHOD (not just the path), so a
+# request can be RECONSTRUCTED from the JS and replayed -- e.g. to test a
+# supposedly-authenticated endpoint without credentials (missing_auth_probe).
+#   axios.post("/x") / $.post("/x") / http.put("/x")  -> method from the call
+#   xhr.open("POST", "/x") / .open("PUT", "/x")        -> method as first arg
+#   fetch("/x", { method: "POST" })                    -> method from options
+_VERB_CALL = re.compile(
+    r"""\.(get|post|put|patch|delete)\s*\(\s*['"`](/(?!/)[A-Za-z0-9_\-./~%${}:]*)['"`]""",
+    re.IGNORECASE,
+)
+_OPEN_CALL = re.compile(
+    r"""\.open\s*\(\s*['"`](GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)['"`]\s*,\s*"""
+    r"""['"`](/(?!/)[A-Za-z0-9_\-./~%${}:]*)['"`]""",
+    re.IGNORECASE,
+)
+_FETCH_METHOD = re.compile(
+    r"""fetch\s*\(\s*['"`](/(?!/)[A-Za-z0-9_\-./~%${}:]*)['"`]\s*,\s*\{[^}]*?"""
+    r"""method\s*:\s*['"`](GET|POST|PUT|PATCH|DELETE)['"`]""",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+@dataclass(frozen=True)
+class CallShape:
+    method: str
+    path: str  # normalized
+
+    def to_dict(self) -> dict:
+        return {"method": self.method, "path": self.path}
+
+
+def extract_call_shapes(body: str) -> list[CallShape]:
+    """Recover (method, path) call shapes from JS so a request can be
+    reconstructed and replayed. Deduplicated; methods uppercased. A plain
+    `fetch("/x")` with no options object is intentionally NOT emitted here (it
+    lands in extract_endpoints as a GET-shaped path already) -- this focuses on
+    the forms that pin down a specific, replayable method."""
+    if not body:
+        return []
+    shapes: set[CallShape] = set()
+    for rx, method_first in ((_VERB_CALL, True), (_OPEN_CALL, "arg"), (_FETCH_METHOD, False)):
+        for m in rx.finditer(body):
+            if method_first is True:
+                method, path = m.group(1), m.group(2)
+            elif method_first == "arg":
+                method, path = m.group(1), m.group(2)
+            else:  # fetch: path first, method second
+                path, method = m.group(1), m.group(2)
+            if _looks_like_endpoint(path):
+                shapes.add(CallShape(method=method.upper(), path=_normalize(path)))
+    return sorted(shapes, key=lambda s: (s.path, s.method))
+
+
 @dataclass
 class ExtractedEndpoints:
     same_origin_paths: set[str] = field(default_factory=set)   # normalized paths on the target

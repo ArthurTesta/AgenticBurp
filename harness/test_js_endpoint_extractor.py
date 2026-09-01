@@ -1,6 +1,6 @@
 """Tests for JS/HTML endpoint extraction (sitemap population)."""
 import unittest
-from js_endpoint_extractor import extract_endpoints
+from js_endpoint_extractor import extract_endpoints, extract_call_shapes
 
 
 class JsEndpointExtractorTests(unittest.TestCase):
@@ -52,6 +52,29 @@ class JsEndpointExtractorTests(unittest.TestCase):
         js = '"/user/:id"; "/user/${id}"; "/user/7"'
         r = extract_endpoints(js, "https://app.test/x.js")
         self.assertEqual({p for p in r.same_origin_paths if p.startswith("/user")}, {"/user/{id}"})
+
+
+class CallShapeTests(unittest.TestCase):
+    def test_verb_calls_capture_method(self):
+        shapes = extract_call_shapes('axios.post("/api/generateReport"); $.get("/api/items");')
+        by = {(s.method, s.path) for s in shapes}
+        self.assertIn(("POST", "/api/generateReport"), by)
+        self.assertIn(("GET", "/api/items"), by)
+
+    def test_xhr_open_and_fetch_method(self):
+        shapes = extract_call_shapes('xhr.open("PUT","/api/user/7"); fetch("/api/x",{method:"DELETE"});')
+        by = {(s.method, s.path) for s in shapes}
+        self.assertIn(("PUT", "/api/user/{id}"), by)   # numeric id normalized
+        self.assertIn(("DELETE", "/api/x"), by)
+
+    def test_plain_fetch_without_options_not_emitted_here(self):
+        # plain fetch("/x") has no pinned method -> not a call shape (it is an
+        # endpoint path via extract_endpoints instead)
+        shapes = extract_call_shapes('fetch("/api/plain");')
+        self.assertEqual(shapes, [])
+
+    def test_empty(self):
+        self.assertEqual(extract_call_shapes(""), [])
 
 
 if __name__ == "__main__":
