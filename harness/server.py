@@ -481,6 +481,19 @@ async def tools_recommend(req: ToolRecommendRequest, authorization: str | None =
     return {"recommendations": [r.to_dict() for r in recs]}
 
 
+@app.get("/activity")
+async def activity(since: int = 0, limit: int = 100, authorization: str | None = Header(default=None)):
+    """Live agent-activity feed (V1). Poll with the last seq you saw
+    (`?since=N`) to get everything after it, plus the current latest_seq and a
+    `dropped` count if you fell behind the buffer. `since=0` (default) returns a
+    recent snapshot to prime the view."""
+    _require_auth(authorization)
+    import activity_feed
+    if since <= 0:
+        return activity_feed.snapshot(limit=limit)
+    return activity_feed.since(since)
+
+
 @app.get("/effort", response_model=EffortStatus)
 async def effort_status(authorization: str | None = Header(default=None)):
     """Current cumulative spend against the configured budget (see
