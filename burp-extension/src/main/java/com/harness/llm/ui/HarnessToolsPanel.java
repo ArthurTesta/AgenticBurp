@@ -2,6 +2,7 @@ package com.harness.llm.ui;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.harness.llm.HarnessClient;
 import com.harness.llm.model.AnalysisModels.ActivityEvent;
@@ -18,6 +19,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BiConsumer;
 
 /**
  * "Harness Tools" suite tab -- the UI for the Session-3 server capabilities
@@ -38,13 +40,21 @@ public class HarnessToolsPanel extends JPanel {
 
     private final HarnessClient client;
     private final Gson pretty = new GsonBuilder().setPrettyPrinting().create();
+    /** (baseUrl, discovered paths) -> add them to Burp's Target site map. Null
+     * when the panel is used without a Burp API (e.g. standalone). */
+    private final BiConsumer<String, List<String>> siteMapImporter;
 
     // Model dropdowns (populated from GET /models).
     private final JComboBox<String> coordinatorCombo = new JComboBox<>();
     private final JComboBox<String> agentCombo = new JComboBox<>();
 
     public HarnessToolsPanel(HarnessClient client) {
+        this(client, null);
+    }
+
+    public HarnessToolsPanel(HarnessClient client, BiConsumer<String, List<String>> siteMapImporter) {
         this.client = client;
+        this.siteMapImporter = siteMapImporter;
         setLayout(new BorderLayout());
         JTabbedPane tabs = new JTabbedPane();
         tabs.addTab("Models & Settings", buildModelsTab());
@@ -227,13 +237,37 @@ public class HarnessToolsPanel extends JPanel {
     private JComponent buildDiscoveryTab() {
         JTextArea out = outputArea();
 
+        // --- plain crawl (+ optional Target import) ---
         JTextField crawlUrl = new JTextField("http://localhost:3000/", 30);
         JTextField maxPages = new JTextField("40", 5);
+        JCheckBox crawlImport = new JCheckBox("Add discovered endpoints to Target site map", true);
+        crawlImport.setEnabled(siteMapImporter != null);
         JButton crawlBtn = new JButton("Crawl");
-        crawlBtn.addActionListener(e ->
-                runAsync(crawlBtn, out, () -> client.crawl(crawlUrl.getText().trim(), null,
-                        parseIntOr(maxPages.getText(), 40), 2)));
+        crawlBtn.addActionListener(e -> {
+            String base = crawlUrl.getText().trim();
+            runAndMaybeImport(crawlBtn, out,
+                    () -> client.crawl(base, null, parseIntOr(maxPages.getText(), 40), 2),
+                    crawlImport.isSelected(), base, HarnessToolsPanel::pathsFromStringArray);
+        });
 
+        // --- role-aware crawl -> access matrix ---
+        JTextArea rolesArea = new JTextArea(4, 30);
+        rolesArea.setText("anonymous |\nadmin | Authorization=Bearer <token>");
+        rolesArea.setBorder(BorderFactory.createTitledBorder(
+                "Roles -- one per line: <role> | <Header>=<value>; <Header2>=<value2>   (blank headers = anonymous)"));
+        JTextField roleBase = new JTextField("http://localhost:3000/", 30);
+        JCheckBox roleImport = new JCheckBox("Add discovered endpoints to Target site map", true);
+        roleImport.setEnabled(siteMapImporter != null);
+        JButton roleBtn = new JButton("Role crawl -> access matrix");
+        roleBtn.addActionListener(e -> {
+            String base = roleBase.getText().trim();
+            List<Map<String, Object>> roles = parseRoles(rolesArea.getText());
+            runAndMaybeImport(roleBtn, out,
+                    () -> client.crawlRoles(base, roles, parseIntOr(maxPages.getText(), 40)),
+                    roleImport.isSelected(), base, HarnessToolsPanel::pathsFromEndpointObjects);
+        });
+
+        // --- missing-auth probe ---
         JTextField maUrl = new JTextField("http://localhost:3000/", 30);
         JTextArea maPaths = new JTextArea(4, 30);
         maPaths.setBorder(BorderFactory.createTitledBorder("Paths to probe (one per line; blank -> use discover)"));
@@ -255,13 +289,107 @@ public class HarnessToolsPanel extends JPanel {
                 new JLabel("Crawl: mine the app's JS bundles for its real endpoint surface (POST /crawl)."),
                 labeled("Base URL:", crawlUrl),
                 labeled("Max pages:", maxPages),
-                buttonRow(crawlBtn),
+                buttonRow(crawlImport, crawlBtn),
+                new JSeparator(),
+                new JLabel("Role crawl: per-role access matrix -> IDOR + auth-bypass candidates (POST /crawl-roles)."),
+                labeled("Base URL:", roleBase),
+                rolesArea,
+                buttonRow(roleImport, roleBtn),
                 new JSeparator(),
                 new JLabel("Missing-auth probe: fire endpoints with credentials stripped, flag substantive 2xx."),
                 labeled("Base URL:", maUrl),
                 maPaths,
                 buttonRow(discover, probeBtn));
         return withOutput(north, out);
+    }
+
+    /** Runs {@code call}, renders the JSON, and -- when {@code doImport} and a
+     * site-map importer are present -- feeds the extracted endpoint paths into
+     * Burp's Target site map. */
+    private void runAndMaybeImport(JButton trigger, JTextArea out, Callable<JsonObject> call,
+                                   boolean doImport, String baseUrl,
+                                   java.util.function.Function<JsonObject, List<String>> extractor) {
+        trigger.setEnabled(false);
+        out.setText("Running...");
+        new SwingWorker<Object, Void>() {
+            @Override protected Object doInBackground() {
+                try { return call.call(); } catch (Exception e) { return e; }
+            }
+            @Override protected void done() {
+                try {
+                    Object r = get();
+                    if (r instanceof Exception e) {
+                        out.setText("ERROR: " + (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName()));
+                        return;
+                    }
+                    JsonObject obj = (JsonObject) r;
+                    out.setText(pretty.toJson(obj));
+                    out.setCaretPosition(0);
+                    if (doImport && siteMapImporter != null) {
+                        List<String> paths = extractor.apply(obj);
+                        if (!paths.isEmpty()) {
+                            siteMapImporter.accept(baseUrl, paths);
+                            out.append("\n\n[added " + paths.size() + " endpoint(s) to the Target site map]");
+                        }
+                    }
+                } catch (Exception e) {
+                    out.setText("ERROR: " + e.getMessage());
+                } finally {
+                    trigger.setEnabled(true);
+                }
+            }
+        }.execute();
+    }
+
+    /** Parse the roles text area into [{role, headers}]. Each line:
+     * {@code <role> | Header=value; Header2=value2}. */
+    private static List<Map<String, Object>> parseRoles(String text) {
+        List<Map<String, Object>> roles = new ArrayList<>();
+        for (String line : text.split("\\R")) {
+            if (line.isBlank()) continue;
+            String[] halves = line.split("\\|", 2);
+            String role = halves[0].trim();
+            if (role.isEmpty()) continue;
+            Map<String, String> headers = new HashMap<>();
+            if (halves.length == 2) {
+                for (String pair : halves[1].split(";")) {
+                    if (pair.isBlank()) continue;
+                    int eq = pair.indexOf('=');
+                    if (eq <= 0) continue;
+                    headers.put(pair.substring(0, eq).trim(), pair.substring(eq + 1).trim());
+                }
+            }
+            Map<String, Object> r = new HashMap<>();
+            r.put("role", role);
+            r.put("headers", headers);
+            roles.add(r);
+        }
+        return roles;
+    }
+
+    /** endpoints from a /crawl result: a JSON array of path strings. */
+    private static List<String> pathsFromStringArray(JsonObject o) {
+        List<String> out = new ArrayList<>();
+        if (o.has("endpoints") && o.get("endpoints").isJsonArray()) {
+            for (JsonElement el : o.getAsJsonArray("endpoints")) {
+                if (el.isJsonPrimitive()) out.add(el.getAsString());
+            }
+        }
+        return out;
+    }
+
+    /** endpoints from a /crawl-roles result: a JSON array of objects each with a "path". */
+    private static List<String> pathsFromEndpointObjects(JsonObject o) {
+        List<String> out = new ArrayList<>();
+        if (o.has("endpoints") && o.get("endpoints").isJsonArray()) {
+            for (JsonElement el : o.getAsJsonArray("endpoints")) {
+                if (el.isJsonObject()) {
+                    JsonObject e = el.getAsJsonObject();
+                    if (e.has("path")) out.add(e.get("path").getAsString());
+                }
+            }
+        }
+        return out;
     }
 
     // ------------------------------------------------------------------

@@ -555,6 +555,19 @@ public class HarnessClient {
         return postJson("/probe-missing-auth", body, longTimeout());
     }
 
+    /** POST /crawl-roles -- crawl per role and build the access matrix + IDOR/
+     * auth-bypass candidates. `roles` is a list of {role, headers}. Network- and
+     * probe-heavy, so the long timeout. */
+    public com.google.gson.JsonObject crawlRoles(String baseUrl,
+                                                 java.util.List<java.util.Map<String, Object>> roles,
+                                                 int maxPages) throws HarnessException {
+        java.util.Map<String, Object> body = new java.util.HashMap<>();
+        body.put("base_url", baseUrl);
+        body.put("roles", roles);
+        body.put("max_pages", maxPages);
+        return postJson("/crawl-roles", body, longTimeout());
+    }
+
     /** POST /active-probe -- run the iterative agent then integrate (F4+F2). LLM
      * in the loop, so the long timeout. */
     public com.google.gson.JsonObject activeProbe(com.harness.llm.model.AnalysisModels.HttpExchange exchange,

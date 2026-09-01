@@ -68,7 +68,10 @@ public class LlmHarnessExtension implements BurpExtension {
         // Session-3 capabilities (model selection, discovery, active testing,
         // budget allocation, tools, confidential scan, live activity) live in
         // their own tab so they can't destabilize the analysis view above.
-        HarnessToolsPanel toolsPanel = new HarnessToolsPanel(client);
+        // The site-map importer lets crawl/role-crawl results land in Burp's
+        // native Target tab, not just the harness panel.
+        HarnessToolsPanel toolsPanel = new HarnessToolsPanel(client,
+                (baseUrl, paths) -> SiteMapImporter.importEndpoints(api, baseUrl, paths));
         api.userInterface().registerSuiteTab("Harness Tools", toolsPanel);
         api.userInterface().registerContextMenuItemsProvider(
                 new HarnessContextMenu(api, runner));
