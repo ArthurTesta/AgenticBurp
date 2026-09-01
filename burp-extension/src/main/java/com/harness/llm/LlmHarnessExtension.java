@@ -9,6 +9,7 @@ import com.harness.llm.ui.AnalysisTracker;
 import com.harness.llm.ui.AttackSurfacePanel;
 import com.harness.llm.ui.AttackSurfacePanel.SiteMapRow;
 import com.harness.llm.ui.HarnessPanel;
+import com.harness.llm.ui.HarnessToolsPanel;
 import com.harness.llm.ui.UnifiedHarnessView;
 
 import javax.swing.*;
@@ -63,6 +64,12 @@ public class LlmHarnessExtension implements BurpExtension {
 
         UnifiedHarnessView unifiedView = new UnifiedHarnessView(surfacePanel, panel);
         api.userInterface().registerSuiteTab("LLM Harness", unifiedView);
+
+        // Session-3 capabilities (model selection, discovery, active testing,
+        // budget allocation, tools, confidential scan, live activity) live in
+        // their own tab so they can't destabilize the analysis view above.
+        HarnessToolsPanel toolsPanel = new HarnessToolsPanel(client);
+        api.userInterface().registerSuiteTab("Harness Tools", toolsPanel);
         api.userInterface().registerContextMenuItemsProvider(
                 new HarnessContextMenu(api, runner));
 

@@ -88,6 +88,7 @@ public class AnalysisModels {
         public int effort_spent_tokens;
         public Integer effort_budget_remaining; // nullable -- null means no cap configured
         public String effort_budget_warning;    // "" when nothing to report
+        public List<ToolRec> tool_recommendations; // A3 -- may be null on older servers
     }
 
     public static class UrlEstimateItem {
@@ -176,5 +177,59 @@ public class AnalysisModels {
 
     public static class ErrorBody {
         public String error;
+    }
+
+    // --- Session-3 additions: model selection, discovery, active testing,
+    // resource governance, tool recommendations, and the live activity feed.
+    // Deep/dynamic responses (active-probe, retry-agents, plan-allocation,
+    // missing-auth, confidential scan) are handled as raw JsonObject in the
+    // client rather than mirrored field-by-field here -- only the shapes that
+    // drive a specific widget get a typed POJO. ---
+
+    /** GET /models -- feeds the coordinator/agent model dropdowns. */
+    public static class ModelsInfo {
+        public List<String> local;
+        public List<String> cloud;
+        public List<String> all;
+        public String coordinator_model;
+        public List<String> agent_models;
+    }
+
+    /** POST /models/select body. Any field left null/blank is unchanged. */
+    public static class SelectModelRequest {
+        public String coordinator;
+        public String agent_model;
+        public String agent;
+    }
+
+    /** One event from GET /activity (the live agent-activity feed, V1). */
+    public static class ActivityEvent {
+        public long seq;
+        public double ts;
+        public String kind;
+        public String message;
+        public String agent;
+        public String level;   // info | warn | error
+        public Map<String, Object> detail;
+    }
+
+    /** GET /activity response: a window of events plus the latest seq seen. */
+    public static class ActivitySnapshot {
+        public long latest_seq;
+        public int dropped;
+        public List<ActivityEvent> events;
+    }
+
+    /** One tool recommendation from POST /tools/recommend / an analysis
+     * response's tool_recommendations. */
+    public static class ToolRec {
+        public String tool;
+        public String category;
+        public String reason;
+        public String command;
+        public String url;
+        public String kind;
+        public String for_finding;
+        public String target_url;
     }
 }

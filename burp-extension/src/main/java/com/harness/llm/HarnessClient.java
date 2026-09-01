@@ -453,4 +453,169 @@ public class HarnessClient {
         }
         return parsed;
     }
+
+    // ==================================================================
+    // Session-3 endpoints: model selection, runtime settings, discovery,
+    // active testing, resource governance, tools, and the activity feed.
+    //
+    // These share two generic helpers (getJson/postJson) rather than each
+    // repeating the send/timeout/error boilerplate the older methods above
+    // do -- the deep, dynamic response shapes (active-probe transcripts,
+    // allocation plans) are returned as raw JsonObject for the UI to render
+    // as pretty-printed JSON, while the few shapes that drive a specific
+    // widget (models, activity) get a typed parse on top.
+    // ==================================================================
+
+    /** GET `path`, returning the parsed JSON object. `timeout` bounds the wait. */
+    public com.google.gson.JsonObject getJson(String path, Duration timeout) throws HarnessException {
+        HttpRequest req = newRequestBuilder(path, timeout).GET().build();
+        return sendForJson(req, path);
+    }
+
+    /** POST `body` (serialized to JSON) to `path`, returning the parsed JSON object. */
+    public com.google.gson.JsonObject postJson(String path, Object body, Duration timeout) throws HarnessException {
+        HttpRequest req = newRequestBuilder(path, timeout)
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(gson.toJson(body)))
+                .build();
+        return sendForJson(req, path);
+    }
+
+    private com.google.gson.JsonObject sendForJson(HttpRequest req, String path) throws HarnessException {
+        HttpResponse<String> resp;
+        try {
+            resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
+        } catch (IOException e) {
+            throw new HarnessException("Could not reach harness at " + baseUrl + " for " + path
+                    + " (" + e.getMessage() + ")", e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new HarnessException("Request interrupted", e);
+        }
+        if (resp.statusCode() != 200) {
+            String detail;
+            try {
+                ErrorBody err = gson.fromJson(resp.body(), ErrorBody.class);
+                detail = (err != null && err.error != null) ? err.error : resp.body();
+            } catch (Exception ignore) {
+                detail = resp.body();
+            }
+            throw new HarnessException("Harness " + path + " returned HTTP " + resp.statusCode() + ": " + detail);
+        }
+        try {
+            return com.google.gson.JsonParser.parseString(resp.body()).getAsJsonObject();
+        } catch (Exception e) {
+            throw new HarnessException("Harness " + path + " returned an unparseable body: " + e.getMessage(), e);
+        }
+    }
+
+    private Duration shortTimeout() { return Duration.ofSeconds(timeoutSeconds); }
+    private Duration longTimeout() { return Duration.ofSeconds(analysisTimeoutSeconds); }
+
+    /** GET /models -- the model choices for the coordinator/agent dropdowns. */
+    public com.harness.llm.model.AnalysisModels.ModelsInfo listModels() throws HarnessException {
+        com.google.gson.JsonObject o = getJson("/models", shortTimeout());
+        return gson.fromJson(o, com.harness.llm.model.AnalysisModels.ModelsInfo.class);
+    }
+
+    /** POST /models/select -- set the coordinator and/or agent model. */
+    public com.google.gson.JsonObject selectModel(com.harness.llm.model.AnalysisModels.SelectModelRequest req)
+            throws HarnessException {
+        return postJson("/models/select", req, shortTimeout());
+    }
+
+    /** GET /settings -- current throttle + retry-budget values. */
+    public com.google.gson.JsonObject getSettings() throws HarnessException {
+        return getJson("/settings", shortTimeout());
+    }
+
+    /** POST /settings -- retune the throttle and/or default retry budget. */
+    public com.google.gson.JsonObject updateSettings(Double throttleRps, java.util.Map<String, Object> retryBudget)
+            throws HarnessException {
+        java.util.Map<String, Object> body = new java.util.HashMap<>();
+        if (throttleRps != null) body.put("throttle_rps", throttleRps);
+        if (retryBudget != null && !retryBudget.isEmpty()) body.put("retry_budget", retryBudget);
+        return postJson("/settings", body, shortTimeout());
+    }
+
+    /** POST /crawl -- discover the app's endpoint surface (JS-mined). Network-
+     * bound, so uses the longer analysis timeout. */
+    public com.google.gson.JsonObject crawl(String baseUrl, java.util.Map<String, String> headers,
+                                            int maxPages, int maxDepth) throws HarnessException {
+        java.util.Map<String, Object> body = new java.util.HashMap<>();
+        body.put("base_url", baseUrl);
+        if (headers != null) body.put("headers", headers);
+        body.put("max_pages", maxPages);
+        body.put("max_depth", maxDepth);
+        return postJson("/crawl", body, longTimeout());
+    }
+
+    /** POST /probe-missing-auth -- fire endpoints auth-stripped, flag substantive 2xx. */
+    public com.google.gson.JsonObject probeMissingAuth(java.util.Map<String, Object> body) throws HarnessException {
+        return postJson("/probe-missing-auth", body, longTimeout());
+    }
+
+    /** POST /active-probe -- run the iterative agent then integrate (F4+F2). LLM
+     * in the loop, so the long timeout. */
+    public com.google.gson.JsonObject activeProbe(com.harness.llm.model.AnalysisModels.HttpExchange exchange,
+                                                  String hypothesis, String specialty, String model, int stepBudget)
+            throws HarnessException {
+        java.util.Map<String, Object> body = new java.util.HashMap<>();
+        body.put("exchange", exchange);
+        body.put("hypothesis", hypothesis);
+        body.put("specialty", specialty);
+        body.put("model", model == null ? "" : model);
+        body.put("step_budget", stepBudget);
+        return postJson("/active-probe", body, longTimeout());
+    }
+
+    /** POST /retry-agents -- re-run one specialist up to the per-vuln policy cap. */
+    public com.google.gson.JsonObject retryAgents(com.harness.llm.model.AnalysisModels.HttpExchange exchange,
+                                                  String agentClass, java.util.Map<String, Object> policyOverrides)
+            throws HarnessException {
+        java.util.Map<String, Object> body = new java.util.HashMap<>();
+        body.put("exchange", exchange);
+        body.put("agent_class", agentClass);
+        if (policyOverrides != null) body.put("policy_overrides", policyOverrides);
+        return postJson("/retry-agents", body, longTimeout());
+    }
+
+    /** POST /plan-allocation -- prioritize competing vulnerabilities under the
+     * remaining budget. use_llm_priority may invoke the cloud model, so long timeout. */
+    public com.google.gson.JsonObject planAllocation(java.util.List<java.util.Map<String, Object>> candidates,
+                                                     boolean useLlmPriority) throws HarnessException {
+        java.util.Map<String, Object> body = new java.util.HashMap<>();
+        body.put("candidates", candidates);
+        body.put("use_llm_priority", useLlmPriority);
+        return postJson("/plan-allocation", body, useLlmPriority ? longTimeout() : shortTimeout());
+    }
+
+    /** GET /tools (optionally filtered by vulnerability_class). */
+    public com.google.gson.JsonObject tools(String vulnerabilityClass) throws HarnessException {
+        String path = "/tools";
+        if (vulnerabilityClass != null && !vulnerabilityClass.isBlank()) {
+            path += "?vulnerability_class=" + URLEncoder.encode(vulnerabilityClass, StandardCharsets.UTF_8);
+        }
+        return getJson(path, shortTimeout());
+    }
+
+    /** POST /tools/recommend -- tools for a finding, with commands templated to its URL. */
+    public com.google.gson.JsonObject recommendTools(String vulnerabilityClass, String url) throws HarnessException {
+        java.util.Map<String, Object> body = new java.util.HashMap<>();
+        body.put("vulnerability_class", vulnerabilityClass);
+        body.put("url", url == null ? "" : url);
+        return postJson("/tools/recommend", body, shortTimeout());
+    }
+
+    /** POST /scan/confidential -- deterministic secret/PII/internal-infra scan of a response. */
+    public com.google.gson.JsonObject scanConfidential(com.harness.llm.model.AnalysisModels.HttpExchange exchange)
+            throws HarnessException {
+        return postJson("/scan/confidential", exchange, shortTimeout());
+    }
+
+    /** GET /activity?since=N -- the live agent-activity feed (V1). since=0 primes a snapshot. */
+    public com.harness.llm.model.AnalysisModels.ActivitySnapshot activitySince(long sinceSeq) throws HarnessException {
+        com.google.gson.JsonObject o = getJson("/activity?since=" + sinceSeq, Duration.ofSeconds(5));
+        return gson.fromJson(o, com.harness.llm.model.AnalysisModels.ActivitySnapshot.class);
+    }
 }
