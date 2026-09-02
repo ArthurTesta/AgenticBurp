@@ -102,6 +102,13 @@ def apply_access_control_response_gate(
                 continue
             finding.original_confidence = finding.confidence
             finding.confidence = _CAPPED_CONFIDENCE
+            # Cap severity too, not just confidence. A denial-contradicted
+            # access-control claim is not a medium+ issue on this exchange, and
+            # leaving severity high let it survive severity-based operating-point
+            # views even after the confidence cap (found via the blind-target-2
+            # re-score: 8 such FPs sat at confidence 0.15 but severity medium+).
+            if finding.severity not in ("info", "low"):
+                finding.severity = "low"
             finding.review_verdict = "downgraded"
             finding.review_note = (
                 f"Access-control claim capped by deterministic response gate: the "
