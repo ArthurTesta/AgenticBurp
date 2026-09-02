@@ -46,10 +46,10 @@ Two levers, **zero recall loss** throughout (recall held at 0.727, tp=8):
 ## The 11 remaining FPs — root cause
 
 - **Injection pile-ons on TN4 + TP10 (~7):** sqli/xss/ssrf fire on a reflected
-  "attack attempt" (TN4) and a file-disclosure response (TP10). **The real pipeline's
-  validators (browser-XSS, sqlmap) are built to kill exactly these — the agents-only
-  bench BYPASSES validators, so it overstates them.** Real-pipeline precision is
-  already higher than 0.42.
+  "attack attempt" (TN4) and a file-disclosure response (TP10). *(Earlier I expected
+  the real pipeline's validators to kill these — the blind-target-2 full-pipeline run
+  below REFUTED that: validators confirmed 0/10 and did not suppress unconfirmed
+  findings. The validator layer does not currently backstop precision.)*
 - **Over-reaches (~2):** jwt on a benign exchange (TN5), xss on an SSRF exchange (TP9).
   Broad fix = agent lane discipline in `base_agent` (full rebuild to measure).
 - **Taxonomy near-miss (~1):** TP7 "workflow bypass" → A01 vs truth A04. A `score.py`
@@ -78,6 +78,31 @@ where multi-request turns a missed/low-confidence guess into a *confirmed* findi
 engagement arc already builds this (`role_crawl.py` → access matrix → cross-identity
 BOLA); wiring it on-by-default for object-scoped endpoints is the remaining step.
 
+## blind-target-2 — full pipeline, uncontaminated (independent number)
+
+`run_blind_eval.py`: 10 curated exchanges (2 `confirmed_vuln`, 6 `confirmed_secure`,
+2 `inconclusive`) from a helpdesk app the harness has **never seen**, through the FULL
+pipeline (agents + validators + live Ollama). Aggregate only (blind instrument kept intact):
+
+| metric | result |
+|---|---|
+| positives detected (medium+) | **2/2** |
+| controls clean | **0/6** — every secure endpoint got a medium+ finding |
+| validator-confirmed | **0/10** (sqlmap ×3 not_confirmed, api_validator ×2 skipped) |
+| medium+ findings / 10 exchanges | 39 (~4 per exchange) |
+
+**Read:** recall holds on a blind target (2/2), but **precision collapses on hard
+negatives (0/6 controls clean)** — worse than test-target. Two FP drivers:
+- **9× `known-vulnerable-dependency:Werkzeug`** — the GH-advisory path flags the Flask
+  dev-server banner on *every* response. Fix: dedupe dependency findings host-level.
+- **9× single-exchange IDOR** on secure endpoints — exactly what **#3's cross-identity
+  probe rejects** (a secure endpoint denies cross-identity access). Wiring cross-identity
+  on-by-default cuts these FPs *and* lifts IDOR recall — one change, both directions.
+
+**Correction:** the validator layer did NOT rescue precision (0 confirmations; it adds a
+`confirmed` flag to true positives but does not suppress unconfirmed findings). The
+teardown's "deterministic confirmation leg degrades in practice" is confirmed here.
+
 ## Caveats
 - Small n (11 TPs), single pass — per-exchange variance (see
   `DETECTION_BENCH_METHODOLOGY.md`). Directional until blind-target-2 corroborates.
@@ -90,7 +115,9 @@ BOLA); wiring it on-by-default for object-scoped endpoints is the remaining step
   lane; the out-of-lane FPs persisted and `jwt` newly over-fired. Reverted. The
   effective approach stays **targeted specialty-level fixes** (misconfig/supply_chain).
 
-## Next
-- **blind-target-2** for an independent, uncontaminated number.
-- The remaining pile-on FPs are best cut by the **validator layer** (real pipeline),
-  not by prompt rules — the agents-only bench can't see that gain.
+## Next (ranked by the evidence)
+1. **Wire cross-identity (#3) on-by-default** for object-scoped endpoints — the blind
+   run shows it fixes IDOR FPs *and* lifts IDOR recall at once (highest leverage).
+2. **Host-level dedup** of dependency findings — kills the 9× Werkzeug banner noise.
+3. **Investigate the validator layer** — 0/10 confirmations, mostly not-run; the
+   "confirmation leg" isn't engaging (echoes the 12/13-validators-broken history).
