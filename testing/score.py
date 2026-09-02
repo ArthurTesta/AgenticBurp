@@ -39,8 +39,9 @@ from pathlib import Path
 # simple and TUNABLE -- calibrating it is part of finishing T2 (blind-target-2).
 _CATEGORY_KEYWORDS: list[tuple[str, list[str]]] = [
     ("A10:SSRF", ["ssrf", "server-side request", "server side request", "request forgery"]),
-    ("A01:Broken-Access-Control", ["idor", "object-level", "object level", "bola",
-        "access control", "authorization", "authz", "path traversal", "traversal",
+    ("A01:Broken-Access-Control", ["idor", "insecure direct object", "object-level", "object level",
+        "bola", "broken access control", "access control", "missing authorization", "unauthorized access",
+        "authorization", "authz", "path traversal", "traversal",
         "directory traversal", "lfi", "file inclusion", "forced browsing", "privilege escalation"]),
     ("A07:Auth-Failures", ["jwt", "auth bypass", "authentication bypass", "session fixation",
         "weak password", "mfa", "alg none", "signature bypass", "credential stuffing"]),

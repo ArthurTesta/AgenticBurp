@@ -43,6 +43,39 @@ Two levers, **zero recall loss** throughout (recall held at 0.727, tp=8):
 | A07 Auth Failures | 1 | 0.500 | 1.000 | 0.667 |
 | A10 SSRF | 1 | 0.500 | 1.000 | 0.667 |
 
+## Correction — full-pipeline re-test (2026-09-02) + a scorer-bug fix
+
+A full-pipeline re-test (live PixelMart, all fixes incl. cross-identity) surfaced a
+**bug in this scorer** that had understated recall throughout: `score.classify` did not
+map `"Insecure Direct Object Reference"` / `"insecure_direct_object_reference"` to A01
+(the keyword list had `idor`/`bola` but not `insecure direct object`). Fixed.
+
+**Corrected numbers (agents-only fixture + gate, sev≥medium):** precision **0.476**,
+recall **0.909** (tp=10, fp=11, fn=1); **A01 recall 1.0** (not 0.33).
+
+**This corrects two earlier claims in this file:**
+- Single-exchange analysis did NOT "miss TP4/TP10 IDOR" — the agents flagged them; the
+  scorer mislabelled the class. So the "A01 recall 1/3→2/3 via cross-identity" framing
+  in the T3 section below is a **scoring artifact**, not a real recall gain.
+- Cross-identity's real, demonstrated value is **CONFIRMATION, not raw recall**: it turns
+  an unconfirmed single-exchange IDOR *guess* into a deterministic *proof*. In the
+  re-test it CONFIRMED IDOR on **TP3, TP4, TP11 at 0.91** (`finding.confirmed=True`) —
+  the "prove the bug" capability the teardown said the harness lacked.
+
+**Full-pipeline re-test (fresh live run, sev≥medium):** recall 0.909, precision 0.286
+(fp=25). Lower precision than the cached fixture (fp=11) is **fresh-run agent variance**
+(more raw agent findings this pass), not a regression — the runs invoke the agents
+independently and single-pass output varies.
+
+**A real cross-identity limitation found:** it CONFIRMED IDOR on **TN3, a labelled-secure
+exchange** — the classic Autorize **shared-resource false positive** (a resource
+legitimately readable by multiple authenticated identities, anon denied, is
+indistinguishable from IDOR by response comparison alone). Needs a mitigation.
+
+**Reject/precision benefit not visible here:** PixelMart is deliberately vulnerable, so
+cross-identity mostly CONFIRMS; the REJECT→downgrade path (secure endpoints) needs the
+blind helpdesk (real secure controls) to demonstrate.
+
 ## The 11 remaining FPs — root cause
 
 - **Injection pile-ons on TN4 + TP10 (~7):** sqli/xss/ssrf fire on a reflected
