@@ -83,8 +83,14 @@ BOLA); wiring it on-by-default for object-scoped endpoints is the remaining step
   `DETECTION_BENCH_METHODOLOGY.md`). Directional until blind-target-2 corroborates.
 - `score.py` demands the *correct* OWASP category, so it is a strict lower bound.
 
+## Tried and rejected
+- **Agent lane discipline** (a shared `base_agent` "report only your own class"
+  rule, full rebuild): measured **worse** — sev≥medium FPs 11→15, precision
+  0.421→0.348, recall unchanged. The 8B model didn't reliably self-identify its
+  lane; the out-of-lane FPs persisted and `jwt` newly over-fired. Reverted. The
+  effective approach stays **targeted specialty-level fixes** (misconfig/supply_chain).
+
 ## Next
-1. **Agent lane discipline** in `base_agent` (report only your own class) — cuts the
-   over-reach pile-ons broadly; costs a full fixture rebuild to measure.
-2. **blind-target-2** for an independent number.
-3. **T3** (multi-request on) for the A01/A04 recall gaps.
+- **blind-target-2** for an independent, uncontaminated number.
+- The remaining pile-on FPs are best cut by the **validator layer** (real pipeline),
+  not by prompt rules — the agents-only bench can't see that gain.
