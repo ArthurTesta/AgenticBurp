@@ -148,19 +148,33 @@ def format_table(report: dict, corpus: str, model: str) -> str:
     return "\n".join(lines)
 
 
-async def _collect_from_fixture(labels, refresh: bool, corpus: str) -> dict[str, list[str]]:
+_SEVERITY_RANK = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
+
+
+async def _collect_from_fixture(labels, refresh: bool, corpus: str,
+                                conf: float, min_severity: str) -> dict[str, list[str]]:
     """Adapter over detection_fixture.py (the cached real-agent findings). Kept
     async + lazily imported so importing score.py stays cheap and GPU-free.
-    The fixture module lives in the corpus subdir (e.g. testing/test-target/)."""
+    The fixture module lives in the corpus subdir (e.g. testing/test-target/).
+
+    Two operating-point gates model what the analyst actually acts on:
+      `conf`         -- confidence floor (low-confidence "I'm guessing" gated out)
+      `min_severity` -- severity floor (info/low/medium/high/critical); the
+                        biggest FP source here is low-severity missing-header
+                        noise, so severity is the more effective knob."""
     sys.path.insert(0, str(Path(__file__).resolve().parent / corpus))
     import detection_fixture as fx
     labs = labels or sorted(fx.EXCHANGES_BY_LABEL)
+    sev_floor = _SEVERITY_RANK.get(min_severity, 0)
     out: dict[str, list[str]] = {}
     for lab in labs:
         classes: list[str] = []
         for agent in sorted(fx.dispatch_for(lab)):
             for f in await fx.findings_for(agent, lab, refresh=refresh):
-                classes.append(f["class"])
+                c = f.get("confidence")
+                sev = _SEVERITY_RANK.get((f.get("severity") or "info").lower(), 0)
+                if (conf <= 0.0 or (c is not None and c >= conf)) and sev >= sev_floor:
+                    classes.append(f["class"])
         out[lab] = classes
     return out
 
@@ -180,6 +194,10 @@ def main() -> int:
     ap.add_argument("--from-cache", action="store_true",
                     help="score from the detection_fixture cache (no model calls)")
     ap.add_argument("--refresh", action="store_true", help="force-refresh fixture entries")
+    ap.add_argument("--conf", type=float, default=0.0,
+                    help="confidence gate: only count findings at/above it (analyst operating point)")
+    ap.add_argument("--min-severity", default="info", choices=list(_SEVERITY_RANK),
+                    help="severity floor: only count findings at/above it (default info = no gate)")
     ap.add_argument("--json", metavar="PATH", help="also write the full report as JSON")
     ap.add_argument("--fail-under-recall", type=float, default=None,
                     help="exit non-zero if overall (micro) recall is below this (CI gate)")
@@ -191,11 +209,12 @@ def main() -> int:
         return 2
 
     model = _model_from_config()
-    labeled = asyncio.run(_collect_from_fixture(None, args.refresh, args.corpus))
+    labeled = asyncio.run(_collect_from_fixture(None, args.refresh, args.corpus, args.conf, args.min_severity))
     report = score(labeled)
-    report["provenance"] = {"corpus": args.corpus, "model": model, "n_exchanges": len(labeled)}
+    report["provenance"] = {"corpus": args.corpus, "model": model, "n_exchanges": len(labeled),
+                            "conf_gate": args.conf, "min_severity": args.min_severity}
 
-    print(format_table(report, args.corpus, model))
+    print(format_table(report, args.corpus, f"{model} @conf>={args.conf},sev>={args.min_severity}"))
     if args.json:
         json.dump(report, open(args.json, "w"), indent=2)
         print(f"\n(wrote {args.json})")
