@@ -312,6 +312,29 @@ def _register_role_identities(roles) -> list[dict]:
     return registered
 
 
+class SessionHeadersRequest(_BaseModel):
+    host: str
+    name: str
+    headers: dict          # another identity's real session headers (Authorization/Cookie)
+    role: str = "user"
+
+
+@app.post("/identities/session-headers")
+async def set_identity_session_headers(req: SessionHeadersRequest, authorization: str | None = Header(default=None)):
+    """Supply ANOTHER identity's real session headers for cross-identity
+    (Autorize-style) access-control testing. Held IN MEMORY ONLY for this process
+    -- never persisted, logged, or cached (see identity_headers.py) -- exactly
+    like configuring Autorize's low-privilege cookie. The cross_identity validator
+    replays object-scoped GETs as these identities to tell a real IDOR from a
+    properly-restricted 200. Requires validators.cross_identity.enabled +
+    validators.active_enabled."""
+    _require_auth(authorization)
+    import identity_headers
+    identity_headers.set_identity(req.host, req.name, req.headers, req.role)
+    return {"ok": True, "host": req.host,
+            "identities": [i["name"] for i in identity_headers.identities_for_host(req.host)]}
+
+
 @app.post("/crawl-roles")
 async def crawl_roles_endpoint(req: RoleCrawlRequest, authorization: str | None = Header(default=None)):
     """Role-aware crawl: discover the surface per role, probe every endpoint with

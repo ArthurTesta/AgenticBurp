@@ -297,6 +297,13 @@ class TestNoValidatorBypassesTheGate(unittest.TestCase):
             # mutating-method sqlmap.py:114-115 case is covered by
             # gate_routed_exceptions above, not this one.
             "sqlmap.py",
+            # The only exchange.method reference is a DEFENSIVE GUARD:
+            #   if (exchange.method or "GET").upper() != "GET": return skipped
+            # i.e. it refuses to proceed for anything but GET. The validator's
+            # own live send (_probe) hardcodes client.get(); the captured method
+            # is never passed to a request. This is the opposite of the danger
+            # this test guards against.
+            "cross_identity_validator.py",
         }
 
         violations = []

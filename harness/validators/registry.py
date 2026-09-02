@@ -15,6 +15,7 @@ from .websocket_validator import WebsocketValidator
 from .race_condition_validator import RaceConditionValidator
 from .deserialization_validator import DeserializationValidator
 from .browser_xss_validator import BrowserXssValidator
+from .cross_identity_validator import CrossIdentityValidator
 from safety_gate import get_default_gate, reset_default_gate
 
 
@@ -150,6 +151,18 @@ class ValidatorRegistry:
                 allowed_hosts=config.get("server", {}).get("allowed_hosts", []),
                 wait_ms=int(bxss_cfg.get("wait_ms", 1200)),
                 max_visits=int(bxss_cfg.get("max_visits", 8)),
+            )
+
+        # Cross-identity (Autorize-style) access-control validator. DEFAULT OFF
+        # (opt-in): it sends live requests and needs tester-supplied identities.
+        # Registering it only arms it; it still runs only when active_enabled is
+        # set (active=True) AND identities are configured for the host.
+        xid_cfg = cfg.get("cross_identity", {})
+        if xid_cfg.get("enabled", False):
+            self.validators["cross_identity"] = CrossIdentityValidator(
+                allowed_hosts=config.get("server", {}).get("allowed_hosts", []),
+                timeout=float(xid_cfg.get("timeout", 10.0)),
+                max_identities=int(xid_cfg.get("max_identities", 3)),
             )
 
     def for_finding(self, finding, exchange):

@@ -360,6 +360,18 @@ validators:
     timeout_seconds: 90
     level: 1
     risk: 1
+  # Cross-identity (Autorize-style) access-control validator. The single-exchange
+  # idor/auth agents can only GUESS at broken access control; this replays the
+  # request as ANOTHER identity (+ anonymous) and compares, the only way to tell
+  # "my own 200" from "someone else's 200". Tester-fed: the other identity's
+  # session headers are supplied at run time via POST /identities/session-headers
+  # and held in memory only (never persisted -- see identity_headers.py). Paramount
+  # for privilege-escalation detection. DEFAULT OFF (sends live requests); also
+  # requires validators.active_enabled and runs GET-only, scoped to allowed_hosts.
+  cross_identity:
+    enabled: false
+    timeout: 10.0
+    max_identities: 3
 
 # Autonomous scope-discovery MVP (harness/scope_discovery.py). Off by
 # default -- the harness has never, until this option exists, decided on

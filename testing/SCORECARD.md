@@ -115,9 +115,33 @@ teardown's "deterministic confirmation leg degrades in practice" is confirmed he
   lane; the out-of-lane FPs persisted and `jwt` newly over-fired. Reverted. The
   effective approach stays **targeted specialty-level fixes** (misconfig/supply_chain).
 
-## Next (ranked by the evidence)
-1. **Wire cross-identity (#3) on-by-default** for object-scoped endpoints — the blind
-   run shows it fixes IDOR FPs *and* lifts IDOR recall at once (highest leverage).
-2. **Host-level dedup** of dependency findings — kills the 9× Werkzeug banner noise.
-3. **Investigate the validator layer** — 0/10 confirmations, mostly not-run; the
-   "confirmation leg" isn't engaging (echoes the 12/13-validators-broken history).
+## Cross-identity (Autorize-style) validator — BUILT (this session)
+
+The top-ranked fix is implemented: `validators/cross_identity_validator.py`, a
+tester-fed Autorize. It replays an object-scoped GET as other identities + an
+anonymous baseline (credentials supplied via `POST /identities/session-headers`,
+held **in memory only, never persisted** — the harness's no-stored-tokens
+invariant, same as Autorize needing a configured cookie) and runs the proven
+`identity_compare` logic:
+- **CONFIRMED** → sets `finding.confirmed` + boosts confidence (real IDOR).
+- **deterministic REJECT** (every other identity + anon denied) → downgrades the
+  single-exchange guess, mirroring `access_control_gate`.
+
+Off by default (`validators.cross_identity.enabled` + `active_enabled`, GET-only,
+scoped to `allowed_hosts`). **Live-verified against PixelMart: profile IDOR
+CONFIRMED at 0.91**; 6 unit tests. This is the fix for BOTH the blind IDOR FPs
+(secure endpoints → REJECT → downgrade) and the IDOR recall gap (real IDOR →
+CONFIRMED).
+
+Also this session: `access_control_gate` now caps severity as well as confidence,
+and `score.py` applies the gate so the fixture reflects the shipped pipeline.
+
+## Remaining
+- **Burp UI toggle** for `cross_identity` + a field to paste another identity's
+  session headers (config toggle + endpoint exist; the Java panel wiring is
+  uncompiled here).
+- **Validator 0/10 explained**: there was NO IDOR validator before this, so IDOR
+  was never confirmable inline (now fixed); sqlmap/api correctly did not confirm
+  non-vulns.
+- **Werkzeug dep noise (9×)**: per-advisory dedup already exists; a per-component
+  cap is a minor follow-up.
