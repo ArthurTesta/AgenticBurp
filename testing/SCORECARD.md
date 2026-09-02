@@ -56,9 +56,27 @@ Two levers, **zero recall loss** throughout (recall held at 0.727, tp=8):
   `_CATEGORY_KEYWORDS` / per-label-truth calibration, not a detection bug.
 - **Residual supply_chain (~1):** TP10 genuinely exposes a manifest-shaped response.
 
-## Weak spots (not FPs — recall gaps for T3)
-- **A01 Broken Access Control (recall 0.33)** and **A04 business logic (0.0)** — the
-  categories needing multi-request / cross-identity testing. This is what T3 targets.
+## T3 — multi-request closes the A01 IDOR recall gap (measured)
+
+Single-exchange analysis missed the IDOR cases (A01 recall 0.33: TP3 weak, TP4/TP10
+missed). The deterministic cross-identity probe (`cross_identity_probe.py` — two real
+identities, the 4-probe source/candidate/attempt/anon comparison) against live
+PixelMart:
+
+```
+[TP3 profile IDOR] CONFIRMED (confidence=0.91)
+[TP4 order IDOR]   CONFIRMED (confidence=0.91)   <- single-exchange MISSED this
+```
+
+Both are now **confirmed** — a proof from real cross-identity HTTP, not an LLM guess —
+raising A01 IDOR recall from 1/3 to **2/3**, with **no model call**. (TP10 is
+file-disclosure, not IDOR; A04 business logic is human-hand-off by design — the harness
+flags intent-level flaws for a human rather than fake-confirming them.)
+
+**Takeaway:** the highest-value categories the teardown flagged (IDOR/authz) are exactly
+where multi-request turns a missed/low-confidence guess into a *confirmed* finding. The
+engagement arc already builds this (`role_crawl.py` → access matrix → cross-identity
+BOLA); wiring it on-by-default for object-scoped endpoints is the remaining step.
 
 ## Caveats
 - Small n (11 TPs), single pass — per-exchange variance (see
