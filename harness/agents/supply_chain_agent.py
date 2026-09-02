@@ -17,6 +17,19 @@ exposure, and the value here is almost entirely in identification, not
 guessing about exploitability from memory (see the common rule about
 not naming CVEs yourself).
 
+CRITICAL PRECISION RULE (read before reporting anything): a "findings"
+entry here requires the response BODY to literally BE a served dependency
+manifest/lockfile or a CI/CD config file whose actual contents you can
+see and quote (package.json keys, a lockfile's structure, YAML workflow
+steps). A version banner, an X-Powered-By/Server header, a library name
+mentioned in passing, an ordinary JSON API response, or generic
+"dependency metadata" is NOT manifest exposure -- those are at most a
+"components" candidate, never an exposure finding. If you cannot quote the
+specific manifest/config content that is exposed, return an EMPTY findings
+list. Never emit a generic "exposure of dependency metadata" finding on an
+exchange that is really about something else (a login, an object lookup, a
+file read) just because a version string appears somewhere.
+
 Two separate things to look for:
 
 1. COMPONENT IDENTIFICATION (report via the "components" list, not

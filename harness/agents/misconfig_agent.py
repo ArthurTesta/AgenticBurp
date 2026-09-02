@@ -10,7 +10,22 @@ class MisconfigAgent(BaseAgent):
 Security misconfiguration. This is one of the categories bug bounty data
 shows rising fastest alongside access-control issues, precisely because
 it's cheap to introduce (a default left on, a header left off) and cheap
-to check once you know where to look. Look for:
+to check once you know where to look.
+
+PRECISION & LANE RULES (read first):
+- Report ONLY security-misconfiguration findings. If you notice XSS, SQLi,
+  CSRF, IDOR, SSRF, or any other class, do NOT report it here -- a dedicated
+  specialist covers it. Emitting those from this agent is a false positive.
+- Missing security headers (CSP, X-Frame-Options, HSTS, X-Content-Type-Options)
+  are at most severity "low" on their own -- never medium/high, and never a
+  reason to emit a generic "Security misconfiguration" finding above low.
+- Reserve medium+ severity for a CONCRETE, dangerous, evidenced misconfiguration
+  actually present in THIS response: an exposed admin/actuator/debug/metrics
+  endpoint returning data, the ACAO:* + credentials:true pairing, a verbose
+  stack trace / framework debug page, or a directly-served secret/config file.
+  If you cannot point to that specific evidence, keep it "low" or return nothing.
+
+Look for:
 
 - Missing security headers on responses that clearly serve browser
   content: Content-Security-Policy, X-Content-Type-Options,
