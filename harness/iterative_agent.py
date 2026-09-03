@@ -30,9 +30,10 @@ pipeline and is opt-in per run.
 from __future__ import annotations
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
@@ -53,6 +54,32 @@ if TYPE_CHECKING:
 log = logging.getLogger("harness.iterative_agent")
 
 _MAX_RESP_CHARS = 1200  # response summary fed back to the model, per step
+
+# A path segment that is an OBJECT IDENTIFIER an IDOR swaps: all-digits
+# (/tickets/1) or a long hex/uuid (/tickets/a1b2c3d4-...). Mirrors the
+# cross-identity gate's notion of an object id, so the agent can ENUMERATE a
+# path id (the case a query/body mutation can never reach) -- the gap that made
+# every path-based IDOR probe return "no mutable parameters".
+_PATH_ID_SEG = re.compile(r'^(\d+|[0-9a-fA-F]{8,}|[0-9a-fA-F]{8}-[0-9a-fA-F-]{4,})$')
+
+
+def _path_id_values(url: str) -> list[str]:
+    """The id-like path segments of `url`, in order -- what the agent may swap."""
+    segs = [s for s in urlsplit(url).path.split("/") if s]
+    return [s for s in segs if _PATH_ID_SEG.match(s)]
+
+
+def _mutate_path_segment(url: str, old_value: str, new_value: str) -> str | None:
+    """Replace the first path segment equal to `old_value` with `new_value`.
+    Returns the new URL, or None if no such segment (so the caller can tell the
+    model its target id wasn't on the path)."""
+    parts = urlsplit(url)
+    segs = parts.path.split("/")
+    for i, s in enumerate(segs):
+        if s == old_value:
+            segs[i] = new_value
+            return urlunsplit((parts.scheme, parts.netloc, "/".join(segs), parts.query, parts.fragment))
+    return None
 
 # Target-distress signals: statuses that mean the service is struggling or
 # actively shedding load. An iterative agent that keeps hammering a target
@@ -101,8 +128,10 @@ You probe ONE captured HTTP endpoint by adapting your payload to each response.
 
 Each turn, respond with ONLY a JSON object choosing exactly one action:
 
-  {{"action":"mutate","location":"query|body","param":"<name>","value":"<payload>","thought":"<one line>"}}
-     -- resend the captured request with one parameter's value replaced by your payload.
+  {{"action":"mutate","location":"query|body|path","param":"<name>","value":"<payload>","thought":"<one line>"}}
+     -- resend the captured request with one value replaced by your payload. For location "path",
+        `param` is the current id segment to swap (e.g. "1") and `value` the id to try (e.g. "2") --
+        this is how you ENUMERATE an object id to test IDOR/BOLA on a path like /tickets/1.
   {{"action":"set_header","name":"<header>","value":"<value>","thought":"<one line>"}}
      -- resend with a request header set/overridden (persists for later steps).
   {{"action":"stop","verdict":"found|not_found","thought":"<one line>",
@@ -152,8 +181,13 @@ class IterativeAgent:
 
         # mutate
         loc, param, value = action.get("location"), action.get("param"), action.get("value")
-        if loc not in ("query", "body") or not isinstance(param, str) or not isinstance(value, str):
-            return None, "mutate requires location(query|body), param, value"
+        if loc not in ("query", "body", "path") or not isinstance(param, str) or not isinstance(value, str):
+            return None, "mutate requires location(query|body|path), param, value"
+        if loc == "path":
+            new_url = _mutate_path_segment(url, param, value)
+            if new_url is None:
+                return None, f"path segment {param!r} not present on the captured request path"
+            return (method, new_url, headers, body), None
         if loc == "query":
             new_url = _mutate_query_param(url, param, value)
             if new_url is None:
@@ -174,7 +208,10 @@ class IterativeAgent:
         body = exchange.request_body or ""
         body_params = (_json_top_level_params(body) if _looks_like_json(body, ct)
                        else _form_top_level_params(body))
-        return {"query": _query_top_level_params(exchange.url), "body": body_params}
+        # `path` lists id-like segments the agent may ENUMERATE (IDOR) -- the case
+        # an object-scoped endpoint (/tickets/1) exposes no query/body param for.
+        return {"query": _query_top_level_params(exchange.url), "body": body_params,
+                "path": _path_id_values(exchange.url)}
 
     async def _execute(self, method, url, headers, body) -> tuple:
         """Scope-check + safety-gate + throttle + send. Returns (status, text)

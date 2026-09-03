@@ -38,6 +38,18 @@ def _exchange():
     )
 
 
+def _obj_exchange():
+    # object-scoped, no query/body param -- the IDOR-by-path-id case
+    return HttpExchange(
+        url="http://localhost:5002/api/tickets/1",
+        method="GET",
+        request_headers={"Authorization": "Bearer u"},
+        request_body="",
+        response_status=200,
+        response_body='{"id":1,"owner":"me"}',
+    )
+
+
 def _run(agent, ex, **kw):
     return asyncio.run(agent.run(ex, hypothesis="SQLi in q", specialty="sqli", **kw))
 
@@ -141,6 +153,55 @@ class IterativeAgentTests(unittest.IsolatedAsyncioTestCase):
         r = await agent.run(_exchange(), "h", "sqli")
         self.assertEqual(r.stop_reason, "gave_up")
         self.assertEqual(r.findings, [])
+
+    async def test_path_id_enumeration_reaches_another_object(self):
+        # The pass-2 gap: an object-scoped endpoint (/api/tickets/1) exposes no
+        # query/body param, so IDOR was unreachable. Path mutation now enumerates
+        # the id -> the agent can walk /tickets/1 -> /tickets/2 and confirm BOLA.
+        ollama = _ScriptedOllama([
+            {"action": "mutate", "location": "path", "param": "1", "value": "2", "thought": "try id 2"},
+            {"action": "stop", "verdict": "found", "thought": "reached another user's ticket",
+             "finding": {"vulnerability_class": "idor", "confidence": 0.8, "severity": "high",
+                         "summary": "IDOR on ticket id", "evidence": "user 2's data", "suggested_test": "x",
+                         "basis": "derived"}},
+        ])
+        agent = IterativeAgent(ollama, "m", ["localhost"])
+        seen = {}
+        async def fake_request(self, method, url, headers=None, content=None):
+            seen["url"] = url
+            return _Resp(200, "ticket belonging to user 2")
+        with patch("httpx.AsyncClient.request", fake_request):
+            r = await agent.run(_obj_exchange(), "IDOR on the ticket id", "idor")
+        self.assertIn("/api/tickets/2", seen["url"])
+        self.assertEqual(r.stop_reason, "found")
+        self.assertEqual(r.findings[0].vulnerability_class, "idor")
+
+    async def test_missing_path_segment_rejected_without_send(self):
+        ollama = _ScriptedOllama([
+            {"action": "mutate", "location": "path", "param": "999", "value": "2", "thought": "no such seg"},
+            {"action": "stop", "verdict": "not_found", "thought": "done"},
+        ])
+        agent = IterativeAgent(ollama, "m", ["localhost"])
+        with patch("httpx.AsyncClient.request", return_value=_Resp(200, "x")) as req:
+            r = await agent.run(_obj_exchange(), "h", "idor")
+        req.assert_not_called()  # rejected pre-send: 999 isn't on the path
+        self.assertTrue(any(s.blocked for s in r.transcript))
+
+
+class PathMutationHelperTests(unittest.TestCase):
+    def test_path_id_values_lists_id_segments(self):
+        from iterative_agent import _path_id_values
+        self.assertEqual(_path_id_values("http://h/api/tickets/1"), ["1"])
+        self.assertEqual(_path_id_values("http://h/api/tickets/1/comments/5"), ["1", "5"])
+        self.assertEqual(_path_id_values("http://h/api/users/me"), [])  # non-id segment ignored
+
+    def test_mutate_path_segment_replaces_first_match(self):
+        from iterative_agent import _mutate_path_segment
+        self.assertEqual(_mutate_path_segment("http://h/api/tickets/1", "1", "2"),
+                         "http://h/api/tickets/2")
+        self.assertEqual(_mutate_path_segment("http://h/api/tickets/1?x=1", "1", "9"),
+                         "http://h/api/tickets/9?x=1")  # query's 1 untouched
+        self.assertIsNone(_mutate_path_segment("http://h/api/tickets/1", "7", "2"))
 
 
 if __name__ == "__main__":
