@@ -46,6 +46,69 @@ _ID_SEGMENT = re.compile(r'^(\d+|[0-9a-fA-F]{8,}|[0-9a-fA-F]{8}-[0-9a-fA-F-]{4,}
 _ID_QUERY_KEYS = {"id", "user", "user_id", "userid", "uid", "order", "order_id",
                   "account", "account_id", "oid", "object", "resource", "doc", "file"}
 
+# Collection nouns that, when a NON-numeric slug directly follows them
+# (/users/alice, /tickets/support-42), mark that slug as a specific object an
+# IDOR could swap -- the case _ID_SEGMENT can't catch because the id is a name
+# rather than a number/hash. A closed allowlist (singular + plural) keeps this
+# conservative: only after one of these is a bare slug treated as an object.
+_COLLECTION_NOUNS = frozenset({
+    "users", "user", "accounts", "account", "orders", "order", "tickets", "ticket",
+    "invoices", "invoice", "customers", "customer", "clients", "client",
+    "documents", "document", "docs", "doc", "files", "file", "profiles",
+    "posts", "post", "items", "item", "products", "product", "projects", "project",
+    "reports", "report", "records", "record", "messages", "message",
+    "comments", "comment", "notes", "note", "transactions", "transaction",
+    "payments", "payment", "subscriptions", "subscription", "groups", "group",
+    "teams", "team", "organizations", "orgs", "org", "companies", "company",
+    "employees", "employee", "members", "member", "articles", "article",
+    "images", "image", "photos", "photo", "videos", "video", "carts", "cart",
+    "addresses", "address", "bookings", "booking", "reservations", "reservation",
+    "appointments", "appointment", "events", "event", "folders", "folder",
+    "resources", "resource", "entities", "entity",
+    # relationship / sub-collection nouns -- a collection following a collection
+    # (/products/reviews) is a nested list, not one object; listing them here
+    # lets the nested-collection guard in _looks_like_object_slug skip them.
+    "reviews", "review", "likes", "like", "tags", "tag", "roles", "role",
+    "permissions", "permission", "followers", "following", "notifications",
+    "notification", "replies", "reply", "ratings", "rating", "attachments",
+    "attachment", "versions", "version", "revisions", "revision", "favorites",
+    "favorite", "tokens", "token",
+})
+# Words that, even when they follow a collection noun, are NOT an object id:
+# self-references (/users/me returns the caller's OWN data -- the TN3 FP) and
+# route verbs / non-object views (/users/search, /orders/export). Denylisting
+# biases toward SKIPPING (a miss, never a false positive) -- the safe direction.
+_RESERVED_SLUGS = frozenset({
+    # self-reference
+    "me", "self", "current", "mine", "my", "own",
+    # profile / meta views
+    "profile", "account", "dashboard", "settings", "preferences", "home",
+    "overview", "index", "default", "none", "null", "undefined",
+    # CRUD / action / list verbs
+    "new", "create", "add", "edit", "update", "delete", "remove", "save",
+    "search", "filter", "query", "list", "all", "export", "import", "upload",
+    "download", "bulk", "batch", "count", "stats", "summary", "history",
+    "activity", "feed", "latest", "recent",
+})
+
+
+def _looks_like_object_slug(prev: str, seg: str) -> bool:
+    """A non-numeric slug counts as an object identifier only when it directly
+    follows a known collection noun and is not itself a self-reference/verb/
+    sub-collection keyword -- so /users/alice matches, but /users/me,
+    /users/search and /products/reviews do not. Deliberately conservative: when
+    unsure it returns False (skip, no cross-identity), which is the safe
+    direction -- a miss, never the /users/me-style false positive the
+    object-identifier gate exists to prevent (TN3)."""
+    if prev.lower() not in _COLLECTION_NOUNS:
+        return False
+    base = seg.split(".", 1)[0].lower()  # strip a trailing .json/.xml before matching
+    if not base or base in _RESERVED_SLUGS:
+        return False
+    # A collection noun following a collection noun is a nested sub-collection
+    # (/products/reviews), not a single object -- don't treat it as an id.
+    return base not in _COLLECTION_NOUNS
+
 
 def has_object_identifier(url: str) -> bool:
     """True iff the URL references a SPECIFIC object an IDOR could swap. A
@@ -53,10 +116,14 @@ def has_object_identifier(url: str) -> bool:
     such identifier -- it returns each identity's OWN data, so a cross-identity
     'match' there is two different self-profiles that merely share a JSON shape,
     not an access-control bug. This is the fix for the /api/users/me false
-    positive (TN3)."""
+    positive (TN3). A numeric/hash id (/orders/1) is caught by _ID_SEGMENT; a
+    named-slug id (/users/alice) by the collection-noun rule in
+    _looks_like_object_slug."""
     p = urlparse(url)
     segments = [s for s in p.path.split("/") if s]
     if any(_ID_SEGMENT.match(s) for s in segments):
+        return True
+    if any(_looks_like_object_slug(prev, seg) for prev, seg in zip(segments, segments[1:])):
         return True
     return any(k.lower() in _ID_QUERY_KEYS for k in parse_qs(p.query))
 

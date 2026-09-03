@@ -106,6 +106,35 @@ class CrossIdentityValidatorTest(unittest.TestCase):
         self.assertFalse(has_object_identifier("http://h/api/products"))
         self.assertFalse(has_object_identifier("http://h/dashboard"))
 
+    def test_named_slug_object_identifier(self):
+        # Named (non-numeric) object ids after a collection noun: the /users/alice
+        # case _ID_SEGMENT can't catch. These ARE swappable objects -> cross-identity
+        # should fire.
+        from validators.cross_identity_validator import has_object_identifier
+        self.assertTrue(has_object_identifier("http://h/users/alice"))
+        self.assertTrue(has_object_identifier("http://h/api/v1/tickets/support-42"))
+        self.assertTrue(has_object_identifier("http://h/api/users/alice/orders"))
+        self.assertTrue(has_object_identifier("http://h/documents/annual-report"))
+
+    def test_named_slug_does_not_reopen_self_profile_fp(self):
+        # The conservative guards: a slug after a collection noun is NOT an object
+        # id when it's a self-reference, a route verb, or a nested sub-collection.
+        # Each of these must stay False or the TN3 (/users/me) false positive class
+        # comes back.
+        from validators.cross_identity_validator import has_object_identifier
+        for url in [
+            "http://h/api/users/me",          # self-reference
+            "http://h/users/self",            # self-reference
+            "http://h/users/search",          # route verb
+            "http://h/orders/export",         # route verb
+            "http://h/users/new",             # create form
+            "http://h/products/reviews",      # nested sub-collection, not an object
+            "http://h/api/products",          # bare collection
+            "http://h/api/health",            # not a collection at all
+            "http://h/settings/profile",      # non-collection prefix + reserved slug
+        ]:
+            self.assertFalse(has_object_identifier(url), url)
+
     def test_only_applies_to_access_control_classes(self):
         v = _StubbedValidator(lambda h: (200, "x"), allowed_hosts=["localhost"])
         self.assertTrue(v.applies(_finding("insecure_direct_object_reference"), _exchange()))
