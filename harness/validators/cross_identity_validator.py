@@ -28,7 +28,8 @@ validators.active_enabled (it sends live requests), and scoped to
 server.allowed_hosts. GET-only.
 """
 from __future__ import annotations
-from urllib.parse import urlparse
+import re
+from urllib.parse import urlparse, parse_qs
 
 import httpx
 
@@ -37,6 +38,27 @@ import identity_compare
 import identity_headers
 from models import Finding, HttpExchange
 from .base import Validator, ValidationResult
+
+# A path segment that looks like an OBJECT IDENTIFIER (the thing an IDOR swaps):
+# all-digits (/orders/1), a long hex/uuid (/tickets/a1b2c3d4-...), or a long hash.
+_ID_SEGMENT = re.compile(r'^(\d+|[0-9a-fA-F]{8,}|[0-9a-fA-F]{8}-[0-9a-fA-F-]{4,})$')
+# Query params that carry an object reference.
+_ID_QUERY_KEYS = {"id", "user", "user_id", "userid", "uid", "order", "order_id",
+                  "account", "account_id", "oid", "object", "resource", "doc", "file"}
+
+
+def has_object_identifier(url: str) -> bool:
+    """True iff the URL references a SPECIFIC object an IDOR could swap. A
+    token-relative endpoint (/users/me, /profile, /account, /dashboard) has no
+    such identifier -- it returns each identity's OWN data, so a cross-identity
+    'match' there is two different self-profiles that merely share a JSON shape,
+    not an access-control bug. This is the fix for the /api/users/me false
+    positive (TN3)."""
+    p = urlparse(url)
+    segments = [s for s in p.path.split("/") if s]
+    if any(_ID_SEGMENT.match(s) for s in segments):
+        return True
+    return any(k.lower() in _ID_QUERY_KEYS for k in parse_qs(p.query))
 
 
 class CrossIdentityValidator(Validator):
@@ -72,6 +94,11 @@ class CrossIdentityValidator(Validator):
         host = urlparse(exchange.url).hostname or ""
         if self.allowed_hosts and host not in self.allowed_hosts:
             return self._skip(fc, f"host {host!r} is outside server.allowed_hosts scope")
+        if not has_object_identifier(exchange.url):
+            return self._skip(fc, "no object identifier in the path/query -- a token-relative "
+                                  "endpoint (e.g. /users/me, /profile, /dashboard) returns each "
+                                  "identity's OWN data and is not an IDOR candidate; cross-identity "
+                                  "needs a specific object reference to swap")
         idents = identity_headers.identities_for_host(host)
         if not idents:
             return self._skip(fc, "no identities configured for this host -- supply another identity's "

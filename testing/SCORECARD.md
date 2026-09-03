@@ -67,10 +67,14 @@ recall **0.909** (tp=10, fp=11, fn=1); **A01 recall 1.0** (not 0.33).
 (more raw agent findings this pass), not a regression — the runs invoke the agents
 independently and single-pass output varies.
 
-**A real cross-identity limitation found:** it CONFIRMED IDOR on **TN3, a labelled-secure
-exchange** — the classic Autorize **shared-resource false positive** (a resource
-legitimately readable by multiple authenticated identities, anon denied, is
-indistinguishable from IDOR by response comparison alone). Needs a mitigation.
+**A real cross-identity FP found — and FIXED:** it confirmed IDOR on **TN3
+(`GET /api/users/me`)**, a *token-relative* endpoint that returns each identity's OWN
+profile. The two self-profiles (`{"email":"alice@…","id":1,…}` vs bob's) are
+structurally near-identical, so trigram similarity scored ≥0.70 and read as "same
+resource". Fix: the validator now requires an **object identifier in the URL** to swap
+(`has_object_identifier`) — a token-relative endpoint (`/me`, `/profile`, `/dashboard`,
+no path id) is not an IDOR candidate and is skipped. Verified live: **TN3 → skipped,
+TP3 (`/users/2/profile`) → still confirmed**; +2 unit tests.
 
 **Reject/precision benefit not visible here:** PixelMart is deliberately vulnerable, so
 cross-identity mostly CONFIRMS; the REJECT→downgrade path (secure endpoints) needs the

@@ -86,6 +86,26 @@ class CrossIdentityValidatorTest(unittest.TestCase):
         r = asyncio.run(v.validate(_finding(), _exchange(url="http://evil.example/api/tickets/1")))
         self.assertEqual(r.status, "skipped")
 
+    def test_skips_token_relative_endpoint(self):
+        # /api/users/me has no object identifier to swap -> not an IDOR candidate
+        # (the TN3 shared-self-profile false positive). Must skip even though an
+        # identity is configured, it's GET, and it's in scope.
+        identity_headers.set_identity("localhost", "bob", {"Authorization": "Bearer bob"})
+        v = _StubbedValidator(lambda h: (200, "x"), allowed_hosts=["localhost"])
+        r = asyncio.run(v.validate(_finding(), _exchange(url="http://localhost/api/users/me")))
+        self.assertEqual(r.status, "skipped")
+        self.assertIn("object identifier", r.summary)
+
+    def test_has_object_identifier(self):
+        from validators.cross_identity_validator import has_object_identifier
+        self.assertTrue(has_object_identifier("http://h/api/users/2/profile"))
+        self.assertTrue(has_object_identifier("http://h/api/orders/1"))
+        self.assertTrue(has_object_identifier("http://h/api/tickets/a1b2c3d4e5f6"))
+        self.assertTrue(has_object_identifier("http://h/api/thing?id=5"))
+        self.assertFalse(has_object_identifier("http://h/api/users/me"))
+        self.assertFalse(has_object_identifier("http://h/api/products"))
+        self.assertFalse(has_object_identifier("http://h/dashboard"))
+
     def test_only_applies_to_access_control_classes(self):
         v = _StubbedValidator(lambda h: (200, "x"), allowed_hosts=["localhost"])
         self.assertTrue(v.applies(_finding("insecure_direct_object_reference"), _exchange()))
