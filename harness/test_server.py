@@ -405,5 +405,60 @@ class RetryAgentsEndpointTests(unittest.TestCase):
         self.assertEqual(body["ranking"]["static_fallback"], 2)
 
 
+class SettingsValidatorToggleEndpointTests(unittest.TestCase):
+    """HTTP-level coverage for the runtime validator toggles on GET/POST
+    /settings -- the backend the Burp "Cross-Identity" panel drives. The
+    toggles are in-memory only (never persisted), so these assert on the live
+    registry state the endpoint reflects, independent of the config file's
+    defaults (which a deployment may set either way)."""
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self._original_db_path = store._DB_PATH
+        store._DB_PATH = Path(self._tmpdir.name) / "test_harness_state.db"
+
+        import importlib
+        import server as server_module
+        importlib.reload(server_module)
+        self.server_module = server_module
+        from fastapi.testclient import TestClient
+        self.client = TestClient(server_module.app)
+
+    def tearDown(self):
+        store._DB_PATH = self._original_db_path
+        self._tmpdir.cleanup()
+
+    def test_get_settings_reports_validator_state(self):
+        body = self.client.get("/settings").json()
+        self.assertIn("validators", body)
+        v = body["validators"]
+        for key in ("enabled", "active_enabled", "cross_identity_enabled", "registered"):
+            self.assertIn(key, v)
+
+    def test_post_settings_arms_cross_identity_in_memory(self):
+        resp = self.client.post("/settings", json={
+            "validators": {"active_enabled": True, "cross_identity": True}})
+        self.assertEqual(resp.status_code, 200)
+        v = resp.json()["validators"]
+        self.assertTrue(v["active_enabled"])
+        self.assertTrue(v["cross_identity_enabled"])
+        self.assertIn("cross_identity", v["registered"])
+        # State persists within the process (a subsequent GET sees it) ...
+        self.assertTrue(self.client.get("/settings").json()["validators"]["cross_identity_enabled"])
+        # ... and it actually mutated the live registry the pipeline uses.
+        self.assertTrue(self.server_module.orchestrator.validator_registry.cross_identity_enabled())
+
+    def test_post_settings_disarms_cross_identity(self):
+        self.client.post("/settings", json={"validators": {"cross_identity": True}})
+        resp = self.client.post("/settings", json={"validators": {"cross_identity": False}})
+        v = resp.json()["validators"]
+        self.assertFalse(v["cross_identity_enabled"])
+        self.assertNotIn("cross_identity", v["registered"])
+
+    def test_post_settings_empty_body_is_rejected(self):
+        resp = self.client.post("/settings", json={})
+        self.assertEqual(resp.status_code, 400)
+
+
 if __name__ == "__main__":
     unittest.main()

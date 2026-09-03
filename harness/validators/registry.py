@@ -157,13 +157,50 @@ class ValidatorRegistry:
         # (opt-in): it sends live requests and needs tester-supplied identities.
         # Registering it only arms it; it still runs only when active_enabled is
         # set (active=True) AND identities are configured for the host.
-        xid_cfg = cfg.get("cross_identity", {})
-        if xid_cfg.get("enabled", False):
-            self.validators["cross_identity"] = CrossIdentityValidator(
-                allowed_hosts=config.get("server", {}).get("allowed_hosts", []),
-                timeout=float(xid_cfg.get("timeout", 10.0)),
-                max_identities=int(xid_cfg.get("max_identities", 3)),
-            )
+        # Config + allowed_hosts are stashed so the tester can arm it at run time
+        # (Burp "Cross-Identity" panel -> POST /settings) without a restart or a
+        # config-file edit -- in-memory only, gone on restart, matching how the
+        # identities it needs are supplied (identity_headers.py).
+        self._xid_cfg = cfg.get("cross_identity", {})
+        self._allowed_hosts = config.get("server", {}).get("allowed_hosts", [])
+        if self._xid_cfg.get("enabled", False):
+            self.validators["cross_identity"] = self._build_cross_identity()
+
+    def _build_cross_identity(self) -> CrossIdentityValidator:
+        return CrossIdentityValidator(
+            allowed_hosts=self._allowed_hosts,
+            timeout=float(self._xid_cfg.get("timeout", 10.0)),
+            max_identities=int(self._xid_cfg.get("max_identities", 3)),
+        )
+
+    def set_active_enabled(self, enabled: bool) -> None:
+        """Runtime toggle for the active-validator gate (validators.active_enabled).
+        In-memory only; never written back to config. Does NOT persist across a
+        server restart -- deliberately, like the identities it authorizes."""
+        self.active_enabled = bool(enabled)
+
+    def set_cross_identity_enabled(self, enabled: bool) -> None:
+        """Arm/disarm the cross-identity validator at run time. Arming lazily
+        constructs it from the stashed config; disarming removes it. Still gated
+        by active_enabled at dispatch (set_active_enabled) and by tester-supplied
+        identities per host -- this only decides whether it is registered at all."""
+        if enabled:
+            if "cross_identity" not in self.validators:
+                self.validators["cross_identity"] = self._build_cross_identity()
+        else:
+            self.validators.pop("cross_identity", None)
+
+    def cross_identity_enabled(self) -> bool:
+        return "cross_identity" in self.validators
+
+    def state(self) -> dict:
+        """The live validator-gating state the UI reflects (GET /settings)."""
+        return {
+            "enabled": self.enabled,
+            "active_enabled": self.active_enabled,
+            "cross_identity_enabled": self.cross_identity_enabled(),
+            "registered": sorted(self.validators.keys()),
+        }
 
     def for_finding(self, finding, exchange):
         if not self.enabled:

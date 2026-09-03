@@ -40,6 +40,58 @@ class ValidatorTests(unittest.TestCase):
         reg = ValidatorRegistry({"validators": {"enabled": True, "active_enabled": False}})
         self.assertEqual(reg.for_finding(self.finding, self.exchange), [])
 
+    def _idor_finding(self) -> Finding:
+        return Finding(
+            vulnerability_class="idor", confidence=0.8, severity="high",
+            summary="possible IDOR on order id", evidence="id parameter",
+            suggested_test="swap the id", basis="derived",
+        )
+
+    def test_runtime_toggle_arms_and_disarms_cross_identity(self):
+        # Registered off (config default) -> the tester can arm it at run time
+        # without a restart, and disarm it again. Nothing is persisted.
+        reg = ValidatorRegistry({"validators": {"enabled": True, "active_enabled": True,
+                                                 "cross_identity": {"enabled": False}}})
+        self.assertFalse(reg.cross_identity_enabled())
+        reg.set_cross_identity_enabled(True)
+        self.assertTrue(reg.cross_identity_enabled())
+        self.assertIn("cross_identity", reg.validators)
+        # Idempotent: arming an already-armed validator does not double-register.
+        before = reg.validators["cross_identity"]
+        reg.set_cross_identity_enabled(True)
+        self.assertIs(reg.validators["cross_identity"], before)
+        reg.set_cross_identity_enabled(False)
+        self.assertFalse(reg.cross_identity_enabled())
+        self.assertNotIn("cross_identity", reg.validators)
+
+    def test_runtime_active_toggle_gates_cross_identity_dispatch(self):
+        # An armed cross-identity validator still only DISPATCHES when the active
+        # gate is on -- flipping the gate at run time controls that.
+        reg = ValidatorRegistry({"validators": {"enabled": True, "active_enabled": False,
+                                                 "cross_identity": {"enabled": True}}})
+        idor = self._idor_finding()
+        self.assertEqual(reg.for_finding(idor, self.exchange), [])  # gate off
+        reg.set_active_enabled(True)
+        armed = [v.name for v in reg.for_finding(idor, self.exchange)]
+        self.assertIn("cross_identity", armed)
+        reg.set_active_enabled(False)
+        self.assertEqual(reg.for_finding(idor, self.exchange), [])
+
+    def test_state_reflects_live_gating(self):
+        reg = ValidatorRegistry({"validators": {"enabled": True, "active_enabled": False,
+                                                 "cross_identity": {"enabled": False}}})
+        s = reg.state()
+        self.assertEqual(s["enabled"], True)
+        self.assertEqual(s["active_enabled"], False)
+        self.assertEqual(s["cross_identity_enabled"], False)
+        reg.set_active_enabled(True)
+        reg.set_cross_identity_enabled(True)
+        s = reg.state()
+        self.assertTrue(s["active_enabled"])
+        self.assertTrue(s["cross_identity_enabled"])
+        self.assertIn("cross_identity", s["registered"])
+        self.assertEqual(s["registered"], sorted(s["registered"]))
+
     def test_sqlmap_confirmation_promotes_only_on_explicit_tool_result(self):
         validator = SqlmapValidator()
         with patch("subprocess.run", return_value=FakeProc()):

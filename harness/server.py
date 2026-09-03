@@ -544,6 +544,9 @@ async def get_settings(authorization: str | None = Header(default=None)):
             "max_tokens_per_vuln": p.max_tokens_per_vuln, "stop_on_found": p.stop_on_found,
             "min_actionable_confidence": p.min_actionable_confidence,
         },
+        # Live validator gating -- lets the UI reflect (and, via POST, flip) the
+        # active-validator gate and the cross-identity arm at run time.
+        "validators": orchestrator.validator_registry.state(),
     }
 
 
@@ -552,6 +555,9 @@ class SettingsRequest(_BaseModel):
     throttle_rps: float | None = None
     # Default retry-budget policy overrides (any omitted -> unchanged).
     retry_budget: dict | None = None
+    # Runtime validator toggles (in-memory only, never persisted): recognized keys
+    # are `active_enabled` and `cross_identity` (both bool). Any omitted -> unchanged.
+    validators: dict | None = None
 
 
 @app.post("/settings")
@@ -569,8 +575,19 @@ async def update_settings(req: SettingsRequest, authorization: str | None = Head
         p = orchestrator.retry_budget_policy
         changed["retry_budget"] = {"max_retries": p.max_retries, "max_agents": p.max_agents,
                                    "max_tokens_per_vuln": p.max_tokens_per_vuln}
+    if req.validators:
+        # Runtime, in-memory validator toggles (Burp "Cross-Identity" panel).
+        # Never persisted -- gone on restart, by design. Unknown keys are ignored.
+        vr = orchestrator.validator_registry
+        v = req.validators
+        if "active_enabled" in v:
+            vr.set_active_enabled(bool(v["active_enabled"]))
+        if "cross_identity" in v:
+            vr.set_cross_identity_enabled(bool(v["cross_identity"]))
+        changed["validators"] = vr.state()
     if not changed:
-        raise HTTPException(status_code=400, detail="nothing to set: provide throttle_rps and/or retry_budget")
+        raise HTTPException(status_code=400,
+                            detail="nothing to set: provide throttle_rps, retry_budget, and/or validators")
     return changed
 
 

@@ -538,6 +538,37 @@ public class HarnessClient {
         return postJson("/settings", body, shortTimeout());
     }
 
+    /** POST /settings -- flip the runtime validator toggles the Cross-Identity
+     * panel drives. Both are in-memory only server-side (never persisted, gone on
+     * restart). Pass null for a toggle to leave it unchanged. `crossIdentity`
+     * arms/disarms the Autorize-style validator; `activeEnabled` is the gate that
+     * must ALSO be on for any active validator (including cross-identity) to run. */
+    public com.google.gson.JsonObject setValidators(Boolean activeEnabled, Boolean crossIdentity)
+            throws HarnessException {
+        java.util.Map<String, Object> validators = new java.util.HashMap<>();
+        if (activeEnabled != null) validators.put("active_enabled", activeEnabled);
+        if (crossIdentity != null) validators.put("cross_identity", crossIdentity);
+        java.util.Map<String, Object> body = new java.util.HashMap<>();
+        body.put("validators", validators);
+        return postJson("/settings", body, shortTimeout());
+    }
+
+    /** POST /identities/session-headers -- supply ANOTHER identity's real session
+     * headers for cross-identity (Autorize-style) access-control testing. Held in
+     * memory only server-side (never persisted or logged -- see identity_headers.py),
+     * exactly like configuring Autorize's low-privilege cookie. Returns the current
+     * set of configured identity names for the host. */
+    public com.google.gson.JsonObject setSessionHeaders(String host, String name, String role,
+                                                        java.util.Map<String, String> headers)
+            throws HarnessException {
+        java.util.Map<String, Object> body = new java.util.HashMap<>();
+        body.put("host", host);
+        body.put("name", name);
+        body.put("role", role == null || role.isBlank() ? "user" : role);
+        body.put("headers", headers == null ? java.util.Map.of() : headers);
+        return postJson("/identities/session-headers", body, shortTimeout());
+    }
+
     /** POST /crawl -- discover the app's endpoint surface (JS-mined). Network-
      * bound, so uses the longer analysis timeout. */
     public com.google.gson.JsonObject crawl(String baseUrl, java.util.Map<String, String> headers,

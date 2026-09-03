@@ -62,6 +62,7 @@ public class HarnessToolsPanel extends JPanel {
         tabs.addTab("Models & Settings", buildModelsTab());
         tabs.addTab("Discovery", buildDiscoveryTab());
         tabs.addTab("Active Testing", buildActiveTab());
+        tabs.addTab("Cross-Identity", buildCrossIdentityTab());
         tabs.addTab("Budget", buildBudgetTab());
         tabs.addTab("Tools", buildToolsTab());
         tabs.addTab("Confidential Scan", buildConfidentialTab());
@@ -570,6 +571,100 @@ public class HarnessToolsPanel extends JPanel {
                 labeled("Max retries:", retryCount),
                 buttonRow(retryBtn));
         return withOutput(north, out);
+    }
+
+    // ------------------------------------------------------------------
+    // Cross-Identity (Autorize-style access-control confirmation)
+    // ------------------------------------------------------------------
+
+    private JComponent buildCrossIdentityTab() {
+        JTextArea out = outputArea();
+
+        // --- runtime toggles (POST /settings; in-memory, gone on restart) ---
+        JCheckBox activeToggle = new JCheckBox("Enable active validators (validators.active_enabled)");
+        JCheckBox xidToggle = new JCheckBox("Arm the cross-identity validator");
+        JButton loadState = new JButton("Load current state");
+        loadState.addActionListener(e -> {
+            loadState.setEnabled(false);
+            out.setText("Loading...");
+            new SwingWorker<Object, Void>() {
+                @Override protected Object doInBackground() {
+                    try { return client.getSettings(); } catch (Exception ex) { return ex; }
+                }
+                @Override protected void done() {
+                    try {
+                        Object r = get();
+                        if (r instanceof Exception ex) { out.setText("ERROR: " + ex.getMessage()); return; }
+                        JsonObject o = (JsonObject) r;
+                        if (o.has("validators") && o.get("validators").isJsonObject()) {
+                            JsonObject v = o.getAsJsonObject("validators");
+                            activeToggle.setSelected(v.has("active_enabled") && v.get("active_enabled").getAsBoolean());
+                            xidToggle.setSelected(v.has("cross_identity_enabled")
+                                    && v.get("cross_identity_enabled").getAsBoolean());
+                        }
+                        out.setText(pretty.toJson(o));
+                        out.setCaretPosition(0);
+                    } catch (Exception ex) {
+                        out.setText("ERROR: " + ex.getMessage());
+                    } finally {
+                        loadState.setEnabled(true);
+                    }
+                }
+            }.execute();
+        });
+        JButton applyToggle = new JButton("Apply toggles");
+        applyToggle.addActionListener(e -> runAsync(applyToggle, out,
+                () -> client.setValidators(activeToggle.isSelected(), xidToggle.isSelected())));
+
+        // --- supply another identity's session headers (Autorize low-priv cookie) ---
+        JTextField host = new JTextField("localhost:3000", 20);
+        JTextField name = new JTextField("victim", 14);
+        JTextField role = new JTextField("user", 10);
+        JTextArea headers = new JTextArea(5, 30);
+        headers.setText("Authorization: Bearer <another identity's token>\nCookie: session=<value>");
+        headers.setBorder(BorderFactory.createTitledBorder(
+                "Session headers -- one per line: <Header>: <value>   (split at the first colon; "
+                + "a Cookie value's own '=' and ';' are preserved)"));
+        JButton addBtn = new JButton("Add identity");
+        addBtn.addActionListener(e -> {
+            Map<String, String> hdrs = parseHeaderLines(headers.getText());
+            if (hdrs.isEmpty()) { out.setText("ERROR: supply at least one header line (e.g. Authorization: ...)"); return; }
+            runAsync(addBtn, out, () -> client.setSessionHeaders(
+                    host.getText().trim(), name.getText().trim(), role.getText().trim(), hdrs));
+        });
+
+        JComponent north = form(
+                new JLabel("Cross-identity replays an object-scoped GET as ANOTHER identity (+ anon) and compares --"),
+                new JLabel("the Autorize move: it tells a real IDOR from your own 200. GET-only, scoped to allowed_hosts."),
+                new JSeparator(),
+                new JLabel("1) Arm it (runtime, in-memory -- resets on server restart):"),
+                activeToggle,
+                xidToggle,
+                buttonRow(loadState, applyToggle),
+                new JSeparator(),
+                new JLabel("2) Supply another identity's real session headers (in memory only, never persisted):"),
+                labeled("Host:", host),
+                labeled("Identity name:", name),
+                labeled("Role:", role),
+                headers,
+                buttonRow(addBtn));
+        return withOutput(north, out);
+    }
+
+    /** Parse pasted HTTP header lines into a name->value map. Each non-blank line
+     * is split at its FIRST ':' so a Cookie value's own '=' and ';' survive
+     * intact. Lines without a ':' are ignored. */
+    private static Map<String, String> parseHeaderLines(String text) {
+        Map<String, String> headers = new HashMap<>();
+        for (String line : text.split("\\R")) {
+            if (line.isBlank()) continue;
+            int colon = line.indexOf(':');
+            if (colon <= 0) continue;
+            String key = line.substring(0, colon).trim();
+            String value = line.substring(colon + 1).trim();
+            if (!key.isEmpty()) headers.put(key, value);
+        }
+        return headers;
     }
 
     // ------------------------------------------------------------------
