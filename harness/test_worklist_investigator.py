@@ -80,6 +80,25 @@ class InvestigateTests(unittest.IsolatedAsyncioTestCase):
         ep = next(w for w in st.worklist(10) if w["path"] == "/api/tickets/{id}")
         self.assertEqual(ep["status"], "validated")
 
+    async def test_confirm_fn_upgrades_finding_and_validates_node(self):
+        st = _state_with([OBJ])
+        async def probe(exchange, hypothesis, specialty, step_budget):
+            # the iterative agent returns an UNCONFIRMED idor guess
+            return {"iterative_result": {"stop_reason": "found", "findings": [
+                {"vulnerability_class": "IDOR/BOLA", "confidence": 0.8, "severity": "high",
+                 "confirmed": False, "summary": "s", "evidence": "e", "suggested_test": "t",
+                 "basis": "derived"}]}, "integration": {}}
+        seen = []
+        async def confirm(finding, exchange):
+            seen.append((finding["vulnerability_class"], exchange.url))
+            finding["confirmed"] = True
+            finding["confidence"] = 0.91
+        out = await wi.investigate_worklist(probe, st, "http://t", ROLES, confirm_fn=confirm)
+        self.assertTrue(seen)                       # confirmation ran on the finding
+        self.assertTrue(out[0]["confirmed"])        # outcome reflects confirmation
+        ep = next(w for w in st.worklist(10) if w["path"] == "/api/tickets/{id}")
+        self.assertEqual(ep["status"], "validated")  # confirmed finding -> node validated
+
     async def test_validated_node_is_not_retested(self):
         st = _state_with([OBJ])
         # first pass confirms it

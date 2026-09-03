@@ -91,6 +91,7 @@ async def investigate_worklist(
     base_url: str,
     roles,
     *,
+    confirm_fn=None,
     max_nodes: int = 8,
     step_budget: int = 16,
     id_fill: str = "1",
@@ -98,6 +99,11 @@ async def investigate_worklist(
     """Drive `probe_fn` over the top `max_nodes` actionable worklist nodes.
 
     `probe_fn(exchange, hypothesis, specialty, step_budget) -> outcome dict`.
+    `confirm_fn(finding_dict, exchange)`, if given, runs a deterministic
+    confirmation (e.g. the cross-identity replay) on each finding BEFORE it folds
+    into the graph -- so a confirmed access-control finding lands as `validated`,
+    sinks in the ranking, and outranks the agent's unconfirmed guesses. It mutates
+    the finding in place (may set confirmed=True + boost confidence).
     Returns a per-node outcome list; findings are folded back into `state`."""
     role_headers = {r.role: dict(r.headers or {}) for r in roles}
     outcomes: list[dict] = []
@@ -129,6 +135,12 @@ async def investigate_worklist(
         findings = _findings_from_outcome(outcome)
         for f in findings:
             f.setdefault("url", exchange.url)  # stamp the concrete url for chain/capability linking
+        if confirm_fn is not None:
+            for f in findings:
+                try:
+                    await confirm_fn(f, exchange)  # deterministic confirmation, mutates f in place
+                except Exception as e:  # confirmation is a bonus -- never sink the finding
+                    log.debug("confirm_fn failed on %s: %s", exchange.url, e)
         if findings:
             state.ingest_findings(exchange.url, exchange.method, findings)
         outcomes.append({

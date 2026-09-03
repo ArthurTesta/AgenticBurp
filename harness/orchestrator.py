@@ -667,9 +667,52 @@ class Orchestrator:
         async def _probe(exchange, hypothesis, specialty, sb):
             return await self.run_active_probe(exchange, hypothesis, specialty, step_budget=sb)
 
+        # Cross-identity confirmation for the investigation path: register the
+        # roles as replay identities and confirm access-control findings the
+        # iterative agent reaches -- turning its unconfirmed guesses into
+        # deterministically CONFIRMED findings (via the Autorize-style replay), so
+        # a proven bug lands as `validated` and outranks the model's claims.
+        import identity_headers
+        import access_control_gate
+        from validators.cross_identity_validator import CrossIdentityValidator
+        from models import Finding
+        host = urlsplit(base_url).hostname or ""
+        for r in roles:
+            if r.headers:
+                identity_headers.set_identity(host, r.role, dict(r.headers), r.role)
+        _xval = CrossIdentityValidator(allowed_hosts=self.allowed_hosts)
+
+        async def _confirm(finding, exchange):
+            if not access_control_gate._is_access_control_class(finding.get("vulnerability_class", "")):
+                return
+            # populate the candidate baseline: the probe role's own response.
+            if exchange.response_status is None and scope_discovery.is_host_allowed(exchange.url, self.allowed_hosts):
+                try:
+                    await global_throttle.acquire()
+                    async with httpx.AsyncClient(timeout=10.0, follow_redirects=False, verify=False) as client:
+                        resp = await client.get(exchange.url, headers=exchange.request_headers or None)
+                    exchange.response_status, exchange.response_body = resp.status_code, (resp.text or "")
+                except httpx.HTTPError:
+                    return
+            try:
+                fnd = Finding(vulnerability_class=finding.get("vulnerability_class") or "idor",
+                              confidence=float(finding.get("confidence", 0.5) or 0.5),
+                              severity=finding.get("severity") or "medium",
+                              summary=finding.get("summary") or "access-control finding",
+                              evidence=finding.get("evidence") or "", suggested_test=finding.get("suggested_test") or "",
+                              basis="derived")
+                res = await _xval.validate(fnd, exchange)
+            except Exception:
+                return
+            if res.status == "confirmed" and res.confirmed:
+                finding["confirmed"] = True
+                finding["confidence"] = max(float(finding.get("confidence", 0) or 0), float(res.confidence or 0.9))
+                finding["evidence"] = ((finding.get("evidence") or "") + " || cross-identity CONFIRMED: "
+                                       + (res.summary or "")).strip(" |")
+
         async def _investigate(st, rs):
             outs = await worklist_investigator.investigate_worklist(
-                _probe, st, base_url, rs, max_nodes=max_nodes, step_budget=step_budget)
+                _probe, st, base_url, rs, confirm_fn=_confirm, max_nodes=max_nodes, step_budget=step_budget)
             return outs, [f for o in outs for f in o.get("findings_detail", [])]
 
         outcomes, all_findings = await _investigate(state, roles)
