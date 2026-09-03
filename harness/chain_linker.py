@@ -28,10 +28,37 @@ from __future__ import annotations
 
 import logging
 
+import access_control_gate
 import chaining
 import engagement as eng
 
 log = logging.getLogger("harness.chain_linker")
+
+
+def _canon_class(vc: str) -> str:
+    """Canonicalise a finding's class so LLM free-text labels link the same as
+    the deterministic ones. The iterative agent emits things like 'IDOR/BOLA' or
+    'Broken Function-Level Authorization' which engagement._canon returns None
+    for -- so detect_capabilities/chaining silently skipped them. The
+    access-control MARKER set (access_control_gate) does recognise them, so map
+    the whole access-control family to a canonical token the linkers key off."""
+    low = (vc or "").lower()
+    if access_control_gate._is_access_control_class(vc or ""):
+        if "idor" in low or "object" in low or "bola" in low:
+            return "idor"
+        return "broken_access_control"
+    try:
+        from categories import canonicalize
+        return canonicalize(vc) or low
+    except Exception:
+        return low
+
+
+def _canon_finding(f: dict) -> dict:
+    """A shallow copy with a canonical vulnerability_class -- other fields intact."""
+    g = dict(f)
+    g["vulnerability_class"] = _canon_class(f.get("vulnerability_class", ""))
+    return g
 
 
 def _chain_input(findings: list[dict]) -> list[dict]:
@@ -44,7 +71,7 @@ def _chain_input(findings: list[dict]) -> list[dict]:
             continue
         out.append({
             "url": url,
-            "vulnerability_class": f.get("vulnerability_class", ""),
+            "vulnerability_class": _canon_class(f.get("vulnerability_class", "")),
             "severity": f.get("severity", "info"),
             "confidence": f.get("confidence", 0.0),
             "summary": f.get("summary", "") or "",
@@ -72,7 +99,7 @@ def link_findings(state, findings: list[dict], *, responses: dict | None = None)
         if not url:
             continue
         r = responses.get(url, {})
-        caps = eng.detect_capabilities(f, r.get("headers", {}), r.get("body", ""), url)
+        caps = eng.detect_capabilities(_canon_finding(f), r.get("headers", {}), r.get("body", ""), url)
         credential_caps.extend(state.apply_capabilities(caps, url))
 
     # 2. chain composition -> record each as a graph task so it's inspectable

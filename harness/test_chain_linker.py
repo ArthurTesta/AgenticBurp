@@ -46,6 +46,20 @@ class EscalationEdgeTests(unittest.TestCase):
         kinds = {t.kind for t in st.graph.tasks.values()}
         self.assertTrue(kinds & {"recrawl_area", "recrawl_as_privileged", "obtain"})
 
+    def test_llm_freetext_class_still_links(self):
+        # The iterative agent emits free-text labels ('IDOR/BOLA', 'Broken
+        # Function-Level Authorization') that engagement._canon returns None for.
+        # The linker must canonicalise them or escalation edges silently vanish
+        # (the capstone bug: 7 findings, 0 task-graph edges).
+        st = _state()
+        chain_linker.link_findings(st, [
+            _f("IDOR/BOLA", "http://t/api/reports/1", conf=1.0),
+            _f("Broken Function-Level Authorization", "http://t/api/admin/debug", conf=1.0),
+        ])
+        self.assertTrue(any(t.kind in ("recrawl_area", "recrawl_as_privileged", "obtain")
+                            for t in st.graph.tasks.values()),
+                        "access-control findings in LLM phrasing must still create escalation edges")
+
     def test_leaked_credential_becomes_derived_identity_and_closed_loop_edge(self):
         st = _state()
         jwt = "eyJhbGciOiJIUzI1NiJ9.eyJ1IjoxfQ.aGVsbG8sIHRoaXMgaXMgYSB0b2tlbg"
