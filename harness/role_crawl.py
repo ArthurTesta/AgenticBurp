@@ -25,6 +25,7 @@ by the global request throttle throughout.
 from __future__ import annotations
 import hashlib
 import logging
+import re
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
@@ -36,6 +37,15 @@ import missing_auth_probe as map_
 from models import Finding
 
 log = logging.getLogger("harness.role_crawl")
+
+# A pure-digit path segment is an object id -> template it to {id} so the same
+# object-scoped endpoint (tickets/1, tickets/2 ...) collapses to one row the
+# access matrix probes once per role and the IDOR machinery recognises.
+_NUM_SEG = re.compile(r"/\d+(?=/|$)")
+
+
+def _template_ids(path: str) -> str:
+    return _NUM_SEG.sub("/{id}", path)
 
 # Trust ordering for the built-in identity roles (identity.IdentityRole). A role
 # reaching something a STRICTLY higher-trust role also reaches is normal; a
@@ -126,6 +136,8 @@ async def crawl_roles(
     max_endpoints: int = 150,
     id_fill: str = "1",
     timeout: float = 15.0,
+    active_discovery: bool = False,
+    discovery_max_probes: int = 6000,
 ) -> RoleCrawlResult:
     """Crawl `base_url` once per role, union the surface, probe every endpoint
     with every role, and derive auth-bypass + IDOR candidates from the matrix.
@@ -133,7 +145,12 @@ async def crawl_roles(
     `roles` is a list of RoleSession; include an anonymous role (empty headers)
     to detect auth bypass. Probing is bounded by `max_endpoints` (the union is
     truncated, most-specific first is not assumed -- simply capped) so a large
-    surface can't fan out into an unbounded number of requests."""
+    surface can't fan out into an unbounded number of requests.
+
+    `active_discovery` augments the JS-mined surface with black-box API discovery
+    (api_surface_discovery) -- essential on a headless API where the JS crawler
+    finds nothing. Off by default so the plain crawl stays purely passive; the
+    engagement builder turns it on."""
     result = RoleCrawlResult(base_url=base_url, roles=[r.role for r in roles])
     if not roles:
         result.errors.append("no roles supplied")
@@ -149,6 +166,24 @@ async def crawl_roles(
             result.errors.extend(f"[{r.role}] {e}" for e in cr.errors)
         except Exception as e:  # a bad role's crawl must not sink the whole run
             result.errors.append(f"[{r.role}] crawl failed: {e.__class__.__name__}")
+
+    # 1b. Active black-box API discovery (opt-in). Runs ONCE as the most-trusted
+    # role -- route EXISTENCE is ~role-independent (a 401 still proves the route);
+    # per-role ACCESS is the probe step below. Concrete ids are templated to {id}.
+    if active_discovery:
+        try:
+            from api_surface_discovery import SurfaceDiscovery
+            seed = max(roles, key=lambda r: _trust(r.role))
+            disc = SurfaceDiscovery(base_url, headers=seed.norm_headers(),
+                                    allowed_hosts=allowed_hosts, max_probes=discovery_max_probes)
+            sres = await disc.discover()
+            discovered |= {_template_ids(rt.path) for rt in sres.routes}
+            if sres.spec_found:
+                result.errors.append(f"[discovery] used spec {sres.spec_found}")
+            log.info("role_crawl: active discovery added surface -> %d routes (%d probes)",
+                     len(sres.routes), sres.probes_sent)
+        except Exception as e:
+            result.errors.append(f"[discovery] failed: {e.__class__.__name__}")
 
     paths = sorted(discovered)[:max_endpoints]
     if len(discovered) > max_endpoints:

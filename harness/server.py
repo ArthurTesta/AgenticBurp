@@ -288,6 +288,11 @@ class RoleCrawlRequest(_BaseModel):
     # Auto-register a named test identity per role, so the reachable identities
     # persist and the cross-identity compare can reuse them (deduped by name).
     register_identities: bool = True
+    # Augment the JS-mined surface with active black-box API discovery
+    # (api_surface_discovery) -- essential on a headless API where JS crawling
+    # finds nothing. Read-only, scope-gated, throttled; bounded by max_probes.
+    active_discovery: bool = False
+    discovery_max_probes: int = 6000
 
 
 def _register_role_identities(roles) -> list[dict]:
@@ -357,6 +362,8 @@ async def crawl_roles_endpoint(req: RoleCrawlRequest, authorization: str | None 
         max_pages=max(1, min(req.max_pages, 200)),
         max_endpoints=max(1, min(req.max_endpoints, 500)),
         id_fill=req.id_fill or "1",
+        active_discovery=bool(req.active_discovery),
+        discovery_max_probes=max(1, min(req.discovery_max_probes, 20000)),
     )
     out = result.to_dict()
     registered: list[dict] = []
