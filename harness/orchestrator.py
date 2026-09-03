@@ -642,6 +642,78 @@ class Orchestrator:
         outcome = await pivot_memory.integrate(result, exchange, model=chosen_model)
         return {"iterative_result": result.to_dict(), "integration": outcome.to_dict()}
 
+    async def investigate_engagement(self, base_url, roles, *, max_nodes: int = 8,
+                                     step_budget: int = 16, discovery_max_probes: int = 6000,
+                                     max_chain_rounds: int = 1) -> dict:
+        """Milestone A+B, end to end: build the app model (active discovery ->
+        per-role access matrix -> prioritised worklist), then drive the ITERATIVE
+        agent top-down over that worklist -- each high-value node gets a bounded
+        multi-step investigation, and findings fold back into the graph so a
+        tested node sinks and is not re-tested. The harness chooses WHAT to test
+        (the ranking) and HOW HARD (the step budget); this replaces firing every
+        agent at every exchange.
+
+        `roles` is a list of role_crawl.RoleSession. Requires iterative_agent
+        enabled (run_active_probe enforces it). `max_chain_rounds` bounds the
+        Milestone-C closed loop (re-test AS a credential learned from a finding)."""
+        import engagement_builder
+        import worklist_investigator
+        import chain_linker
+        import role_crawl
+        state, rc = await engagement_builder.build_engagement(
+            base_url, roles, allowed_hosts=self.allowed_hosts,
+            discovery_max_probes=discovery_max_probes)
+
+        async def _probe(exchange, hypothesis, specialty, sb):
+            return await self.run_active_probe(exchange, hypothesis, specialty, step_budget=sb)
+
+        async def _investigate(st, rs):
+            outs = await worklist_investigator.investigate_worklist(
+                _probe, st, base_url, rs, max_nodes=max_nodes, step_budget=step_budget)
+            return outs, [f for o in outs for f in o.get("findings_detail", [])]
+
+        outcomes, all_findings = await _investigate(state, roles)
+
+        # Milestone C: link findings into escalation edges + composed chains, then
+        # walk the closed loop -- re-test AS any credential a finding leaked.
+        link = chain_linker.link_findings(state, all_findings)
+        chains = list(link["chain_findings"])
+        creds, rounds, seen_ident = link["credential_caps"], 0, set()
+        while creds and rounds < max_chain_rounds:
+            rounds += 1
+            derived = [role_crawl.RoleSession(role="anonymous", headers={})]
+            for c in creds:
+                ident = f"{c.get('kind')}@{c.get('source_url')}"
+                if ident in seen_ident:
+                    continue
+                if await self._credential_grants_access(c.get("source_url", base_url), c.get("headers", {})):
+                    derived.append(role_crawl.RoleSession(role="derived", headers=c.get("headers", {})))
+                    seen_ident.add(ident)
+            if len(derived) < 2:
+                break
+            st2, _ = await engagement_builder.build_engagement(
+                base_url, derived, allowed_hosts=self.allowed_hosts, discovery_max_probes=discovery_max_probes)
+            outs2, new_findings = await _investigate(st2, derived)
+            outcomes.extend(outs2)
+            all_findings.extend(new_findings)
+            link = chain_linker.link_findings(state, all_findings)
+            chains = list(link["chain_findings"])
+            creds = link["credential_caps"]
+
+        return {
+            "summary": state.summary(),
+            "worklist": state.worklist(50),
+            "outcomes": outcomes,
+            "chains": chains,
+            "chain_rounds": rounds,
+            "task_graph": state.graph.to_dict(),
+            "ready_tasks": state.pending(),
+            "blocked_tasks": state.blocked(),
+            "auth_bypass_candidates": rc.auth_bypass_candidates,
+            "idor_candidates": rc.idor_candidates,
+            "idor_findings": rc.idor_findings,
+        }
+
     async def run_retry_agents(
         self,
         exchange: HttpExchange,
