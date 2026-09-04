@@ -16,6 +16,9 @@ from .race_condition_validator import RaceConditionValidator
 from .deserialization_validator import DeserializationValidator
 from .browser_xss_validator import BrowserXssValidator
 from .cross_identity_validator import CrossIdentityValidator
+from .jwt_forge_validator import JwtForgeValidator
+from .ssrf_validator import SsrfValidator
+from .xxe_validator import XxeValidator
 from safety_gate import get_default_gate, reset_default_gate
 
 
@@ -139,6 +142,25 @@ class ValidatorRegistry:
         deser_cfg = cfg.get("deserialization", {})
         if deser_cfg.get("enabled", True):
             self.validators["deserialization"] = DeserializationValidator()
+
+        _allowed = config.get("server", {}).get("allowed_hosts", [])
+        # JWT-forgery leg -- pure Python, forge alg:none/reused-sig and replay to
+        # prove the signature isn't verified. Active (sends replays), GET-only.
+        jwt_cfg = cfg.get("jwt_forge", {})
+        if jwt_cfg.get("enabled", True):
+            self.validators["jwt_forge"] = JwtForgeValidator(
+                allowed_hosts=_allowed, timeout=float(jwt_cfg.get("timeout", 10.0)))
+        # SSRF leg -- OOB via the in-process collaborator (redirect a URL param to
+        # a callback and watch for the hit). Active.
+        ssrf_cfg = cfg.get("ssrf", {})
+        if ssrf_cfg.get("enabled", True):
+            self.validators["ssrf"] = SsrfValidator(
+                allowed_hosts=_allowed, timeout=float(ssrf_cfg.get("timeout", 10.0)))
+        # XXE leg -- OOB via the collaborator (external entity -> callback). Active.
+        xxe_cfg = cfg.get("xxe", {})
+        if xxe_cfg.get("enabled", True):
+            self.validators["xxe"] = XxeValidator(
+                allowed_hosts=_allowed, timeout=float(xxe_cfg.get("timeout", 10.0)))
 
         # Browser-driven XSS validator (A2) -- active: loads candidate URLs in a
         # real headless browser and confirms only on observed script execution.

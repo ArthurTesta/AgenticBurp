@@ -281,7 +281,11 @@ class TestNoValidatorBypassesTheGate(unittest.TestCase):
         import re
         # Files allowed to reference exchange.method for a live send,
         # because they route it through SafetyGate first.
-        gate_routed_exceptions = {"api_security_validator.py", "race_condition_validator.py", "sqlmap.py"}
+        gate_routed_exceptions = {"api_security_validator.py", "race_condition_validator.py", "sqlmap.py",
+                                  # ssrf/xxe replay the request as a live (possibly mutating) send but
+                                  # route it through GatedAsyncClient -- verified in
+                                  # test_the_gate_routed_exceptions_actually_route_through_the_gate.
+                                  "ssrf_validator.py", "xxe_validator.py"}
         # Files whose exchange.method reference is provably not a live
         # send at all -- verified by reading the code, not assumed.
         inert_usage_exceptions = {
@@ -304,6 +308,10 @@ class TestNoValidatorBypassesTheGate(unittest.TestCase):
             # is never passed to a request. This is the opposite of the danger
             # this test guards against.
             "cross_identity_validator.py",
+            # Same defensive-guard shape: the only exchange.method reference is
+            # `if (exchange.method or "GET").upper() != "GET": return skipped`, and
+            # the live send (_probe) hardcodes client.get(). Never sent.
+            "jwt_forge_validator.py",
         }
 
         violations = []
@@ -351,6 +359,12 @@ class TestNoValidatorBypassesTheGate(unittest.TestCase):
         self.assertIn("get_default_gate", sqlmap_src,
                        "sqlmap.py uses exchange.method for --method but doesn't call the safety gate")
         self.assertIn(".authorize(", sqlmap_src)
+
+        for name in ("ssrf_validator.py", "xxe_validator.py"):
+            src = (here / "validators" / name).read_text()
+            self.assertIn("GatedAsyncClient", src,
+                          f"{name} replays exchange.method but doesn't route through GatedAsyncClient")
+            self.assertIn("get_default_gate", src)
 
     def test_sqlmap_command_never_contains_destructive_flags(self):
         import pathlib

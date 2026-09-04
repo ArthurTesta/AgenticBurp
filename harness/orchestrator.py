@@ -676,6 +676,9 @@ class Orchestrator:
         import access_control_gate
         from validators.cross_identity_validator import CrossIdentityValidator
         from validators.browser_xss_validator import BrowserXssValidator
+        from validators.jwt_forge_validator import JwtForgeValidator
+        from validators.ssrf_validator import SsrfValidator
+        from validators.xxe_validator import XxeValidator
         from models import Finding
         host = urlsplit(base_url).hostname or ""
         for r in roles:
@@ -683,6 +686,9 @@ class Orchestrator:
                 identity_headers.set_identity(host, r.role, dict(r.headers), r.role)
         _xval = CrossIdentityValidator(allowed_hosts=self.allowed_hosts)
         _bxss = BrowserXssValidator(allowed_hosts=self.allowed_hosts)
+        _jwt = JwtForgeValidator(allowed_hosts=self.allowed_hosts)
+        _ssrf = SsrfValidator(allowed_hosts=self.allowed_hosts)
+        _xxe = XxeValidator(allowed_hosts=self.allowed_hosts)
 
         def _apply(finding, res, leg, floor):
             if res is not None and res.status == "confirmed" and res.confirmed:
@@ -725,6 +731,21 @@ class Orchestrator:
                 # sink. Skips gracefully if no browser engine is installed.
                 try:
                     _apply(finding, await _bxss.validate(_as_finding(finding, "xss"), exchange), "browser-xss", 0.95)
+                except Exception:
+                    return
+            elif "jwt" in low or "algorithm confusion" in low or "algorithm_confusion" in low or "weak_token" in low:
+                try:
+                    _apply(finding, await _jwt.validate(_as_finding(finding, "jwt"), exchange), "jwt-forge", 0.9)
+                except Exception:
+                    return
+            elif "ssrf" in low or "server-side request" in low or "server_side_request" in low:
+                try:
+                    _apply(finding, await _ssrf.validate(_as_finding(finding, "ssrf"), exchange), "ssrf", 0.95)
+                except Exception:
+                    return
+            elif "xxe" in low or "xml external" in low or "xml_external" in low:
+                try:
+                    _apply(finding, await _xxe.validate(_as_finding(finding, "xxe"), exchange), "xxe", 0.95)
                 except Exception:
                     return
 
