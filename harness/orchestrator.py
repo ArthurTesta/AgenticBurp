@@ -212,6 +212,74 @@ def _verify_component_observation(component: ComponentCandidate, exchange: HttpE
     return component
 
 
+# --- proactive, precondition-driven confirmation-leg routing (HANDOVER_6 §4) ----
+# The coupling fix: which confirmation legs an ENDPOINT'S SHAPE warrants, chosen
+# independently of whether an agent flagged that class. Module-level + pure so the
+# routing is unit-testable without a live model (the historical "green tests, dead
+# pipeline" failure mode lived exactly in code like this that no test exercised).
+_JWT_HDR_RE = re.compile(r"\beyJ[A-Za-z0-9_\-]+\.eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]*")
+_URL_PARAM_RE = re.compile(r"https?://|%2f%2f", re.IGNORECASE)
+
+
+def _carries_jwt(headers: dict | None) -> bool:
+    return any(_JWT_HDR_RE.search(v or "") for v in (headers or {}).values())
+
+
+def _jwt_identity(node: dict, roles):
+    """The lowest-trust reachable identity carrying a JWT (a broken verifier proven
+    from the weakest role is the stronger result), or None. Falls back to any
+    JWT-carrying identity when the node lists no reachable roles."""
+    import worklist_investigator
+    reach = node.get("reachable_roles") or []
+    reachable = sorted((r for r in roles if r.role in reach),
+                       key=lambda r: worklist_investigator._trust(r.role))
+    for r in (reachable or list(roles)):
+        if _carries_jwt(r.headers):
+            return r
+    return None
+
+
+def _accepts_xml(exchange: HttpExchange) -> bool:
+    ctype = " ".join(v for k, v in (exchange.request_headers or {}).items()
+                     if k.lower() == "content-type").lower()
+    body = (exchange.request_body or "").lstrip()[:64].lower()
+    return "xml" in ctype or body.startswith("<?xml") or body.startswith("<!doctype")
+
+
+def _has_url_param(exchange: HttpExchange) -> bool:
+    blob = (urlsplit(exchange.url).query or "") + " " + (exchange.request_body or "")
+    return bool(_URL_PARAM_RE.search(blob))
+
+
+def shape_precondition_legs(node: dict, exchange: HttpExchange, roles, base_url: str,
+                            id_fill: str = "1") -> list[tuple[str, HttpExchange]]:
+    """The proactive confirmation legs an endpoint's shape warrants, as
+    (vulnerability_class, seed_exchange) pairs to run REGARDLESS of agent labels:
+
+      - object-scoped GET            -> cross-identity replay (idor)
+      - JWT-carrying protected GET   -> jwt-forge (seeded from a JWT-bearing role)
+      - XML-accepting request body   -> xxe (OOB)
+      - URL-shaped param present      -> ssrf (OOB)
+
+    The xxe/ssrf legs need a real body/param, which route-discovery seeds don't
+    carry, so they fire only on a captured exchange that actually has that shape
+    (real Burp use) -- never as a blind guess from a bare route."""
+    import worklist_investigator
+    method = (node.get("method") or "GET").upper()
+    legs: list[tuple[str, HttpExchange]] = []
+    if node.get("object_scoped") and method == "GET":
+        legs.append(("idor", exchange))
+    jid = _jwt_identity(node, roles)
+    if jid is not None and method == "GET":
+        legs.append(("jwt", worklist_investigator._seed_exchange(
+            base_url, node, dict(jid.headers or {}), id_fill)))
+    if _accepts_xml(exchange):
+        legs.append(("xxe", exchange))
+    if _has_url_param(exchange):
+        legs.append(("ssrf", exchange))
+    return legs
+
+
 class Orchestrator:
     """
     Main orchestrator for security testing.
@@ -751,37 +819,11 @@ class Orchestrator:
                     return
 
         # --- proactive, precondition-driven leg routing (HANDOVER_6 §4) ---------
-        # The coupling fix: run a confirmation leg wherever the ENDPOINT'S SHAPE
-        # warrants it, not only where an agent already produced a matching finding.
-        # Shape is derived from the graph node + the identities that reach it; the
-        # legs themselves are the same deterministic validators `_confirm` routes to,
-        # so we reuse `_confirm` and keep only what it CONFIRMS.
-        _JWT_HDR_RE = re.compile(r"\beyJ[A-Za-z0-9_\-]+\.eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]*")
-
-        def _carries_jwt(hdrs: dict) -> bool:
-            return any(_JWT_HDR_RE.search(v or "") for v in (hdrs or {}).values())
-
-        def _jwt_identity(node):
-            """The lowest-trust reachable identity carrying a JWT (strongest proof
-            of a broken verifier from the weakest role), or None."""
-            reach = node.get("reachable_roles") or []
-            reachable = sorted((r for r in roles if r.role in reach),
-                               key=lambda r: worklist_investigator._trust(r.role))
-            for r in (reachable or roles):
-                if _carries_jwt(r.headers):
-                    return r
-            return None
-
-        def _accepts_xml(exchange) -> bool:
-            ctype = " ".join(v for k, v in (exchange.request_headers or {}).items()
-                             if k.lower() == "content-type").lower()
-            body = (exchange.request_body or "").lstrip()[:64].lower()
-            return "xml" in ctype or body.startswith("<?xml") or body.startswith("<!doctype")
-
-        def _has_url_param(exchange) -> bool:
-            blob = (urlsplit(exchange.url).query or "") + " " + (exchange.request_body or "")
-            return bool(re.search(r"https?://|%2f%2f", blob, re.IGNORECASE))
-
+        # Run a confirmation leg wherever the ENDPOINT'S SHAPE warrants it, not only
+        # where an agent already produced a matching finding. Shape routing is the
+        # module-level `shape_precondition_legs` (pure, unit-tested); the legs
+        # themselves are the same deterministic validators `_confirm` dispatches to,
+        # so we reuse `_confirm` here and keep only what it CONFIRMS.
         async def _confirm_leg(vclass, exchange, path):
             """Synthesise a low-confidence hypothesis of `vclass`, run it through the
             shared `_confirm` dispatcher, and return it only if a leg CONFIRMED it.
@@ -796,30 +838,10 @@ class Orchestrator:
         async def _precondition(node, exchange):
             """Legs the node's shape warrants, run regardless of agent labels.
             Returns only CONFIRMED findings."""
-            method = (node.get("method") or "GET").upper()
             path = node.get("path", "/")
             confirmed = []
-            # object-scoped -> cross-identity replay (uses the lowest-trust seed).
-            if node.get("object_scoped") and method == "GET":
-                r = await _confirm_leg("idor", exchange, path)
-                if r:
-                    confirmed.append(r)
-            # a JWT-carrying protected endpoint -> forge alg:none / reused-sig.
-            jid = _jwt_identity(node)
-            if jid is not None and method == "GET":
-                jex = worklist_investigator._seed_exchange(base_url, node, dict(jid.headers or {}), "1")
-                r = await _confirm_leg("jwt", jex, path)
-                if r:
-                    confirmed.append(r)
-            # XML-accepting body -> XXE; URL-shaped param -> SSRF. Route-discovery
-            # seeds carry no body, so these fire only on a captured exchange that
-            # actually has that shape (real Burp use) -- never as a blind guess.
-            if _accepts_xml(exchange):
-                r = await _confirm_leg("xxe", exchange, path)
-                if r:
-                    confirmed.append(r)
-            if _has_url_param(exchange):
-                r = await _confirm_leg("ssrf", exchange, path)
+            for vclass, ex in shape_precondition_legs(node, exchange, roles, base_url):
+                r = await _confirm_leg(vclass, ex, path)
                 if r:
                     confirmed.append(r)
             return confirmed
