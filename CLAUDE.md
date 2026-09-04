@@ -106,8 +106,23 @@ validation, pruned to confirmed-only after), so an XML-accepting endpoint no age
 | `ssrf` | SSRF | URL-param redirect → OOB `collaborator` |
 
 Enable in a run: `active_enabled: true`; sqlmap needs `container_image: harness/sqlmap:1.10.9`
-+ Docker; xxe/ssrf need `allow_mutating_replay: true`. Mutating sends go through the
-safety gate (`GatedAsyncClient`). See the current run script (named in `CURRENT_STATE.md`).
++ Docker; xxe/ssrf need `allow_mutating_replay: true` (their replay is a non-GET send —
+`xxe_validator.py:84`, `ssrf_validator.py:109`). Mutating sends go through the safety gate
+(`GatedAsyncClient`). See the current run script (named in `CURRENT_STATE.md`).
+
+**Those six are the curated set — the registry is wider.** The table is what the **graph
+loop**'s `_confirm` dispatcher (`orchestrator.py:814`) proves (access-control→`cross_identity`,
+xss→`browser_xss`, `jwt_forge`, `ssrf`, `xxe`) plus `sqlmap`. The **captured-exchange path
+(`analyze()`)** instead runs the *full* `ValidatorRegistry` via `for_finding()`
+(`orchestrator.py:1450`): the same six **plus ~13 more class-scoped validators** — `cors`,
+`csp`/clickjacking, `api_security`/mass-assignment, `crypto`/tls, `http_request_smuggling`,
+`header_injection`/crlf, `race_condition`, `oauth`/oidc, `recon`, `websocket`/cswsh,
+`subdomain_takeover`, `web_cache_poisoning`, and passive-only `deserialization`. Each declares
+`finding_classes` + an `active` flag (`validators/base.py`); **all are `active` except
+`deserialization`**, so under the safe default `active_enabled: false` only `deserialization`
+runs — the rest arm only once a live run turns active mode on. `validators/registry.py` is the
+source of truth for what's wired; the graph `_confirm` set is deliberately narrower and better
+verified (see `COMPETITIVE_LANDSCAPE.md` §0 on which legs are live-verified vs smoke-only).
 
 ## Key file map (`harness/`)
 
@@ -116,7 +131,7 @@ safety gate (`GatedAsyncClient`). See the current run script (named in `CURRENT_
 | Engagement loop | `orchestrator.py`, `engagement_builder.py`, `engagement.py`, `worklist_investigator.py`, `chain_linker.py`, `chaining.py`, `task_graph.py` |
 | Discovery / crawl | `api_surface_discovery.py`, `role_crawl.py`, `scope_discovery.py`, `crawler.py`, `js_endpoint_extractor.py` |
 | Agents / LLM | `iterative_agent.py`, `agent_manager.py`, `ollama_client.py`, `planner.py`, `analysis_pipeline.py` |
-| Confirmation | `validators/` (`cross_identity_validator`, `sqlmap`, `browser_xss_validator`, `jwt_forge_validator`, `xxe_validator`, `ssrf_validator`, `registry` …), `collaborator.py`, `active_verification.py`, `tool_runner.py` |
+| Confirmation | `validators/` (~20 validators — `registry.py` is the source of truth: the 6 legs `cross_identity`/`sqlmap`/`browser_xss`/`jwt_forge`/`xxe`/`ssrf` **plus** `cors`/`csp`/`crypto`/`recon`/`oauth`/`header_injection`/`http_request_smuggling`/`web_cache_poisoning`/`subdomain_takeover`/`websocket`/`race_condition`/`api_security`/`deserialization`), `collaborator.py`, `active_verification.py`, `tool_runner.py` |
 | Safety / infra | `safety_gate.py`, `safety_proxy_addon.py`, `security.py`, `cache.py`, `store.py`, `config.yaml` (+ git-ignored `config.local.yaml`), `server.py` |
 | Reporting | `report_generator.py`, `categories.py`, `knowledge.py` |
 | Burp side | `burp-extension/` (Java; can't compile here) |

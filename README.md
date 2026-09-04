@@ -42,11 +42,14 @@ itself, the Python harness, and the Java extension all run fine on CPU.
 The longer, more useful answer, since "yes" alone would hide a real
 tradeoff on an 8GB card specifically:
 
-- The default models this project ships with (`llama3.1:8b` for the
-  10 explicitly-tuned agents, `gemma2:9b` for everything else — see
-  [Models & config](#models--config) below) are both roughly 5-6GB on
-  disk at Ollama's default `Q4_K_M` quantization. **Either one on its
-  own fits comfortably in 8GB of VRAM.**
+- **The shipped config now uses a single model everywhere — `qwen3:8b`**
+  (coordinator, `agent_defaults`, and every per-agent override; see
+  [Models & config](#models--config) below), roughly 5-6GB on disk at
+  Ollama's default `Q4_K_M` quantization. **It fits comfortably in 8GB
+  of VRAM, and because every agent shares one model there is no
+  model-swap thrash by default.** The multi-model tradeoff described in
+  the rest of this section only bites if you *deliberately* assign
+  different models to different agents in `config.yaml`.
 - The problem is *both at once*. Ollama can keep multiple different
   models loaded simultaneously, but only if there's enough VRAM for all
   of them — otherwise it evicts the least-recently-used one to make room
@@ -61,14 +64,11 @@ tradeoff on an 8GB card specifically:
   how Ollama documents its own model-eviction behavior, not something
   measured on real hardware — if you hit this, `ollama ps` while a run
   is in progress will show you directly whether it's thrashing.
-- **If you have 8GB of VRAM and want to avoid this entirely**, set every
-  agent to the *same* model tag in `harness/config.yaml` (either put
-  `llama3.1:8b` in `agent_defaults.model` and remove the per-agent
-  overrides, or the reverse). Ollama can serve multiple concurrent
-  requests against one already-loaded model without any swapping, so
-  this gets you true concurrency back at the cost of not being able to
-  give the harder-to-classify agents a stronger model than the routine
-  ones.
+- **This is already what the shipped config does** — every agent is
+  pinned to the same `qwen3:8b` tag, so Ollama serves all the concurrent
+  requests against one already-loaded model with no swapping. You only
+  reintroduce the swap problem if you deliberately give some agents a
+  different (e.g. stronger) model than the routine ones.
 - **Separately from the model-mixing issue above**, even a single
   shared model can run into trouble if too many agents are dispatched
   for one exchange at once — by default up to 6 or more agents fire
@@ -80,9 +80,9 @@ tradeoff on an 8GB card specifically:
   on an 8GB card, or raise it (or set it to 0 for unbounded) if you have
   headroom to spare.
 - **If you have 12GB+ of VRAM** (3060 12GB, 3080 12GB, 4070 Ti Super,
-  anything in that range or above), this isn't a concern — both default
-  models fit simultaneously with room to spare, and mixed-model dispatch
-  works as designed.
+  anything in that range or above), none of this is a concern — you have
+  room to run a second, larger model alongside `qwen3:8b` if you choose
+  to mix, and mixed-model dispatch works as designed.
 - CPU-only (no GPU at all) also works, just slowly — Ollama falls back to
   CPU inference automatically. Expect each agent call to take much longer
   (roughly 5-15x, very hardware-dependent), which matters because the
@@ -239,14 +239,13 @@ Two layers, in order, per exchange:
 
 ```bash
 # install per https://ollama.com, then:
-ollama pull llama3.1:8b
-ollama pull gemma2:9b
+ollama pull qwen3:8b
 ollama serve
 ```
 
-You don't strictly need both models — see [Models & config](#models--config)
-below if you'd rather standardize on one (recommended on 8GB VRAM cards,
-per the GPU section above).
+The shipped config uses `qwen3:8b` for every agent — see
+[Models & config](#models--config) below if you'd rather point it at a
+different model, or mix in a stronger one for the harder-to-classify agents.
 
 ### 2. Start the harness
 
@@ -274,7 +273,7 @@ gradle shadowJar     # or: ./gradlew shadowJar if you generate a wrapper first
 This pulls Burp's Montoya API and Gson from Maven Central automatically —
 you need normal internet access for this step (a from-scratch build has
 not been verified in a fully offline environment). In Burp: **Extensions
-→ Installed → Add → Java** → select `build/libs/burp-extension-all.jar`.
+→ Installed → Add → Java** → select `build/libs/burp-llm-harness-extension-0.1.0-all.jar`.
 A new **LLM Harness** tab appears; set the harness URL (defaults to
 `http://localhost:8787`) and click Test Connection. Then right-click any
 request in Proxy history, Repeater, or the Target site map and choose
@@ -283,48 +282,59 @@ promising one first.
 
 ### Models & config
 
-`harness/config.yaml` controls everything model-related:
+`harness/config.yaml` controls everything model-related. As shipped, every
+role points at `qwen3:8b`:
 
 ```yaml
 coordinator:
-  model: "llama3.1:8b"     # used for routing decisions -- give this
+  model: "qwen3:8b"        # used for routing decisions -- give this
                             # your strongest available model; a bad
                             # routing call can silently skip a whole
                             # exchange before any specialist sees it
 
 agent_defaults:
-  model: "gemma2:9b"        # what any agent without its own override
+  model: "qwen3:8b"        # what any agent without its own override
                             # below uses. Most of the 36 agents are
                             # narrow, well-scoped classification tasks
                             # and don't need a large model.
 
 agents:
   sqli:
-    model: "llama3.1:8b"    # per-agent override -- takes precedence
-                            # over agent_defaults for this one agent
-  # ...nine more agents are explicitly pinned to llama3.1:8b in the
-  # shipped config; everything else uses agent_defaults.
+    model: "qwen3:8b"      # per-agent override -- takes precedence over
+                            # agent_defaults. The shipped config pins the
+                            # explicitly-tuned agents here too, all to
+                            # qwen3:8b, so the roster is single-model.
 ```
 
-To standardize on a single model everywhere (recommended if you're on an
-8GB-VRAM card — see the GPU section above): set `agent_defaults.model` to
-your model of choice and delete or comment out the per-agent `model:`
-lines under `agents:`.
+Because everything already shares one model, you get true concurrency with
+no VRAM swapping out of the box (see the GPU section above). To use a
+different model, change `agent_defaults.model`; to give the harder agents a
+stronger model, override them individually under `agents:` — that's the only
+case where the multi-model VRAM tradeoff applies.
 
 ---
 
 ## Known limitations worth knowing before you rely on this
 
-- **No measured accuracy baseline exists for this tool against any real
-  model.** Everything about "how good are the findings" is untested in
-  the sense of a live model actually being scored against known-answer
-  targets — see `archive/HANDOVER.md` for the full detail if you want it.
+- **Accuracy is now measured, but the baseline is early and uneven.**
+  `testing/score.py` + `testing/SCORECARD.md` record per-OWASP-category
+  precision/recall against the uncontaminated PixelMart corpus (`qwen3:8b`,
+  2026-09-02): **precision 0.476 / recall 0.909** (tp=10, fp=11, fn=1) on
+  the cached fixture; a live VulnCorp run separately confirmed 13 findings
+  across 3 classes. The honest gaps: **precision collapses on a truly-blind
+  target** (a blind helpdesk run held recall at 2/2 but got 0/6 secure
+  controls clean), and the scored precision/recall CI tier is written but
+  disabled (needs a self-hosted GPU runner). See `testing/SCORECARD.md`,
+  `CURRENT_STATE.md`, and `COMPETITIVE_LANDSCAPE.md` for the current numbers.
 - The coordinator's fail-open-to-all-36-agents fallback (above) is real
   and currently silent — if you're watching for cost/latency spikes,
   that's the first place to look.
 - `sqlmap`-based confirmation (used to validate SQLi hypotheses) has a
-  known miss rate against real targets — see `archive/HANDOVER.md` §4.2. A
-  "not confirmed" result from it is not strong evidence of absence.
-- Full detail on everything found-but-not-yet-fixed lives in
-  `archive/HANDOVER.md`; treat it as the more thorough companion to this file
-  if you're planning to modify the harness rather than just run it.
+  known miss rate against real targets; a "not confirmed" result from it is
+  not strong evidence of absence. (It now runs in a Docker container,
+  `harness/sqlmap:1.10.9`, rather than a host binary — see CLAUDE.md.)
+- Deep history and the found-but-not-yet-fixed backlog from earlier sessions
+  live under `archive/` (e.g. `archive/HANDOVER.md`), kept for git-history
+  spelunking only. **The live onboarding is `CLAUDE.md` + `CURRENT_STATE.md`;
+  treat those two as authoritative wherever anything under `archive/`
+  conflicts with them.**

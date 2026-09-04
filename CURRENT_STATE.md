@@ -7,18 +7,50 @@ file map) is in [`CLAUDE.md`](CLAUDE.md) — read that first, then this.
 
 ---
 
-## State (as of session 9)
+## State (as of session 10)
 
-- **Branch:** `WorkingSunday`. **HEAD:** `a9476d2`. Working tree: only untracked `testing/`
-  artifacts; tracked tree clean. **NOT pushed** (local only); `main` untouched.
+- **Branch:** `WorkingSunday`. **HEAD:** the session-10 reconciliation commit (on top of
+  `3bc01eb`) — `harness/config.yaml` (active toggles → safe defaults) plus the doc-accuracy
+  edits below. `harness/config.local.yaml` (git-ignored) holds the live toggles and is NOT
+  committed. Working tree otherwise clean apart from untracked `testing/` artifacts.
+- **Pushed state:** `origin/WorkingSunday` **exists but is stale** — local is **32 commits
+  ahead** of it (remote tip is the old session-4 `04e0fc9`). HEAD is **88 commits ahead of
+  `origin/main`**, 0 behind; `main` untouched. (Earlier notes said "NOT pushed / local only" —
+  that was wrong: the branch was pushed once at session 4 and never re-pushed.)
 - **Suite green (Python):** from `harness/`, `python -m unittest discover -p "test_*.py"` →
-  **OK, 1021 tests** (verified this session).
+  **OK, 1021 tests** (re-verified this session, before and after the config change).
 - **Java compiles + jar built:** the #7 Burp changes were compiled clean and packaged into
   `burp-llm-harness-extension-0.1.0-all.jar` at the maintainer's `gradle` build (confirmed
   off-machine; no JDK here — hazard #6). The jar is git-ignored (`.gitignore` `*.jar`), so it
   lives at root for Burp to load and is not committed.
 - **Environment verified:** Ollama `qwen3:8b` reachable; Docker up with `harness/sqlmap:1.10.9`;
   host chromium/playwright present. No host `javac` anywhere. (See CLAUDE.md § Environment.)
+
+## What shipped this session (10) — doc-vs-code reconciliation
+
+A verification pass: read the code, corrected the docs that had drifted, no pipeline logic
+touched. Committed this session as the single "session-10" reconciliation commit (the 5
+tracked files; `config.local.yaml` stays git-ignored).
+
+- **Config toggles moved back to safe defaults (hazard #1).** `harness/config.yaml` had
+  `validators.active_enabled`, `validators.allow_mutating_replay`, and
+  `autonomous_discovery.enabled` all committed as `true` — a live hazard-#1 violation. Flipped
+  all three to `false` in the committed file; the live-local ON values now live in git-ignored
+  `harness/config.local.yaml` (verified: `server.load_config()` deep-merges them back to `true`,
+  validators block intact). **NOTE: `origin/main` still carries the same three toggles ON** —
+  fix it there when `WorkingSunday` merges.
+- **CLAUDE.md confirmation section corrected.** The 6-leg table is the graph loop's `_confirm`
+  set; `analyze()` actually runs the *full* `ValidatorRegistry` (~20 validators via
+  `for_finding`, `orchestrator.py:1450`). Added the ~13 previously-undocumented validators and
+  the `active`-flag gating. File map's Confirmation row now lists them (source of truth =
+  `validators/registry.py`).
+- **README.md de-staled:** shipped model is `qwen3:8b` (was `llama3.1:8b`/`gemma2:9b`); the "no
+  measured accuracy baseline" claim removed (SCORECARD + session-8 run exist); `archive/HANDOVER.md`
+  references reframed as spelunking-only, not a "companion."
+- **validators/README.md:** "SqlmapValidator is the first adapter" → now ~20 adapters.
+- **Verified accurate, left alone:** `investigate_engagement` + all named entry points exist;
+  the `analyze()` shape-leg wiring; 1021 tests OK; 36 agents; `xxe`/`ssrf` really do need
+  `allow_mutating_replay`. `COMPETITIVE_LANDSCAPE.md` is current (recently corrected).
 
 ## What shipped this session (9)
 
@@ -75,7 +107,10 @@ etc., untracked). Tuning lesson: for a tractable run turn `autonomous_discovery`
 2. **#7 follow-through:** compilation is confirmed and the jar is built. Confirm the JUnit5
    `*LogicTest`s ran green (if the build was `shadowJar`-only they didn't), then live-test the
    8 new executors against a target — compile-clean ≠ behaviour-correct.
-3. **Push `WorkingSunday` + open the PR into `main`** (17+ commits unpushed across sessions).
+3. **Push `WorkingSunday` + open the PR into `main`** — local is 32 commits ahead of the stale
+   `origin/WorkingSunday` and 88 ahead of `origin/main`. (Commit the session-10 config/doc
+   working-tree changes first; remember `config.yaml` is now safe to `git add`, `config.local.yaml`
+   is git-ignored.)
 4. **Update the report artifact** (`a56d56f5-…`) — still shows the first run's 228/32; fold in
    the session-8 measured result (13 confirmed / 3 classes) + the coupling framing.
 5. **Live-verify browser_xss CDP** (#5) against a real `browserless/chrome` container.

@@ -340,10 +340,12 @@ server:
 # exchange and inherit the server.allowed_hosts scope.
 validators:
   enabled: true
-  # Turned on per explicit user authorization: this is a disposable local
-  # Juice Shop instance that can be trashed and recreated, scoped via
-  # server.allowed_hosts above. Revert to false once done testing.
-  active_enabled: true
+  # SAFE DEFAULT: off in the committed config. Active validators send live
+  # requests to the target, so a live/local run turns this on via the
+  # git-ignored config.local.yaml overlay (deep-merged by server.load_config),
+  # NEVER by flipping it here and committing -- see CLAUDE.md hazard #1.
+  # Scoped to server.allowed_hosts above regardless.
+  active_enabled: false
   # Separate, stricter opt-in required for the small set of techniques that
   # legitimately need to send a mutating (state-changing) request replay:
   # API security's mass-assignment probe and the race-condition burst.
@@ -353,9 +355,9 @@ validators:
   # update, or the same real mutating action fired multiple times
   # concurrently). Everything else in this harness never needs this flag,
   # by design, regardless of what method the originally captured
-  # exchange used. Turned on for the same reason/scope as active_enabled
-  # above.
-  allow_mutating_replay: true
+  # exchange used. SAFE DEFAULT: off here; a live local run turns it on via
+  # config.local.yaml (like active_enabled above), never by a committed flip.
+  allow_mutating_replay: false
   # Ceiling on how many times the race-condition validator repeats a
   # mutating request concurrently. This can only lower the effective
   # limit below safety_gate.py's own hard ceiling (20) -- it cannot raise
@@ -395,7 +397,10 @@ validators:
 # this first pass, not open-ended crawling -- that's recon_validator.py's
 # job, already built.
 autonomous_discovery:
-  enabled: true
+  # SAFE DEFAULT: off in the committed config -- this lets the harness send
+  # GET probes to URLs no human captured (scoped to server.allowed_hosts). A
+  # live local run enables it via config.local.yaml, never by a committed flip.
+  enabled: false
   trigger_categories: ["sqli", "auth", "business_logic", "api_security", "idor"]
   max_new_requests_per_trigger: 5
   candidate_paths:
