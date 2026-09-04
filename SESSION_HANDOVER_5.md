@@ -17,15 +17,16 @@ investigation, and link findings into chains. Entry point:
 
 ## 0. Read first — state, environment, hazards
 
-- **Branch:** `WorkingSunday`. **HEAD:** `5ecba71` + this docs commit (verified `git
-  rev-parse`). **NOT pushed** (local only). `main` untouched.
+- **Branch:** `WorkingSunday`. **HEAD:** `ac969fa` (verified `git rev-parse`). **NOT
+  pushed** (local only). `main` untouched.
 - **Suite green:** from `harness/`, `python -m unittest discover -p "test_*.py"` →
-  **OK, 941 tests** (verified). Run before trusting anything, after every change.
-- **7 commits this session** (`git log --oneline dc35071..HEAD`), in dependency order
+  **OK, 942 tests** (verified). Run before trusting anything, after every change.
+- **9 commits this session** (`git log --oneline dc35071..HEAD`), in dependency order
   so each commit's imports resolve and the suite is green at each:
   `4dba995` #5 slug · `1daa68b` #1 panel+toggle · `ade0215` discovery ·
   `6c9c68f` Milestone A · `e2217b0` Milestone B · `d204a2c` Milestone C ·
-  `5ecba71` chain_linker canonicalise fix (from the capstone run, §5).
+  `5ecba71` chain_linker canonicalise fix · `ae44556` this docs · `ac969fa`
+  cross-identity confirmation wired into the investigation path (§5b).
 - **Ollama IS available in this environment now** (changed since HANDOVER_4): `qwen3:8b`
   loaded, but split **41% CPU / 59% GPU** (doesn't fully fit VRAM) — the single biggest
   perf bottleneck. A login-exchange analyze() took ~17 min in the passive pipeline;
@@ -144,13 +145,21 @@ Discovery only, no LLM:
 
 ## 4. Remaining work (ranked)
 
-- **Confirm investigation findings with cross-identity.** `investigate_engagement`'s
-  iterative findings ship `confirmed=False` (LLM claims). Wire the cross_identity
-  validator (or role_crawl's same-object compare) into the investigation path so a
-  path-IDOR the agent reaches gets DETERMINISTICALLY confirmed, then floats to the top.
-  This is the highest-value next step — it joins B's reach to HANDOVER_4's confirmation.
-- **The `confirmed`-as-ranking-key fix** (from HANDOVER_4 eval): promote confirmed above
-  unconfirmed and dedupe per (exchange, class). Cheap, high-impact on the ranking.
+- **DONE (`ac969fa`): cross-identity confirmation in the investigation path.** A
+  `confirm_fn` seam in `investigate_worklist` + the real validator wired in
+  `investigate_engagement` (roles registered as replay identities). Verified live: an
+  IDOR the agent reaches lands `confirmed=True` (reports/{id}), and it correctly
+  DECLINES public objects (kb articles) and function-level authz (admin/debug — no
+  object id). This joins B's reach to HANDOVER_4's confirmation.
+- **NEXT LEVER 1 — more confirmation legs (highest value).** The max-coverage run (§5b)
+  proved the ceiling is CONFIRMATION BREADTH: only 2 deterministic legs exist
+  (cross-identity, sqlmap), so ~10 hypothesised classes (XSS, JWT, XXE, SSRF,
+  mass-assign, ...) never get proven. First up: wire the existing `browser_xss`
+  validator (needs `playwright install chromium`) into the investigation path for XSS,
+  then JWT forge-and-replay, then OOB for XXE/SSRF.
+- **NEXT LEVER 2 — dedup + `confirmed`-first ranking** (from HANDOVER_4 eval, still
+  open): collapse per-(endpoint, class) duplicates and float confirmed to the top.
+  The max-coverage run's 32 confirmed findings were only 4 distinct — dedup is overdue.
 - **Capstone measurement** (see §5): a full `investigate_engagement` run vs pass 1's 8
   confirmed / 40 planted — quantify the loop's reach.
 - **Coverage ceiling:** discovery is wordlist-bound; non-dictionary routes (SSRF
@@ -197,6 +206,30 @@ is wired in. So this measures **reach**, and pass 1 measured **confirmation**; j
 them (§4) is the next step. `scratchpad/capstone_results.json` has the full detail.
 
 ---
+
+## 5b. Max-coverage run (VERIFIED) — the confirmation-breadth ceiling
+
+Everything enabled (iterative agent + active validators + cross-identity on BOTH the
+analyze and investigation paths + chaining + engagement escalate), two passes over the
+full discovered surface: `analyze()` on 33 exchanges (all 36 agents + active validators
++ targeted SQLi/XXE/XSS/mass-assign/CSRF payloads) then `investigate_engagement`.
+**12,113s (~3.4h). `scratchpad/max_coverage.py`, `maxcov_results.json`.**
+
+- **228 findings · 32 confirmed · 21 classes hypothesised · 0 Pass-2 chains.**
+- **Confirmed collapses to 4 DISTINCT proven bugs** (the 32 are heavy duplicates):
+  `sqli @ /api/login` (sqlmap) and access-control @ `/api/tickets/{id}`,
+  `/tickets/{id}/comments`, `/reports/{id}` (cross-identity).
+- **Reached (hypothesised):** sqli, idor, BFLA, xss, jwt, alg-confusion, mass-assignment,
+  open-redirect, rate-limit, weak-token, disclosure/misconfig (~13 classes).
+- **Missed:** XXE, SSRF, CSRF, deserialization, path-traversal, NoSQL, command-injection,
+  session-fixation.
+- **The finding:** detection is BROAD, confirmation is NARROW. Confirmation comes only
+  from the two deterministic legs (cross-identity, sqlmap); every other class stays an
+  unconfirmed hypothesis in a 228-finding pile. **More coverage bought more noise, not
+  more proof.** Levers: more confirmation legs (§4, lever 1), dedup + confirmed-first
+  ranking (§4, lever 2). Both are being built; a re-run will quantify them.
+- **Report artifact:** the full-session writeup (architecture + this run + roadmap) is
+  published (a56d56f5-807e-440e-bed2-e97f9c8435d0), private to the user.
 
 ## 6. Notes / corrections
 
