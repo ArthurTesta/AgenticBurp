@@ -381,6 +381,18 @@ validators:
     enabled: false
     timeout: 10.0
     max_identities: 3
+  # OOB command-injection leg: injects a shell payload whose only effect is to
+  # fetch a unique collaborator URL, and confirms on the callback (blind-safe, no
+  # destructive payload). Registered here; runs only under active_enabled, and a
+  # non-GET replay also needs allow_mutating_replay.
+  command_injection:
+    enabled: true
+    timeout: 10.0
+  # SSTI leg: injects a nonce-wrapped arithmetic expression and confirms on the
+  # evaluated product in the response (proves template evaluation, not RCE).
+  ssti:
+    enabled: true
+    timeout: 10.0
 
 # Autonomous scope-discovery MVP (harness/scope_discovery.py). Off by
 # default -- the harness has never, until this option exists, decided on

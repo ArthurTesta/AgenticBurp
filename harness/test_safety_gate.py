@@ -285,7 +285,11 @@ class TestNoValidatorBypassesTheGate(unittest.TestCase):
                                   # ssrf/xxe replay the request as a live (possibly mutating) send but
                                   # route it through GatedAsyncClient -- verified in
                                   # test_the_gate_routed_exceptions_actually_route_through_the_gate.
-                                  "ssrf_validator.py", "xxe_validator.py"}
+                                  "ssrf_validator.py", "xxe_validator.py",
+                                  # command_injection/ssti replay the captured method for their
+                                  # injection payload but likewise route through GatedAsyncClient
+                                  # (same verification below).
+                                  "command_injection_validator.py", "ssti_validator.py"}
         # Files whose exchange.method reference is provably not a live
         # send at all -- verified by reading the code, not assumed.
         inert_usage_exceptions = {
@@ -360,7 +364,8 @@ class TestNoValidatorBypassesTheGate(unittest.TestCase):
                        "sqlmap.py uses exchange.method for --method but doesn't call the safety gate")
         self.assertIn(".authorize(", sqlmap_src)
 
-        for name in ("ssrf_validator.py", "xxe_validator.py"):
+        for name in ("ssrf_validator.py", "xxe_validator.py",
+                     "command_injection_validator.py", "ssti_validator.py"):
             src = (here / "validators" / name).read_text()
             self.assertIn("GatedAsyncClient", src,
                           f"{name} replays exchange.method but doesn't route through GatedAsyncClient")

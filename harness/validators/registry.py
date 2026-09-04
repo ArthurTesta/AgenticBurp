@@ -19,6 +19,8 @@ from .cross_identity_validator import CrossIdentityValidator
 from .jwt_forge_validator import JwtForgeValidator
 from .ssrf_validator import SsrfValidator
 from .xxe_validator import XxeValidator
+from .command_injection_validator import CommandInjectionValidator
+from .ssti_validator import SstiValidator
 from safety_gate import get_default_gate, reset_default_gate
 
 
@@ -161,6 +163,17 @@ class ValidatorRegistry:
         if xxe_cfg.get("enabled", True):
             self.validators["xxe"] = XxeValidator(
                 allowed_hosts=_allowed, timeout=float(xxe_cfg.get("timeout", 10.0)))
+        # Command-injection leg -- OOB via the collaborator (shell payload -> callback).
+        # Active; a non-GET replay also needs allow_mutating_replay.
+        cmdi_cfg = cfg.get("command_injection", {})
+        if cmdi_cfg.get("enabled", True):
+            self.validators["command_injection"] = CommandInjectionValidator(
+                allowed_hosts=_allowed, timeout=float(cmdi_cfg.get("timeout", 10.0)))
+        # SSTI leg -- in-band arithmetic differential (proves template evaluation). Active.
+        ssti_cfg = cfg.get("ssti", {})
+        if ssti_cfg.get("enabled", True):
+            self.validators["ssti"] = SstiValidator(
+                allowed_hosts=_allowed, timeout=float(ssti_cfg.get("timeout", 10.0)))
 
         # Browser-driven XSS validator (A2) -- active: loads candidate URLs in a
         # real headless browser and confirms only on observed script execution.
