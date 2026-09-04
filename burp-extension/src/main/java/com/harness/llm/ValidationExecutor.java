@@ -12,9 +12,17 @@ import burp.api.montoya.http.message.params.HttpParameterType;
 import burp.api.montoya.http.message.requests.HttpRequest;
 import com.harness.llm.logic.CommandInjectionTimingLogic;
 import com.harness.llm.logic.CorsMisconfigLogic;
+import com.harness.llm.logic.CryptoTransportLogic;
 import com.harness.llm.logic.CspClickjackingLogic;
 import com.harness.llm.logic.CsrfLogic;
 import com.harness.llm.logic.DeserializationFormatLogic;
+import com.harness.llm.logic.NoSqlInjectionLogic;
+import com.harness.llm.logic.OAuthFlowLogic;
+import com.harness.llm.logic.RequestSmugglingLogic;
+import com.harness.llm.logic.SqlInjectionLogic;
+import com.harness.llm.logic.SubdomainTakeoverLogic;
+import com.harness.llm.logic.WebCachePoisoningLogic;
+import com.harness.llm.logic.WebsocketCswshLogic;
 import com.harness.llm.logic.ExchangeFingerprint;
 import com.harness.llm.logic.FileUploadLogic;
 import com.harness.llm.logic.HeaderInjectionLogic;
@@ -110,6 +118,14 @@ public final class ValidationExecutor {
                         case "header_injection_validation" -> headerInjection(plan, source);
                         case "api_security_validation" -> apiSecurityMassAssignment(plan, source);
                         case "file_upload_validation" -> fileUploadEicarProbe(plan, source);
+                        case "crypto_transport_validation" -> cryptoTransport(plan, source);
+                        case "http_request_smuggling_detection" -> httpRequestSmuggling(plan, source);
+                        case "nosql_validation" -> nosqlInjection(plan, source);
+                        case "oauth_flow_validation" -> oauthFlow(plan, source);
+                        case "sql_injection_validation" -> sqlInjection(plan, source);
+                        case "subdomain_takeover_detection" -> subdomainTakeover(plan, source);
+                        case "web_cache_poisoning_detection" -> webCachePoisoning(plan, source);
+                        case "websocket_cswsh_validation" -> websocketCswsh(plan, source);
                         default -> submit(plan, source, "inconclusive", 0, false, "No typed executor exists for capability '"+plan.capability+"'.", "");
                     }
                 } catch (Exception e) {
@@ -936,6 +952,223 @@ public final class ValidationExecutor {
         MassAssignmentLogic.Evidence ev = MassAssignmentLogic.evaluate(
                 MASS_ASSIGNMENT_FIELD_NAME, MASS_ASSIGNMENT_FIELD_VALUE_JSON, fieldAlreadyPresent,
                 baselineResponseBody, resp.bodyToString());
+        statusFor(plan, source, ev.verdict().name().toLowerCase(Locale.ROOT), ev.confidence(), ev.confirmed(), ev.summary(), ev.detail());
+    }
+
+    // ===============================================================
+    // Executors added blind (no JDK on the authoring machine -- hazard #6):
+    // these follow the existing "probe (if any) -> pure *Logic.evaluate ->
+    // statusFor" pattern exactly, but are UNCOMPILED and UNIT-UNRUN until the
+    // maintainer's `gradle shadowJar`. Each delegates its verdict to a
+    // Montoya-free Logic class (unit-tested at build time). Safe by
+    // construction: no destructive sends; they default to inconclusive/
+    // supported/rejected rather than a false CONFIRMED.
+    // ===============================================================
+
+    /** Read a request header by name from headers() (request-side headerValue
+     * is not used elsewhere in this class, so we avoid depending on it). */
+    private static String reqHeader(HttpRequest req, String name) {
+        for (HttpHeader h : req.headers()) {
+            if (h.name() != null && h.name().equalsIgnoreCase(name)) return h.value();
+        }
+        return null;
+    }
+
+    private static int bodyLen(HttpRequestResponse rr) {
+        if (rr == null || rr.response() == null) return 0;
+        String b = rr.response().bodyToString();
+        return b == null ? 0 : b.length();
+    }
+
+    private static int status(HttpRequestResponse rr) {
+        return (rr == null || rr.response() == null) ? -1 : rr.response().statusCode();
+    }
+
+    // crypto_transport_validation -- passive; classifies the captured exchange's
+    // transport posture (TLS, HSTS, cookie Secure flag). See CryptoTransportLogic.
+    private void cryptoTransport(TestPlan plan, HttpRequestResponse source) {
+        HttpRequest req = source.request();
+        var resp = source.response();
+        if (resp == null) {
+            statusFor(plan, source, "inconclusive", 0, false, "No response was captured for this exchange.", "");
+            return;
+        }
+        String url = req.url();
+        boolean isHttps = url != null && url.toLowerCase(Locale.ROOT).startsWith("https:");
+        String hsts = resp.headerValue("Strict-Transport-Security");
+        List<String> setCookies = new ArrayList<>();
+        for (HttpHeader h : resp.headers()) {
+            if (h.name() != null && h.name().equalsIgnoreCase("Set-Cookie")) setCookies.add(h.value());
+        }
+        boolean carriesAuth = reqHeader(req, "Authorization") != null || reqHeader(req, "Cookie") != null;
+        CryptoTransportLogic.Evidence ev = CryptoTransportLogic.evaluate(isHttps, hsts, setCookies, carriesAuth);
+        statusFor(plan, source, ev.verdict().name().toLowerCase(Locale.ROOT), ev.confidence(), ev.confirmed(), ev.summary(), ev.detail());
+    }
+
+    // http_request_smuggling_detection -- one NON-destructive framing-hygiene
+    // probe (adds Transfer-Encoding alongside the existing Content-Length) and
+    // reports how the server framed it. See RequestSmugglingLogic.
+    private void httpRequestSmuggling(TestPlan plan, HttpRequestResponse source) {
+        HttpRequest req = source.request();
+        int baseline = status(source);
+        int probeStatus;
+        boolean errored = false;
+        try {
+            var rr = api.http().sendRequest(req.withUpdatedHeader("Transfer-Encoding", "chunked"));
+            probeStatus = status(rr);
+        } catch (Exception e) {
+            probeStatus = -1;
+            errored = true;
+        }
+        RequestSmugglingLogic.Evidence ev = RequestSmugglingLogic.evaluate(baseline, probeStatus, errored);
+        statusFor(plan, source, ev.verdict().name().toLowerCase(Locale.ROOT), ev.confidence(), ev.confirmed(), ev.summary(), ev.detail());
+    }
+
+    // nosql_validation -- inject a NoSQL operator value into a candidate
+    // parameter and check for a driver error or an auth/logic flip. See
+    // NoSqlInjectionLogic.
+    private static final String NOSQL_PAYLOAD = "{\"$ne\":null}";
+
+    private void nosqlInjection(TestPlan plan, HttpRequestResponse source) {
+        HttpRequest req = source.request();
+        HttpParameter target = null;
+        for (var p : req.parameters()) {
+            if (p.type() == HttpParameterType.COOKIE) continue;
+            target = p;
+            break;
+        }
+        if (target == null) {
+            statusFor(plan, source, "invalid", 0, false,
+                    "No non-cookie parameter was available for nosql_validation to inject an operator into.", "");
+            return;
+        }
+        int baseline = status(source);
+        var rr = api.http().sendRequest(req.withParameter(HttpParameter.parameter(target.name(), NOSQL_PAYLOAD, target.type())));
+        var resp = rr.response();
+        String injBody = resp == null ? null : resp.bodyToString();
+        NoSqlInjectionLogic.Evidence ev = NoSqlInjectionLogic.evaluate(baseline, status(rr), injBody);
+        statusFor(plan, source, ev.verdict().name().toLowerCase(Locale.ROOT), ev.confidence(), ev.confirmed(), ev.summary(), ev.detail());
+    }
+
+    // oauth_flow_validation -- tamper redirect_uri to an attacker host and check
+    // whether the authorize endpoint honours it; also flags a missing state
+    // parameter (CSRF). See OAuthFlowLogic.
+    private static final String OAUTH_ATTACKER_REDIRECT = "https://harness-oauth-probe.example/cb";
+
+    private void oauthFlow(TestPlan plan, HttpRequestResponse source) {
+        HttpRequest req = source.request();
+        HttpParameter redirectParam = null;
+        boolean hasState = false;
+        for (var p : req.parameters()) {
+            if (p.type() == HttpParameterType.COOKIE) continue;
+            String n = p.name() == null ? "" : p.name().toLowerCase(Locale.ROOT);
+            if (n.equals("redirect_uri") || n.equals("redirecturi") || n.equals("redirect")) redirectParam = p;
+            if (n.equals("state")) hasState = true;
+        }
+        if (redirectParam == null) {
+            OAuthFlowLogic.Evidence ev = OAuthFlowLogic.evaluate(false, hasState, OAUTH_ATTACKER_REDIRECT, -1, null);
+            statusFor(plan, source, ev.verdict().name().toLowerCase(Locale.ROOT), ev.confidence(), ev.confirmed(), ev.summary(), ev.detail());
+            return;
+        }
+        var rr = api.http().sendRequest(req.withParameter(
+                HttpParameter.parameter(redirectParam.name(), OAUTH_ATTACKER_REDIRECT, redirectParam.type())));
+        var resp = rr.response();
+        String loc = resp == null ? null : resp.headerValue("Location");
+        OAuthFlowLogic.Evidence ev = OAuthFlowLogic.evaluate(true, hasState, OAUTH_ATTACKER_REDIRECT, status(rr), loc);
+        statusFor(plan, source, ev.verdict().name().toLowerCase(Locale.ROOT), ev.confidence(), ev.confirmed(), ev.summary(), ev.detail());
+    }
+
+    // sql_injection_validation -- bounded Burp-plane confirmer (sqlmap runs
+    // harness-side): a quote error-probe plus an AND 1=1 / AND 1=2 boolean pair.
+    // See SqlInjectionLogic.
+    private void sqlInjection(TestPlan plan, HttpRequestResponse source) {
+        HttpRequest req = source.request();
+        HttpParameter target = null;
+        for (var p : req.parameters()) {
+            if (p.type() == HttpParameterType.COOKIE) continue;
+            target = p;
+            break;
+        }
+        if (target == null) {
+            statusFor(plan, source, "invalid", 0, false,
+                    "No non-cookie parameter was available for sql_injection_validation to target.", "");
+            return;
+        }
+        String base = target.value() == null ? "" : target.value();
+        var quoteRr = api.http().sendRequest(req.withParameter(
+                HttpParameter.parameter(target.name(), base + "'", target.type())));
+        String quoteBody = quoteRr.response() == null ? null : quoteRr.response().bodyToString();
+        var trueRr = api.http().sendRequest(req.withParameter(
+                HttpParameter.parameter(target.name(), base + "' AND '1'='1", target.type())));
+        var falseRr = api.http().sendRequest(req.withParameter(
+                HttpParameter.parameter(target.name(), base + "' AND '1'='2", target.type())));
+        SqlInjectionLogic.Evidence ev = SqlInjectionLogic.evaluate(
+                quoteBody, status(trueRr), bodyLen(trueRr), status(falseRr), bodyLen(falseRr));
+        statusFor(plan, source, ev.verdict().name().toLowerCase(Locale.ROOT), ev.confidence(), ev.confirmed(), ev.summary(), ev.detail());
+    }
+
+    // subdomain_takeover_detection -- passive; matches the captured response body
+    // against unclaimed-third-party-resource fingerprints. See SubdomainTakeoverLogic.
+    private void subdomainTakeover(TestPlan plan, HttpRequestResponse source) {
+        var resp = source.response();
+        String body = resp == null ? null : resp.bodyToString();
+        SubdomainTakeoverLogic.Evidence ev = SubdomainTakeoverLogic.evaluate(status(source), body);
+        statusFor(plan, source, ev.verdict().name().toLowerCase(Locale.ROOT), ev.confidence(), ev.confirmed(), ev.summary(), ev.detail());
+    }
+
+    // web_cache_poisoning_detection -- send an unkeyed-header (X-Forwarded-Host)
+    // probe, then a CLEAN follow-up, and check whether the attacker marker was
+    // cached and served back. See WebCachePoisoningLogic.
+    private static final String CACHE_POISON_HOST = "harness-cache-probe.example";
+
+    private void webCachePoisoning(TestPlan plan, HttpRequestResponse source) {
+        HttpRequest req = source.request();
+        // 1) poison attempt with an unkeyed header.
+        api.http().sendRequest(req.withUpdatedHeader("X-Forwarded-Host", CACHE_POISON_HOST));
+        // 2) clean follow-up (does NOT carry the header) -- did the marker persist?
+        var rr = api.http().sendRequest(req);
+        var resp = rr.response();
+        if (resp == null) {
+            statusFor(plan, source, "inconclusive", 0, false, "No response was received for the cache-poisoning follow-up.", "");
+            return;
+        }
+        String body = resp.bodyToString();
+        boolean reflects = body != null && body.contains(CACHE_POISON_HOST);
+        if (!reflects) {
+            String loc = resp.headerValue("Location");
+            reflects = loc != null && loc.contains(CACHE_POISON_HOST);
+        }
+        String cacheStatus = resp.headerValue("X-Cache");
+        if (cacheStatus == null) cacheStatus = resp.headerValue("CF-Cache-Status");
+        String age = resp.headerValue("Age");
+        WebCachePoisoningLogic.Evidence ev = WebCachePoisoningLogic.evaluate(
+                CACHE_POISON_HOST, reflects, false, cacheStatus, age);
+        statusFor(plan, source, ev.verdict().name().toLowerCase(Locale.ROOT), ev.confidence(), ev.confirmed(), ev.summary(), ev.detail());
+    }
+
+    // websocket_cswsh_validation -- replay a WebSocket handshake with a foreign
+    // Origin; a completed handshake (101) on an authenticated connection is
+    // Cross-Site WebSocket Hijacking. See WebsocketCswshLogic.
+    private static final String WS_FOREIGN_ORIGIN = "https://evil-harness-probe.example";
+
+    private void websocketCswsh(TestPlan plan, HttpRequestResponse source) {
+        HttpRequest req = source.request();
+        String upgrade = reqHeader(req, "Upgrade");
+        boolean isWs = upgrade != null && upgrade.toLowerCase(Locale.ROOT).contains("websocket");
+        if (!isWs) {
+            WebsocketCswshLogic.Evidence ev = WebsocketCswshLogic.evaluate(false, false, -1);
+            statusFor(plan, source, ev.verdict().name().toLowerCase(Locale.ROOT), ev.confidence(), ev.confirmed(), ev.summary(), ev.detail());
+            return;
+        }
+        boolean carriesAuth = reqHeader(req, "Authorization") != null || reqHeader(req, "Cookie") != null;
+        int st;
+        try {
+            var rr = api.http().sendRequest(req.withUpdatedHeader("Origin", WS_FOREIGN_ORIGIN));
+            st = status(rr);
+        } catch (Exception e) {
+            st = -1;
+        }
+        WebsocketCswshLogic.Evidence ev = WebsocketCswshLogic.evaluate(true, carriesAuth, st);
         statusFor(plan, source, ev.verdict().name().toLowerCase(Locale.ROOT), ev.confidence(), ev.confirmed(), ev.summary(), ev.detail());
     }
 
