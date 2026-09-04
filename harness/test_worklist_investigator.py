@@ -123,6 +123,97 @@ class InvestigateTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any("error" in o for o in out))
 
 
+class PreconditionTests(unittest.IsolatedAsyncioTestCase):
+    """Proactive, shape-driven legs run REGARDLESS of agent findings (the fix for
+    the detection->confirmation coupling). The precondition_fn is stubbed here to
+    return already-confirmed findings; the wiring in investigate_worklist is under
+    test, not the orchestrator's shape logic."""
+
+    async def test_precondition_confirms_node_with_no_agent_hypothesis(self):
+        # A benign node the agent probe would SKIP (derive -> None) still gets a
+        # proactive leg run, and a confirmed finding folds back and validates it.
+        st = _state_with([BENIGN])
+        agent_calls = []
+        async def probe(exchange, hypothesis, specialty, step_budget):
+            agent_calls.append(exchange.url)
+            return _nothing()
+        async def precondition(node, exchange):
+            return [{"vulnerability_class": "jwt", "confidence": 0.9, "severity": "high",
+                     "confirmed": True, "summary": "forged alg:none accepted",
+                     "evidence": "e", "basis": "derived"}]
+        out = await wi.investigate_worklist(
+            probe, st, "http://t", ROLES, precondition_fn=precondition)
+        self.assertEqual(agent_calls, [])                 # agent never ran on the benign node
+        self.assertEqual(len(out), 1)
+        self.assertTrue(out[0]["confirmed"])
+        self.assertEqual(out[0]["precondition_findings"], 1)
+        ep = next(w for w in st.worklist(10) if w["path"] == "/api/health")
+        self.assertEqual(ep["status"], "validated")        # proactive confirm sinks the node
+
+    async def test_precondition_and_agent_both_fold_in(self):
+        st = _state_with([OBJ])
+        async def probe(exchange, hypothesis, specialty, step_budget):
+            return _found_idor()
+        async def precondition(node, exchange):
+            return [{"vulnerability_class": "jwt", "confidence": 0.9, "severity": "high",
+                     "confirmed": True, "summary": "jwt forged", "evidence": "e", "basis": "derived"}]
+        out = await wi.investigate_worklist(
+            probe, st, "http://t", ROLES, precondition_fn=precondition)
+        classes = {f["vulnerability_class"] for f in out[0]["findings_detail"]}
+        self.assertIn("jwt", classes)     # proactive leg
+        self.assertIn("idor", classes)    # agent finding
+
+    async def test_precondition_returning_nothing_records_no_outcome(self):
+        # A shape-scan that confirms nothing on a benign node must not flood the
+        # outcome list with empty entries.
+        st = _state_with([BENIGN])
+        async def precondition(node, exchange):
+            return []
+        out = await wi.investigate_worklist(
+            lambda *a, **k: _async(_nothing()), st, "http://t", ROLES, precondition_fn=precondition)
+        self.assertEqual(out, [])
+
+    async def test_precondition_failure_does_not_sink_sweep(self):
+        st = _state_with([OBJ])
+        async def precondition(node, exchange):
+            raise RuntimeError("leg blew up")
+        async def probe(exchange, hypothesis, specialty, step_budget):
+            return _found_idor()
+        out = await wi.investigate_worklist(
+            probe, st, "http://t", ROLES, precondition_fn=precondition)
+        self.assertEqual(len(out), 1)          # agent probe still recorded
+        self.assertTrue(out[0]["confirmed"])
+
+    async def test_precondition_findings_survive_agent_probe_error(self):
+        st = _state_with([OBJ])
+        async def precondition(node, exchange):
+            return [{"vulnerability_class": "jwt", "confidence": 0.9, "severity": "high",
+                     "confirmed": True, "summary": "jwt forged", "evidence": "e", "basis": "derived"}]
+        async def probe(exchange, hypothesis, specialty, step_budget):
+            raise RuntimeError("agent blew up")
+        out = await wi.investigate_worklist(
+            probe, st, "http://t", ROLES, precondition_fn=precondition)
+        self.assertEqual(len(out), 1)
+        self.assertIn("error", out[0])
+        # the proactively-confirmed finding is not lost when the agent errors
+        self.assertEqual(out[0]["precondition_findings"], 1)
+        self.assertEqual(len(out[0]["findings_detail"]), 1)
+
+    async def test_precondition_leg_cap_is_respected(self):
+        colls = ["tickets", "orders", "reports", "invoices", "docs"]
+        eps = [dict(OBJ, path=f"/api/{c}/{{id}}") for c in colls]
+        st = _state_with(eps)
+        ran = []
+        async def precondition(node, exchange):
+            ran.append(node["path"])
+            return [{"vulnerability_class": "jwt", "confidence": 0.9, "severity": "high",
+                     "confirmed": True, "summary": "s", "evidence": "e", "basis": "derived"}]
+        await wi.investigate_worklist(
+            lambda *a, **k: _async(_nothing()), st, "http://t", ROLES,
+            precondition_fn=precondition, max_nodes=0, max_precondition_legs=2)
+        self.assertEqual(len(ran), 2)   # stops after the cap of confirmed proactive legs
+
+
 def _async(value):
     async def _c(*a, **k):
         return value

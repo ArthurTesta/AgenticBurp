@@ -92,65 +92,119 @@ async def investigate_worklist(
     roles,
     *,
     confirm_fn=None,
+    precondition_fn=None,
     max_nodes: int = 8,
+    max_precondition_legs: int = 24,
     step_budget: int = 16,
     id_fill: str = "1",
 ) -> list[dict]:
     """Drive `probe_fn` over the top `max_nodes` actionable worklist nodes.
 
     `probe_fn(exchange, hypothesis, specialty, step_budget) -> outcome dict`.
+
     `confirm_fn(finding_dict, exchange)`, if given, runs a deterministic
-    confirmation (e.g. the cross-identity replay) on each finding BEFORE it folds
-    into the graph -- so a confirmed access-control finding lands as `validated`,
-    sinks in the ranking, and outranks the agent's unconfirmed guesses. It mutates
-    the finding in place (may set confirmed=True + boost confidence).
+    confirmation (e.g. the cross-identity replay) on each AGENT finding BEFORE it
+    folds into the graph -- so a confirmed access-control finding lands as
+    `validated`, sinks in the ranking, and outranks the agent's unconfirmed
+    guesses. It mutates the finding in place (may set confirmed=True + boost
+    confidence).
+
+    `precondition_fn(node, exchange) -> list[confirmed finding dicts]`, if given,
+    runs the deterministic confirmation legs a node's SHAPE warrants -- object-
+    scoped -> cross-identity, JWT-carrying -> jwt-forge, XML body -> xxe, ... --
+    REGARDLESS of whether an agent produced a matching finding. This is the fix
+    for the detection->confirmation coupling (HANDOVER_6 §3/§4): a perfect leg
+    used to contribute nothing unless an agent first flagged that exact class on
+    that exact exchange. Driven by shape, a leg runs on every endpoint it could
+    prove -- including nodes with NO actionable agent hypothesis at all (a JWT-
+    carrying endpoint the agent probe would skip still gets its alg:none forged).
+    It returns only CONFIRMED findings (shape is a reason to TRY; confirmation is
+    still deterministic), so it never adds unconfirmed shape-guesses as noise.
+
     Returns a per-node outcome list; findings are folded back into `state`."""
     role_headers = {r.role: dict(r.headers or {}) for r in roles}
     outcomes: list[dict] = []
     investigated = 0
+    precondition_run = 0
 
     for node in state.worklist(50):
-        if investigated >= max_nodes:
-            break
         if node.get("status") == "validated":
             continue  # already proven -- never re-test
         derived = _derive_probe(node)
-        if derived is None:
-            continue
-        specialty, hypothesis = derived
+        do_agent = derived is not None and investigated < max_nodes
+        do_precond = precondition_fn is not None and precondition_run < max_precondition_legs
+        if not do_agent and not do_precond:
+            continue  # no agent hypothesis AND no shape-driven leg to run -- skip
+
         reach = node.get("reachable_roles", []) or []
         # probe from the lowest-trust identity that can reach it (strongest proof).
         probe_role = min(reach, key=_trust) if reach else (roles[0].role if roles else "anonymous")
         headers = role_headers.get(probe_role, {})
         exchange = _seed_exchange(base_url, node, headers, id_fill)
 
-        try:
-            outcome = await probe_fn(exchange, hypothesis, specialty, step_budget)
-        except Exception as e:  # one node's failure must not sink the sweep
-            log.warning("investigate_worklist: node %s %s failed: %s", node.get("method"), node.get("path"), e)
-            outcomes.append({"path": node.get("path"), "specialty": specialty, "error": repr(e)})
+        node_findings: list[dict] = []
+
+        # 1. Proactive, precondition-driven legs (shape, not agent label). Cheap
+        #    for a node whose shape warrants nothing (returns [] with no network).
+        precond_findings: list[dict] = []
+        if do_precond:
+            try:
+                precond_findings = await precondition_fn(node, exchange) or []
+            except Exception as e:  # a leg failure must not sink the sweep
+                log.debug("precondition_fn failed on %s %s: %s",
+                          node.get("method"), node.get("path"), e)
+                precond_findings = []
+            if precond_findings:
+                precondition_run += 1
+                for f in precond_findings:
+                    f.setdefault("url", exchange.url)
+                node_findings.extend(precond_findings)
+
+        # 2. The iterative agent probe (unchanged) -- only when a specialty
+        #    derived and the agent budget remains.
+        agent_stop = None
+        if do_agent:
+            specialty, hypothesis = derived
             investigated += 1
-            continue
+            try:
+                outcome = await probe_fn(exchange, hypothesis, specialty, step_budget)
+            except Exception as e:  # one node's failure must not sink the sweep
+                log.warning("investigate_worklist: node %s %s failed: %s",
+                            node.get("method"), node.get("path"), e)
+                if node_findings:  # still keep any proactively-confirmed findings
+                    state.ingest_findings(exchange.url, exchange.method, node_findings)
+                outcomes.append({"path": node.get("path"), "specialty": specialty,
+                                 "error": repr(e), "precondition_findings": len(precond_findings),
+                                 "findings_detail": list(node_findings)})
+                continue
+            agent_findings = _findings_from_outcome(outcome)
+            for f in agent_findings:
+                f.setdefault("url", exchange.url)  # stamp the concrete url for chain/capability linking
+            if confirm_fn is not None:
+                for f in agent_findings:
+                    try:
+                        await confirm_fn(f, exchange)  # deterministic confirmation, mutates f in place
+                    except Exception as e:  # confirmation is a bonus -- never sink the finding
+                        log.debug("confirm_fn failed on %s: %s", exchange.url, e)
+            node_findings.extend(agent_findings)
+            agent_stop = (outcome or {}).get("iterative_result", {}).get("stop_reason")
 
-        findings = _findings_from_outcome(outcome)
-        for f in findings:
-            f.setdefault("url", exchange.url)  # stamp the concrete url for chain/capability linking
-        if confirm_fn is not None:
-            for f in findings:
-                try:
-                    await confirm_fn(f, exchange)  # deterministic confirmation, mutates f in place
-                except Exception as e:  # confirmation is a bonus -- never sink the finding
-                    log.debug("confirm_fn failed on %s: %s", exchange.url, e)
-        if findings:
-            state.ingest_findings(exchange.url, exchange.method, findings)
+        if not do_agent and not precond_findings:
+            continue  # a shape-scan that confirmed nothing -- don't record an empty outcome
+
+        if node_findings:
+            state.ingest_findings(exchange.url, exchange.method, node_findings)
         outcomes.append({
-            "path": node.get("path"), "specialty": specialty, "probe_role": probe_role,
-            "findings": len(findings),
-            "findings_detail": findings,
-            "confirmed": any(f.get("confirmed") for f in findings),
-            "stop_reason": (outcome or {}).get("iterative_result", {}).get("stop_reason"),
+            "path": node.get("path"),
+            "specialty": derived[0] if derived else None,
+            "probe_role": probe_role,
+            "findings": len(node_findings),
+            "findings_detail": node_findings,
+            "precondition_findings": len(precond_findings),
+            "confirmed": any(f.get("confirmed") for f in node_findings),
+            "stop_reason": agent_stop,
         })
-        investigated += 1
 
-    log.info("investigate_worklist: %s -- investigated %d nodes", base_url, investigated)
+    log.info("investigate_worklist: %s -- investigated %d nodes, %d proactive legs confirmed",
+             base_url, investigated, precondition_run)
     return outcomes

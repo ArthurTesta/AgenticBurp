@@ -25,6 +25,7 @@ Architecture:
 from __future__ import annotations
 import asyncio
 import logging
+import re
 from urllib.parse import urlparse, urlsplit
 
 import httpx
@@ -749,9 +750,84 @@ class Orchestrator:
                 except Exception:
                     return
 
+        # --- proactive, precondition-driven leg routing (HANDOVER_6 §4) ---------
+        # The coupling fix: run a confirmation leg wherever the ENDPOINT'S SHAPE
+        # warrants it, not only where an agent already produced a matching finding.
+        # Shape is derived from the graph node + the identities that reach it; the
+        # legs themselves are the same deterministic validators `_confirm` routes to,
+        # so we reuse `_confirm` and keep only what it CONFIRMS.
+        _JWT_HDR_RE = re.compile(r"\beyJ[A-Za-z0-9_\-]+\.eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]*")
+
+        def _carries_jwt(hdrs: dict) -> bool:
+            return any(_JWT_HDR_RE.search(v or "") for v in (hdrs or {}).values())
+
+        def _jwt_identity(node):
+            """The lowest-trust reachable identity carrying a JWT (strongest proof
+            of a broken verifier from the weakest role), or None."""
+            reach = node.get("reachable_roles") or []
+            reachable = sorted((r for r in roles if r.role in reach),
+                               key=lambda r: worklist_investigator._trust(r.role))
+            for r in (reachable or roles):
+                if _carries_jwt(r.headers):
+                    return r
+            return None
+
+        def _accepts_xml(exchange) -> bool:
+            ctype = " ".join(v for k, v in (exchange.request_headers or {}).items()
+                             if k.lower() == "content-type").lower()
+            body = (exchange.request_body or "").lstrip()[:64].lower()
+            return "xml" in ctype or body.startswith("<?xml") or body.startswith("<!doctype")
+
+        def _has_url_param(exchange) -> bool:
+            blob = (urlsplit(exchange.url).query or "") + " " + (exchange.request_body or "")
+            return bool(re.search(r"https?://|%2f%2f", blob, re.IGNORECASE))
+
+        async def _confirm_leg(vclass, exchange, path):
+            """Synthesise a low-confidence hypothesis of `vclass`, run it through the
+            shared `_confirm` dispatcher, and return it only if a leg CONFIRMED it.
+            Runs on an isolated copy so a leg that populates a baseline response
+            (cross-identity) can't mutate the exchange the agent probe later uses."""
+            f = {"vulnerability_class": vclass, "confidence": 0.3, "severity": "high",
+                 "summary": f"{vclass} precondition on {path}", "evidence": "",
+                 "suggested_test": "", "basis": "derived", "proactive_leg": vclass}
+            await _confirm(f, exchange.model_copy())
+            return f if f.get("confirmed") else None
+
+        async def _precondition(node, exchange):
+            """Legs the node's shape warrants, run regardless of agent labels.
+            Returns only CONFIRMED findings."""
+            method = (node.get("method") or "GET").upper()
+            path = node.get("path", "/")
+            confirmed = []
+            # object-scoped -> cross-identity replay (uses the lowest-trust seed).
+            if node.get("object_scoped") and method == "GET":
+                r = await _confirm_leg("idor", exchange, path)
+                if r:
+                    confirmed.append(r)
+            # a JWT-carrying protected endpoint -> forge alg:none / reused-sig.
+            jid = _jwt_identity(node)
+            if jid is not None and method == "GET":
+                jex = worklist_investigator._seed_exchange(base_url, node, dict(jid.headers or {}), "1")
+                r = await _confirm_leg("jwt", jex, path)
+                if r:
+                    confirmed.append(r)
+            # XML-accepting body -> XXE; URL-shaped param -> SSRF. Route-discovery
+            # seeds carry no body, so these fire only on a captured exchange that
+            # actually has that shape (real Burp use) -- never as a blind guess.
+            if _accepts_xml(exchange):
+                r = await _confirm_leg("xxe", exchange, path)
+                if r:
+                    confirmed.append(r)
+            if _has_url_param(exchange):
+                r = await _confirm_leg("ssrf", exchange, path)
+                if r:
+                    confirmed.append(r)
+            return confirmed
+
         async def _investigate(st, rs):
             outs = await worklist_investigator.investigate_worklist(
-                _probe, st, base_url, rs, confirm_fn=_confirm, max_nodes=max_nodes, step_budget=step_budget)
+                _probe, st, base_url, rs, confirm_fn=_confirm, precondition_fn=_precondition,
+                max_nodes=max_nodes, step_budget=step_budget)
             return outs, [f for o in outs for f in o.get("findings_detail", [])]
 
         outcomes, all_findings = await _investigate(state, roles)
