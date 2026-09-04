@@ -51,11 +51,16 @@ class BrowserXssValidator(Validator):
     active = True  # executes payloads in a real browser -- gated by active_enabled
 
     def __init__(self, *, timeout: float = 15.0, allowed_hosts: list[str] | None = None,
-                 wait_ms: int = 1200, max_visits: int = 8, driver=None):
+                 wait_ms: int = 1200, max_visits: int = 8, driver=None,
+                 cdp_endpoint: str | None = None):
         self.timeout = timeout
         self.allowed_hosts = allowed_hosts or []
         self.wait_ms = wait_ms
         self.max_visits = max_visits
+        # When set (e.g. ws://127.0.0.1:3000 from a browser container), the
+        # engine is driven over CDP instead of launched on the host -- host
+        # cleanliness, mirroring sqlmap-in-container. Default: local launch.
+        self.cdp_endpoint = cdp_endpoint or None
         # An injected driver (tests / a custom engine) wins; otherwise the best
         # available real driver is resolved lazily at validate() time.
         self._driver = driver
@@ -93,9 +98,9 @@ class BrowserXssValidator(Validator):
         driver = self._driver
         if driver is None:
             import browser_driver
-            driver = browser_driver.default_driver()
+            driver = browser_driver.default_driver(cdp_endpoint=self.cdp_endpoint)
             if driver is None:
-                _, reason = browser_driver.available()
+                _, reason = browser_driver.available(self.cdp_endpoint)
                 return ValidationResult(
                     validator=self.name, status="skipped", finding_class="xss",
                     summary="browser XSS validation unavailable", evidence=reason)

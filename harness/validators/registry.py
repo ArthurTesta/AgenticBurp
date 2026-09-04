@@ -174,6 +174,7 @@ class ValidatorRegistry:
                 allowed_hosts=config.get("server", {}).get("allowed_hosts", []),
                 wait_ms=int(bxss_cfg.get("wait_ms", 1200)),
                 max_visits=int(bxss_cfg.get("max_visits", 8)),
+                cdp_endpoint=bxss_cfg.get("cdp_endpoint") or None,
             )
 
         # Cross-identity (Autorize-style) access-control validator. DEFAULT OFF

@@ -127,6 +127,13 @@ browser_xss:
   enabled: true
   wait_ms: 1200        # settle time after load, for async execution
   max_visits: 8        # cap on (param x payload) URLs visited per finding
+  # Optional: drive a CONTAINERISED Chromium over CDP instead of launching one
+  # on the host (host-cleanliness, mirroring sqlmap-in-container). Point this at
+  # a browser container, e.g. `docker run -p 3000:3000 browserless/chrome` then
+  # set: cdp_endpoint: "ws://127.0.0.1:3000". Empty/unset => launch locally
+  # (needs `playwright install chromium`). Only the Playwright client lib is
+  # needed on the host in CDP mode.
+  cdp_endpoint: ""
 
 # Per-vulnerability resource governance -- F5 (resource_governor.py). The
 # ceiling for testing ONE vulnerability: how many retries (re-dispatches of the

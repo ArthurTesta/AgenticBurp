@@ -96,8 +96,10 @@ class BrowserXssValidatorTests(unittest.TestCase):
         # available() (the reason), so the test is independent of whether a real
         # browser engine happens to be installed in the environment.
         orig_d, orig_a = browser_driver.default_driver, browser_driver.available
-        browser_driver.default_driver = lambda: None
-        browser_driver.available = lambda: (False, "no engine -- run `pip install playwright && playwright install chromium`")
+        # Stubs accept the cdp_endpoint arg the validator now threads through
+        # (containerised-browser mode); the no-engine behaviour is unchanged.
+        browser_driver.default_driver = lambda *a, **k: None
+        browser_driver.available = lambda *a, **k: (False, "no engine -- run `pip install playwright && playwright install chromium`")
         try:
             v = BrowserXssValidator(allowed_hosts=["shop.test"], driver=None)
             r = asyncio.run(v.validate(_finding(), _exchange()))
