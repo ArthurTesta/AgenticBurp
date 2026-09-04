@@ -65,7 +65,7 @@ getting dispatched. What's removed is exclusively the part that dispatched
 agents *regardless of content*, purely because the method was common or
 the status was a success code.
 
-That said: per `HANDOVER.md` §4.6, this project has no live precision/
+That said: per `archive/HANDOVER.md` §4.6, this project has no live precision/
 recall baseline against a real deployed model for fast-path or anything
 else. I cannot empirically prove this changes zero real-world detections —
 only that it removes the two table entries that fired unconditionally on
@@ -103,7 +103,7 @@ returns `None`. Regression test:
 
 ## Not addressed here
 
-`coordinator.py`'s fail-open-to-all-36-agents fallback (`HANDOVER.md`
+`coordinator.py`'s fail-open-to-all-36-agents fallback (`archive/HANDOVER.md`
 §4.4) and the duplicate `_resolve_known_vulnerabilities` call
-(`HANDOVER.md` §4.1) are separate, real efficiency issues, left
+(`archive/HANDOVER.md` §4.1) are separate, real efficiency issues, left
 untouched — out of scope for this fix.

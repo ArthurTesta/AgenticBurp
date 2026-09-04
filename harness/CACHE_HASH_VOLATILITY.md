@@ -66,8 +66,8 @@ left untouched:
   populated it. This needs a decision about which specific smaller model
   is actually pulled and acceptable quality-wise, which isn't
   determinable from this sandbox (Ollama isn't reachable here — see
-  `HANDOVER.md` §1b).
-- `coordinator.py`'s fail-open-to-all-36-agents fallback (`HANDOVER.md`
+  `archive/HANDOVER.md` §1b).
+- `coordinator.py`'s fail-open-to-all-36-agents fallback (`archive/HANDOVER.md`
   §4.4) and the duplicate `_resolve_known_vulnerabilities` call
-  (`HANDOVER.md` §4.1) — external-API compute, not LLM compute, but
+  (`archive/HANDOVER.md` §4.1) — external-API compute, not LLM compute, but
   still real waste.

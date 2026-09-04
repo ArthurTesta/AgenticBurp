@@ -7,7 +7,7 @@
 >
 > **Discipline (same as the other handover docs):** claims about *this project*
 > are tied to files/docs already verified in-repo (README, `REVIEW.md`,
-> `HANDOVER.md`, `SESSION_HANDOVER_2.md`). Claims about *competitors* come from
+> `archive/HANDOVER.md`, `archive/SESSION_HANDOVER_2.md`). Claims about *competitors* come from
 > a single secondary source (below) and are **NOT independently verified** —
 > treat their benchmark numbers as "as reported," not as fact.
 >
@@ -110,7 +110,7 @@ genuinely rare in the survey and is the thing worth protecting.
 - **Single-exchange scope on the vulns that matter most.** IDOR/authz/business-
   logic need multi-request, multi-identity differential testing; the core loop
   is single-shot. (The iterative agent, cross-identity IDOR, and missing-auth
-  probe are *written but not wired in by default* — see `SESSION_HANDOVER_2.md`
+  probe are *written but not wired in by default* — see `archive/SESSION_HANDOVER_2.md`
   §1–2.) *vs. VulnBot's task-graph and every autonomous orchestrator.*
 - **No autonomous execution, no working PoC.** It tells you what to try; it
   doesn't prove the bug. *vs. Shannon (PoCs), Strix/PentAGI/XBOW (autonomous
@@ -123,7 +123,7 @@ genuinely rare in the survey and is the thing worth protecting.
   but defaults off.*
 - **The "deterministic confirmation" leg degrades in practice.** GHA is 60/hr
   unauthenticated, KEV live-fetch "not verified working," sqlmap historically
-  not installed (`REVIEW.md`, `HANDOVER.md` §4.2). The marketed strength often
+  not installed (`REVIEW.md`, `archive/HANDOVER.md` §4.2). The marketed strength often
   falls back to "unconfirmed." *vs. AIxCC CRS, where verification IS the product.*
 - **Prototype, not a product.** Single squashed git commit, DBs + built `.jar`
   tracked in git, a full divergent duplicate harness under `testing/`, no CI, no
@@ -132,7 +132,7 @@ genuinely rare in the survey and is the thing worth protecting.
 - **History of "green tests, dead pipeline."** Detection has been silently zero
   multiple times while the mocked suite stayed green (a system-prompt validator
   rejected every agent; 12/13 active validators broken until first exercised —
-  `HANDOVER.md` §0, §5i). A credibility gap until an end-to-end scored run exists.
+  `archive/HANDOVER.md` §0, §5i). A credibility gap until an end-to-end scored run exists.
 
 ---
 
@@ -178,7 +178,7 @@ genuinely rare in the survey and is the thing worth protecting.
    cross-account IDOR, a chained SSRF→metadata, a working auth bypass — multi-
    request, stateful, proven. Single-exchange analysis is the wrong shape for
    the high-value categories, and "flagged IDOR on a 403-denied request" (which
-   the blind eval actually caught — `SESSION_HANDOVER_2.md` §4) is the failure
+   the blind eval actually caught — `archive/SESSION_HANDOVER_2.md` §4) is the failure
    that burns signal-to-noise and program reputation. It hands hypotheses;
    XBOW/Shannon hand triagers a PoC.
 3. **Local models mean I trust the flags less on hard bugs — verify everything.**

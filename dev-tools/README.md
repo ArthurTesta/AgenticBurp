@@ -61,7 +61,7 @@ passing check while quietly meaning nothing.
 `ValidationExecutor.java` itself doesn't compile standalone -- it needs a
 `HarnessClient` (real one pulls in Gson, a separate dependency this
 sandbox also can't fetch). For isolation, stub `HarnessClient`'s public
-API faithfully (see this session's transcript / HANDOVER.md item 10 for
+API faithfully (see this session's transcript / archive/HANDOVER.md item 10 for
 the exact stub used) rather than the real file, then:
 
 ```bash
@@ -76,4 +76,4 @@ javac -d /tmp/out2 \
 Zero errors = type-checked, in this document's vocabulary: stronger than
 source review, weaker than compiling against the real jar with real
 Gradle. The real Gradle build in an environment with Maven Central access
-is still the milestone that actually matters -- see HANDOVER.md.
+is still the milestone that actually matters -- see archive/HANDOVER.md.

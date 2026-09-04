@@ -22,13 +22,14 @@ missing-auth probe, and an **engagement layer** that fuses every signal
 "test-next" worklist backed by a penetration **task graph**, with a
 budget-governed driver (`/engagement/{host}/run`) and a closed
 finding→credential→re-crawl loop. Every active/autonomous step stays opt-in
-and human-gated by design — see the config toggles table in
-**SESSION_HANDOVER_3.md §3**.
+and human-gated by design — see the config toggles in `harness/config.yaml`.
 
-> **Docs map:** **SESSION_HANDOVER_3.md** is the authoritative current-state
-> doc (architecture, every endpoint, config toggles, backlog). `HANDOVER.md`
-> is the deep reference for the passive core (agents, dispatch, caching,
-> effort budget, sqlmap). `SESSION_HANDOVER{,_2}.md` are historical.
+> **Docs map:** **`CLAUDE.md`** holds the stable orientation (architecture,
+> hazards, environment, file map) and **`CURRENT_STATE.md`** the per-session
+> delta (branch, HEAD, what shipped, what's pending) — those two are the whole
+> onboarding. The historical `SESSION_HANDOVER_*.md` chain and the old
+> `HANDOVER.md` deep-reference are archived under `archive/` for git-history
+> spelunking only.
 
 ---
 
@@ -317,13 +318,13 @@ lines under `agents:`.
 - **No measured accuracy baseline exists for this tool against any real
   model.** Everything about "how good are the findings" is untested in
   the sense of a live model actually being scored against known-answer
-  targets — see `HANDOVER.md` for the full detail if you want it.
+  targets — see `archive/HANDOVER.md` for the full detail if you want it.
 - The coordinator's fail-open-to-all-36-agents fallback (above) is real
   and currently silent — if you're watching for cost/latency spikes,
   that's the first place to look.
 - `sqlmap`-based confirmation (used to validate SQLi hypotheses) has a
-  known miss rate against real targets — see `HANDOVER.md` §4.2. A
+  known miss rate against real targets — see `archive/HANDOVER.md` §4.2. A
   "not confirmed" result from it is not strong evidence of absence.
 - Full detail on everything found-but-not-yet-fixed lives in
-  `HANDOVER.md`; treat it as the more thorough companion to this file
+  `archive/HANDOVER.md`; treat it as the more thorough companion to this file
   if you're planning to modify the harness rather than just run it.
