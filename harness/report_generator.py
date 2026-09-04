@@ -38,6 +38,8 @@ from datetime import datetime, timezone
 
 import risk_allocator
 from effort import CallKind, EffortLedger
+from engagement import normalize_path
+from categories import canonicalize
 
 _SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
 
@@ -110,6 +112,7 @@ class ReportFinding:
     agent: str
     is_chain: bool = False
     fingerprint: str = ""
+    duplicate_count: int = 1   # how many raw findings collapsed into this survivor
 
 
 def _from_store_dict(d: dict) -> ReportFinding:
@@ -210,6 +213,46 @@ def _rank_unconfirmed_by_value_density(
     return [unconfirmed[i] for i in order]
 
 
+def _dedup_key(f: "ReportFinding") -> tuple[str, str]:
+    """The identity a duplicate shares: the endpoint FAMILY (object ids collapsed
+    to {id}, so /tickets/1 and /tickets/2 are one family) and the canonical class.
+    This is what makes 45 confirmed findings collapse to ~4 real bugs -- the same
+    IDOR proven on ticket 1..8 is one finding about /tickets/{id}, not eight."""
+    family = normalize_path(f.url) if f.url else ""
+    canon = canonicalize(f.vulnerability_class) or (f.vulnerability_class or "").strip().lower()
+    return (family, canon)
+
+
+def _rank_tuple(f: "ReportFinding") -> tuple:
+    # Higher is better: confirmed first, then more-severe, then higher confidence.
+    return (1 if f.confirmed else 0, -_SEVERITY_ORDER.get(f.severity, 99), f.confidence)
+
+
+def _collapse_duplicates(findings: list["ReportFinding"]) -> tuple[list["ReportFinding"], int]:
+    """Collapse findings that share an (endpoint-family, class) into a single best
+    representative -- confirmed beats unconfirmed, then more-severe, then
+    higher-confidence -- so a proven bug floats up and its duplicates don't bury
+    the shortlist. The survivor carries `duplicate_count` (how many collapsed into
+    it). Returns (survivors, number_removed). Order-stable on first appearance;
+    the caller re-sorts anyway."""
+    groups: dict[tuple[str, str], "ReportFinding"] = {}
+    order: list[tuple[str, str]] = []
+    for f in findings:
+        k = _dedup_key(f)
+        cur = groups.get(k)
+        if cur is None:
+            f.duplicate_count = 1
+            groups[k] = f
+            order.append(k)
+        else:
+            total = cur.duplicate_count + 1
+            winner = f if _rank_tuple(f) > _rank_tuple(cur) else cur
+            winner.duplicate_count = total
+            groups[k] = winner
+    survivors = [groups[k] for k in order]
+    return survivors, len(findings) - len(survivors)
+
+
 def generate_markdown_report(host: str, findings: list[dict], generated_at: datetime | None = None,
                               effort_ledger: EffortLedger | None = None, suppressed_count: int = 0) -> str:
     """
@@ -233,6 +276,12 @@ def generate_markdown_report(host: str, findings: list[dict], generated_at: date
     individual = [f for f in parsed if not f.is_chain]
     chains = [f for f in parsed if f.is_chain]
 
+    # Collapse per-(endpoint-family, class) duplicates, floating confirmed. A
+    # max-coverage run's 225 findings / 45 confirmed were heavy duplicates over ~4
+    # endpoint-families (HANDOVER_6 §4/§6.2); this turns that pile into a real
+    # shortlist without dropping any distinct bug.
+    individual, collapsed_count = _collapse_duplicates(individual)
+
     individual.sort(key=lambda f: (_SEVERITY_ORDER.get(f.severity, 99), -f.confidence))
 
     confirmed = [f for f in individual if f.confirmed]
@@ -248,6 +297,11 @@ def generate_markdown_report(host: str, findings: list[dict], generated_at: date
     lines.append("")
     lines.append(f"**{len(confirmed)} confirmed finding(s)**, **{len(unconfirmed)} unconfirmed finding(s)**, "
                  f"**{len(chains)} potential attack chain(s)**.")
+    if collapsed_count:
+        lines.append("")
+        lines.append(f"*{collapsed_count} duplicate finding(s) were collapsed* -- the same class proven or "
+                     f"suspected on the same endpoint family (object ids normalised) is shown once, as one "
+                     f"finding, with the confirmed/highest-confidence instance kept.")
     if suppressed_count:
         lines.append("")
         lines.append(f"*{suppressed_count} previously-suppressed finding(s) from earlier scans are not "
@@ -310,6 +364,9 @@ def _render_finding(f: ReportFinding) -> list[str]:
     lines.append(f"**Status:** {status} &nbsp;|&nbsp; **Severity:** {_SEVERITY_BADGE.get(f.severity, f.severity)} "
                  f"&nbsp;|&nbsp; **Confidence:** {f.confidence:.2f} ({_confidence_label(f.confidence)}) "
                  f"&nbsp;|&nbsp; **Basis:** {f.basis}")
+    if f.duplicate_count > 1:
+        lines.append(f"**Also observed on {f.duplicate_count - 1} other instance(s)** of this endpoint "
+                     f"family (same class, different object id) -- collapsed into this one finding.")
     if f.owasp_category:
         lines.append(f"**OWASP category:** {f.owasp_category}")
     basis_note = _basis_note(f.basis)

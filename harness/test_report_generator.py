@@ -119,8 +119,12 @@ class TestReportStructure(unittest.TestCase):
         self.assertIn("No findings recorded", report)
 
     def test_summary_counts_are_accurate(self):
+        # Distinct (endpoint-family, class) findings so the dedup pass leaves them
+        # all standing -- this exercises the count logic, not the collapse.
         findings = [
-            sample(confirmed=True), sample(confirmed=True), sample(confirmed=False),
+            sample(vulnerability_class="sqli", url="https://example.com/a", confirmed=True),
+            sample(vulnerability_class="idor", url="https://example.com/b", confirmed=True),
+            sample(vulnerability_class="xss", url="https://example.com/c", confirmed=False),
         ]
         report = generate_markdown_report("example.com", findings)
         self.assertIn("2 confirmed finding(s)", report)
@@ -268,22 +272,25 @@ class TestCostAwareRankingOfUnconfirmedFindings(unittest.TestCase):
 
     def test_same_category_and_url_findings_are_not_conflated(self):
         """
-        Regression guard: RiskScore has no back-reference to which
-        ReportFinding produced it, so the reordering logic rebuilds
-        order by index, not by re-matching (category, url) -- which
-        would silently misorder two different findings that happen to
-        share both fields. This constructs exactly that case.
+        Regression guard for `_rank_unconfirmed_by_value_density`: RiskScore has
+        no back-reference to which ReportFinding produced it, so the reordering
+        rebuilds order by index, not by re-matching (category, url) -- which would
+        silently misorder two findings sharing both fields. The public report path
+        now collapses same-(endpoint-family, class) duplicates BEFORE ranking, so
+        this case can no longer reach the ranker through it; test the ranker
+        directly to keep the guard live.
         """
-        findings = [
-            sample(vulnerability_class="sqli", url="https://x/a", confidence=0.9, severity="critical", confirmed=False, evidence="evidence-A"),
-            sample(vulnerability_class="sqli", url="https://x/a", confidence=0.2, severity="critical", confirmed=False, evidence="evidence-B"),
-        ]
+        from report_generator import _rank_unconfirmed_by_value_density, ReportFinding
+
+        def rf(evidence, confidence):
+            return ReportFinding(url="https://x/a", vulnerability_class="sqli", severity="critical",
+                                 confidence=confidence, summary="s", evidence=evidence, suggested_test="t",
+                                 owasp_category=None, basis="derived", confirmed=False, agent="a")
+        unconfirmed = [rf("evidence-A", 0.9), rf("evidence-B", 0.2)]
         ledger = self._ledger_with_retry_cost(1000)
-        report = generate_markdown_report("example.com", findings, effort_ledger=ledger)
-        # The higher-confidence one (evidence-A) must rank first -- if
-        # the two got conflated by (category, url) matching, this
-        # ordering could silently swap or duplicate.
-        self.assertLess(report.index("evidence-A"), report.index("evidence-B"))
+        ranked = _rank_unconfirmed_by_value_density(unconfirmed, ledger)
+        # Higher confidence -> higher value_density -> first, without conflation.
+        self.assertEqual([f.evidence for f in ranked], ["evidence-A", "evidence-B"])
 
     def test_generate_report_for_host_forwards_the_ledger(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -298,6 +305,53 @@ class TestCostAwareRankingOfUnconfirmedFindings(unittest.TestCase):
             ledger = self._ledger_with_retry_cost(1000)
             report = generate_report_for_host(exchange.url, effort_ledger=ledger)
             self.assertLess(report.index("xss"), report.index("sqli"))
+
+
+class TestDuplicateCollapse(unittest.TestCase):
+    """§6.2: collapse per-(endpoint-family, class), floating confirmed -- turns a
+    max-coverage run's heavy-duplicate pile into a real shortlist."""
+
+    def test_same_class_across_object_ids_collapses_to_one(self):
+        # The same IDOR proven on ticket 1..4 is ONE finding about /tickets/{id}.
+        findings = [sample(vulnerability_class="idor", url=f"https://example.com/api/tickets/{i}",
+                           confirmed=True) for i in range(1, 5)]
+        report = generate_markdown_report("example.com", findings)
+        self.assertIn("1 confirmed finding(s)", report)
+        self.assertIn("3 duplicate finding(s) were collapsed", report)
+        self.assertEqual(report.count("### idor --"), 1)
+        self.assertIn("3 other instance(s)", report)
+
+    def test_confirmed_survivor_beats_unconfirmed_duplicate(self):
+        findings = [
+            sample(vulnerability_class="idor", url="https://example.com/api/tickets/1",
+                   confirmed=False, confidence=0.95, evidence="unconfirmed-guess"),
+            sample(vulnerability_class="idor", url="https://example.com/api/tickets/2",
+                   confirmed=True, confidence=0.6, evidence="confirmed-proof"),
+        ]
+        report = generate_markdown_report("example.com", findings)
+        self.assertIn("1 confirmed finding(s)", report)
+        self.assertIn("0 unconfirmed finding(s)", report)
+        self.assertIn("confirmed-proof", report)          # the confirmed one survived
+        self.assertNotIn("unconfirmed-guess", report)     # despite its higher confidence
+
+    def test_distinct_classes_on_same_endpoint_not_collapsed(self):
+        findings = [
+            sample(vulnerability_class="idor", url="https://example.com/api/tickets/1", confirmed=True),
+            sample(vulnerability_class="sqli", url="https://example.com/api/tickets/1", confirmed=True),
+        ]
+        report = generate_markdown_report("example.com", findings)
+        self.assertIn("2 confirmed finding(s)", report)
+        self.assertNotIn("duplicate finding(s) were collapsed", report)
+
+    def test_canonical_synonyms_collapse_together(self):
+        # "SQL Injection" and "sqli" are the same class -- must collapse.
+        findings = [
+            sample(vulnerability_class="SQL Injection", url="https://example.com/api/login", confirmed=True),
+            sample(vulnerability_class="sqli", url="https://example.com/api/login", confirmed=False),
+        ]
+        report = generate_markdown_report("example.com", findings)
+        self.assertIn("1 confirmed finding(s)", report)
+        self.assertIn("1 duplicate finding(s) were collapsed", report)
 
 
 if __name__ == "__main__":
