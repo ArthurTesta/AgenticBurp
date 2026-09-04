@@ -178,11 +178,17 @@ class SqlmapValidator(Validator):
     active = True
 
     def __init__(self, binary: str = "sqlmap", timeout_seconds: int = 90,
-                 level: int = 1, risk: int = 1):
+                 level: int = 1, risk: int = 1, container_image: str | None = None):
         self.binary = binary
         self.timeout_seconds = timeout_seconds
         self.level = max(1, min(level, 2))
         self.risk = max(1, min(risk, 2))
+        # When set (and the docker daemon is up), sqlmap runs in a throwaway
+        # container instead of on the host -- so the offensive tool never touches
+        # host disk (where Defender quarantines it) and its version is pinned to
+        # the image. The loopback target is rewritten to host.docker.internal so
+        # the container reaches the same service the host means by localhost.
+        self.container_image = container_image
 
     @staticmethod
     def _raw_request(exchange: HttpExchange) -> str:
@@ -345,10 +351,24 @@ class SqlmapValidator(Validator):
             assert self.risk <= 2, f"Refusing to run sqlmap: risk={self.risk} exceeds the hard ceiling of 2."
             assert self.level <= 2, f"Refusing to run sqlmap: level={self.level} exceeds the hard ceiling of 2."
 
+            # Container mode: wrap the (already safety-checked) sqlmap args in a
+            # `docker run --rm` and rewrite the -u target to host.docker.internal.
+            # The safety-flag assertions above ran on the raw sqlmap `cmd`, so the
+            # denied-flag invariant holds regardless of how the process is spawned.
+            run_cmd = cmd
+            if self.container_image:
+                import tool_runner
+                if tool_runner.available()[0]:
+                    args = list(cmd[1:])  # drop self.binary; the image entrypoint IS sqlmap
+                    for i in range(1, len(args)):
+                        if args[i - 1] == "-u":
+                            args[i] = tool_runner.localhost_url(args[i])
+                    run_cmd = tool_runner.docker_cmd(self.container_image, args)
+
             try:
                 proc = await asyncio.to_thread(
                     subprocess.run,
-                    cmd,
+                    run_cmd,
                     capture_output=True,
                     text=True,
                     timeout=self.timeout_seconds,

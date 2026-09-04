@@ -39,6 +39,7 @@ class ValidatorRegistry:
                 timeout_seconds=int(sqlmap_cfg.get("timeout_seconds", 90)),
                 level=int(sqlmap_cfg.get("level", 1)),
                 risk=int(sqlmap_cfg.get("risk", 1)),
+                container_image=sqlmap_cfg.get("container_image"),
             )
         
         # CORS validator

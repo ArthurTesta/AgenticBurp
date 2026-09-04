@@ -99,6 +99,37 @@ class ValidatorTests(unittest.TestCase):
         self.assertTrue(result.confirmed)
         self.assertEqual(result.status, "confirmed")
 
+    def test_sqlmap_container_mode_wraps_in_docker_and_rewrites_localhost(self):
+        import tool_runner
+        loopback_ex = HttpExchange(
+            url="http://127.0.0.1:5002/api/item?id=7", method="GET",
+            request_headers={"User-Agent": "t"}, response_status=200, response_body="x")
+        validator = SqlmapValidator(container_image="harness/sqlmap:1.10.9")
+        captured = {}
+        def fake_run(cmd, *a, **k):
+            captured["cmd"] = cmd
+            return FakeProc()
+        with patch("subprocess.run", fake_run), \
+             patch("tool_runner.available", return_value=(True, "ok")):
+            asyncio.run(validator.validate(self.finding, loopback_ex))
+        cmd = captured["cmd"]
+        self.assertEqual(cmd[:3], [tool_runner.DOCKER, "run", "--rm"])   # ran in a container
+        self.assertIn("harness/sqlmap:1.10.9", cmd)
+        # the -u target was rewritten so the container reaches the host service
+        u = cmd[cmd.index("-u") + 1]
+        self.assertIn("host.docker.internal:5002", u)
+        self.assertNotIn("127.0.0.1", u)
+
+    def test_sqlmap_host_mode_unchanged_when_no_container_image(self):
+        validator = SqlmapValidator()  # no container_image
+        captured = {}
+        def fake_run(cmd, *a, **k):
+            captured["cmd"] = cmd
+            return FakeProc()
+        with patch("subprocess.run", fake_run):
+            asyncio.run(validator.validate(self.finding, self.exchange))
+        self.assertEqual(captured["cmd"][0], "sqlmap")  # host binary, no docker wrapping
+
     def test_sqlmap_failure_is_not_confirmation(self):
         class NoHit:
             returncode = 0
