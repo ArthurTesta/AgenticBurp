@@ -71,6 +71,7 @@ _REMEDIATION_HINTS: dict[str, str] = {
     "command_injection": "Avoid shell invocation with user-controlled input entirely; use parameterized subprocess APIs and strict allowlisting if shell use is unavoidable.",
     "ssti": "Avoid passing user input directly into template rendering; use a logic-less template engine or sandbox template execution.",
     "open_redirect": "Validate redirect targets against an allowlist of known-safe destinations rather than accepting arbitrary URLs.",
+    "path_traversal": "Resolve user-supplied paths against a fixed base directory and reject any that escape it (canonicalize, then verify the prefix); never pass raw filenames to filesystem APIs.",
     "info_disclosure": "Remove verbose error messages, stack traces, and internal identifiers from responses served to end users.",
     "cors": "Set Access-Control-Allow-Origin to a specific, validated origin allowlist -- never reflect Origin unconditionally, especially alongside Access-Control-Allow-Credentials.",
     "recon": "Remove or restrict access to discovery-relevant files/endpoints (.git, .env, API docs) not intended for public access.",

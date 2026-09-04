@@ -21,6 +21,8 @@ from .ssrf_validator import SsrfValidator
 from .xxe_validator import XxeValidator
 from .command_injection_validator import CommandInjectionValidator
 from .ssti_validator import SstiValidator
+from .path_traversal_validator import PathTraversalValidator
+from .open_redirect_validator import OpenRedirectValidator
 from safety_gate import get_default_gate, reset_default_gate
 
 
@@ -174,6 +176,16 @@ class ValidatorRegistry:
         if ssti_cfg.get("enabled", True):
             self.validators["ssti"] = SstiValidator(
                 allowed_hosts=_allowed, timeout=float(ssti_cfg.get("timeout", 10.0)))
+        # Path-traversal leg -- reads a canonical system file via a traversal payload. Active.
+        pt_cfg = cfg.get("path_traversal", {})
+        if pt_cfg.get("enabled", True):
+            self.validators["path_traversal"] = PathTraversalValidator(
+                allowed_hosts=_allowed, timeout=float(pt_cfg.get("timeout", 10.0)))
+        # Open-redirect leg -- points a redirect param off-origin and checks Location. Active.
+        or_cfg = cfg.get("open_redirect", {})
+        if or_cfg.get("enabled", True):
+            self.validators["open_redirect"] = OpenRedirectValidator(
+                allowed_hosts=_allowed, timeout=float(or_cfg.get("timeout", 10.0)))
 
         # Browser-driven XSS validator (A2) -- active: loads candidate URLs in a
         # real headless browser and confirms only on observed script execution.

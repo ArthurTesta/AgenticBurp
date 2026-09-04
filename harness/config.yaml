@@ -393,6 +393,16 @@ validators:
   ssti:
     enabled: true
     timeout: 10.0
+  # Path-traversal leg: injects a traversal sequence into a file/path-shaped
+  # parameter and confirms on canonical /etc/passwd or win.ini contents.
+  path_traversal:
+    enabled: true
+    timeout: 10.0
+  # Open-redirect leg: points a redirect-shaped parameter at an off-origin
+  # sentinel host and confirms if the server's Location header follows it.
+  open_redirect:
+    enabled: true
+    timeout: 10.0
 
 # Autonomous scope-discovery MVP (harness/scope_discovery.py). Off by
 # default -- the harness has never, until this option exists, decided on

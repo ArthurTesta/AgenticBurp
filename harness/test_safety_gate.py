@@ -289,7 +289,10 @@ class TestNoValidatorBypassesTheGate(unittest.TestCase):
                                   # command_injection/ssti replay the captured method for their
                                   # injection payload but likewise route through GatedAsyncClient
                                   # (same verification below).
-                                  "command_injection_validator.py", "ssti_validator.py"}
+                                  "command_injection_validator.py", "ssti_validator.py",
+                                  # path_traversal/open_redirect replay the captured method for their
+                                  # file-read / redirect-follow probe, gate-routed (verified below).
+                                  "path_traversal_validator.py", "open_redirect_validator.py"}
         # Files whose exchange.method reference is provably not a live
         # send at all -- verified by reading the code, not assumed.
         inert_usage_exceptions = {
@@ -365,7 +368,8 @@ class TestNoValidatorBypassesTheGate(unittest.TestCase):
         self.assertIn(".authorize(", sqlmap_src)
 
         for name in ("ssrf_validator.py", "xxe_validator.py",
-                     "command_injection_validator.py", "ssti_validator.py"):
+                     "command_injection_validator.py", "ssti_validator.py",
+                     "path_traversal_validator.py", "open_redirect_validator.py"):
             src = (here / "validators" / name).read_text()
             self.assertIn("GatedAsyncClient", src,
                           f"{name} replays exchange.method but doesn't route through GatedAsyncClient")

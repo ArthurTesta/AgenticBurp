@@ -189,8 +189,8 @@ class TestChainRuleCoverageIsDocumented(unittest.TestCase):
     KNOWN_UNCOVERED = frozenset({
         "ai_llm", "anomaly", "api_security", "auth", "business_logic_enhanced",
         "cors", "crypto", "csp", "file_upload", "http_request_smuggling",
-        "info_disclosure", "jwt", "misconfig", "nosql", "race_condition",
-        "recon", "session_timeout", "ssti", "supply_chain",
+        "info_disclosure", "jwt", "misconfig", "nosql", "path_traversal",
+        "race_condition", "recon", "session_timeout", "ssti", "supply_chain",
     })
 
     def test_categories_with_no_chain_rule_are_the_known_documented_set(self):
