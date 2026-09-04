@@ -275,6 +275,11 @@ the survey and is the thing worth protecting.
 
 ## 4. What closes the distance (priority order)
 
+> **Update 2026-09-04:** items 1–3 below are now substantially **done** (scorer +
+> SCORECARD, `test_smoke_detection` in CI, the multi-request engagement loop
+> shipped). The live frontier has moved to **§5** — the gaps that remain vs the
+> commercial state of the art. This list is kept for provenance.
+
 Short and concrete — and *not* more architecture:
 
 1. **Score it.** Run the existing blind corpus + answer key (`testing/`) against
@@ -292,6 +297,84 @@ Short and concrete — and *not* more architecture:
 
 ---
 
-*Competitor benchmark figures above are as reported by the source article and
-are not independently verified. Everything about this project is grounded in
-in-repo docs current as of the branch this file was committed on.*
+## 5. Head-to-head with the commercial frontier — XBOW and Aikido
+
+> Added 2026-09-04. Harness claims are verified in-repo (code + `SCORECARD.md` +
+> `CURRENT_STATE.md`). XBOW/Aikido claims are **as reported** by the vendors and
+> press linked at the end of this section — not independently verified.
+
+These two bracket the commercial frontier from opposite directions, which is why
+they're the right yardsticks:
+
+- **XBOW** — autonomous *offense at scale*. Cold-start black-box multi-agent;
+  parallel agents test SQLi/XSS/SSRF/auth-bypass at once; **validates a working
+  PoC for every finding**; 48-step exploit chains; 1,060+ HackerOne vulns (#1
+  global); GA across Fortune 500, $120M Series C.
+- **Aikido (now "Aikido Infinite")** — *continuous authenticated exposure
+  management with auto-remediation*. 200+ agents log **into** the app, discover
+  endpoints from real traffic + fuzzing, hit authenticated routes, confirm
+  exploitability, then **open PRs with fixes**, 24/7 wired into CI.
+
+### Where the harness now stands (the *kind* gap is closed)
+
+The three things this doc originally said it lacked — **proving bugs**,
+**chaining**, **being measured** — now exist and are verified. So it is no longer
+a different *category* from these tools; it is the same category (a confirmation-
+driven engagement engine) at **hobby scale on local models**. Concretely, it
+already shares real capabilities with them:
+
+| Capability | Harness (verified) | XBOW | Aikido |
+|---|---|---|---|
+| Proves bugs with a replayable PoC | ✅ within 6 legs (jwt/idor/sqli live-verified) | ✅ every finding | ✅ confirms exploitability |
+| Multi-step / chaining | ✅ escalation edges + rule-composed chains + credential closed-loop (1 chain, session-8) | ✅ 48-step chains | ✅ cross-layer paths |
+| Authenticated / multi-identity testing | ✅ `role_crawl` access matrix + cross-identity replay | ✅ | ✅ logs in, tests authed routes |
+| Scored precision/recall | ✅ per-OWASP (0.476 / 0.909 PixelMart) | ✅ 104-scenario bench | ✅ (product-internal) |
+| Local / air-gapped / no data egress | ✅ Ollama, loopback | ❌ cloud SaaS | ❌ cloud SaaS |
+| Burp-native, tester-in-the-loop | ✅ | ❌ autonomous SaaS | ❌ platform/service |
+
+### What's still missing vs **XBOW** (offense-at-scale)
+
+| Gap | Where the harness is | Why it matters |
+|---|---|---|
+| **PoC breadth** | 6 fixed legs; everything else ships *unconfirmed* | XBOW validates a PoC for *arbitrary* classes — the harness can't prove mass-assignment, the JWT-secret leak, CSRF, LFI, etc. |
+| **Reasoning ceiling** | local `qwen3:8b`, ~41% CPU | XBOW runs frontier models; business-logic/authz reasoning is exactly where 8B is weakest |
+| **Scale / throughput** | single consumer GPU, `max_parallel_agents: 1`, ~3 h per max run | XBOW runs massively parallel in the cloud; matched a 40 h assessment in 28 min |
+| **Chain depth** | rule-based composition + a *bounded* few-round credential loop | XBOW autonomously builds 48-step chains it wasn't scripted for |
+| **Blind precision** | **collapses on blind negatives — 0/6 secure controls clean** (blind-target-2) | XBOW holds #1 on live black-box HackerOne targets; precision on unseen apps is the harness's weakest measured axis |
+| **External validation** | small self-built corpora (PixelMart 11 TPs, VulnCorp, one blind app) | XBOW: 1,060+ triaged real-world vulns |
+
+### What's still missing vs **Aikido** (continuous authenticated remediation)
+
+| Gap | Where the harness is | Note |
+|---|---|---|
+| **Auto-remediation** | emits findings + PoC; no fix generation | Aikido opens fix PRs. Nearest in-repo analog is `report_generator.py`; fix-synthesis is unbuilt |
+| **Continuous / CI-native mode** | runs *during* an engagement, on demand | Aikido Infinite tests every push 24/7. **Deliberately out of scope** per `archive/platform-spec-gap-analysis.md:63` — a different product, not a deficiency |
+| **Reachability analysis** | GHA/KEV version matching only | Aikido only flags a dep vuln if the vulnerable code path is reachable; the harness has none (`RESEARCH_NOTES.md`) → more dependency FPs (the 9× Werkzeug noise in `SCORECARD.md`) |
+| **Endpoint discovery from live traffic** | `crawler.py` + JS extraction + `role_crawl` | Partial-match: Aikido watches real traffic + fuzzes; the harness is Burp-fed + crawls, no fuzzing corpus (`ffuf`-style A3 still unbuilt) |
+| **Scale** | 200+ agents "in hours" vs one GPU | Same throughput ceiling as the XBOW row |
+
+### The honest one-liner
+
+**The harness has stopped being the *wrong kind of tool* and started being a
+*small* version of the right one.** Against XBOW the gap is now **breadth, scale,
+and model horsepower** — not philosophy; against Aikido it's **remediation and
+always-on productization** — much of it deliberately out of scope. Its two
+durable, non-catchable edges are **local/air-gapped operation** (neither
+competitor can enter an NDA'd no-egress scope) and **deterministic,
+inspectable confirmation inside Burp**. The one gap that is a genuine *quality*
+problem rather than a scale problem is **blind-target precision (0/6 controls)** —
+that, plus widening confirmation beyond the 6 legs, is the real frontier now.
+
+**Sources (competitor claims, as reported):**
+[XBOW: 1,060 autonomous attacks](https://xbow.com/blog/we-ran-1060-autonomous-attacks) ·
+[XBOW #1 on HackerOne](https://xbow.com/blog/top-1-how-xbow-did-it) ·
+[XBOW Series B/C](https://xbow.com/blog/series-b) ·
+[Aikido AI pentest](https://www.aikido.dev/attack/aipentest) ·
+[Aikido Infinite (Help Net Security)](https://www.helpnetsecurity.com/2026/02/24/aikido-infinite-introduces-continuous-self-remediating-ai-penetration-testing/) ·
+[appsecsanta survey](https://appsecsanta.com/research/ai-pentesting-agents-2026)
+
+---
+
+*Competitor benchmark figures above are as reported by the vendors/press linked
+above and are not independently verified. Everything about this project is
+grounded in in-repo docs + code current as of the branch this file was committed on.*
