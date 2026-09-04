@@ -92,14 +92,17 @@ class BrowserXssValidatorTests(unittest.TestCase):
         self.assertIn("scope", r.summary)
 
     def test_no_driver_available_skips(self):
-        # Force default_driver() to return None (no engine installed).
-        orig = browser_driver.default_driver
+        # Force the no-engine state -- patch BOTH default_driver (returns None) and
+        # available() (the reason), so the test is independent of whether a real
+        # browser engine happens to be installed in the environment.
+        orig_d, orig_a = browser_driver.default_driver, browser_driver.available
         browser_driver.default_driver = lambda: None
+        browser_driver.available = lambda: (False, "no engine -- run `pip install playwright && playwright install chromium`")
         try:
             v = BrowserXssValidator(allowed_hosts=["shop.test"], driver=None)
             r = asyncio.run(v.validate(_finding(), _exchange()))
         finally:
-            browser_driver.default_driver = orig
+            browser_driver.default_driver, browser_driver.available = orig_d, orig_a
         self.assertEqual(r.status, "skipped")
         self.assertIn("install", r.evidence)
 

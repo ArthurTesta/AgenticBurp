@@ -675,40 +675,58 @@ class Orchestrator:
         import identity_headers
         import access_control_gate
         from validators.cross_identity_validator import CrossIdentityValidator
+        from validators.browser_xss_validator import BrowserXssValidator
         from models import Finding
         host = urlsplit(base_url).hostname or ""
         for r in roles:
             if r.headers:
                 identity_headers.set_identity(host, r.role, dict(r.headers), r.role)
         _xval = CrossIdentityValidator(allowed_hosts=self.allowed_hosts)
+        _bxss = BrowserXssValidator(allowed_hosts=self.allowed_hosts)
+
+        def _apply(finding, res, leg, floor):
+            if res is not None and res.status == "confirmed" and res.confirmed:
+                finding["confirmed"] = True
+                finding["confidence"] = max(float(finding.get("confidence", 0) or 0), float(res.confidence or floor))
+                finding["evidence"] = ((finding.get("evidence") or "") + f" || {leg} CONFIRMED: "
+                                       + (res.summary or "")).strip(" |")
+
+        def _as_finding(finding, default_class):
+            return Finding(vulnerability_class=finding.get("vulnerability_class") or default_class,
+                           confidence=float(finding.get("confidence", 0.5) or 0.5),
+                           severity=finding.get("severity") or "medium",
+                           summary=finding.get("summary") or default_class,
+                           evidence=finding.get("evidence") or "",
+                           suggested_test=finding.get("suggested_test") or "", basis="derived")
 
         async def _confirm(finding, exchange):
-            if not access_control_gate._is_access_control_class(finding.get("vulnerability_class", "")):
-                return
-            # populate the candidate baseline: the probe role's own response.
-            if exchange.response_status is None and scope_discovery.is_host_allowed(exchange.url, self.allowed_hosts):
+            """Dispatch a finding to the deterministic confirmation leg for its class:
+            access-control -> cross-identity replay; xss -> headless-browser execution.
+            A confirmed finding is upgraded in place; anything else is left untouched."""
+            vc = (finding.get("vulnerability_class") or "")
+            low = vc.lower()
+            if access_control_gate._is_access_control_class(vc):
+                # populate the candidate baseline: the probe role's own response.
+                if exchange.response_status is None and scope_discovery.is_host_allowed(exchange.url, self.allowed_hosts):
+                    try:
+                        await global_throttle.acquire()
+                        async with httpx.AsyncClient(timeout=10.0, follow_redirects=False, verify=False) as client:
+                            resp = await client.get(exchange.url, headers=exchange.request_headers or None)
+                        exchange.response_status, exchange.response_body = resp.status_code, (resp.text or "")
+                    except httpx.HTTPError:
+                        return
                 try:
-                    await global_throttle.acquire()
-                    async with httpx.AsyncClient(timeout=10.0, follow_redirects=False, verify=False) as client:
-                        resp = await client.get(exchange.url, headers=exchange.request_headers or None)
-                    exchange.response_status, exchange.response_body = resp.status_code, (resp.text or "")
-                except httpx.HTTPError:
+                    _apply(finding, await _xval.validate(_as_finding(finding, "idor"), exchange), "cross-identity", 0.9)
+                except Exception:
                     return
-            try:
-                fnd = Finding(vulnerability_class=finding.get("vulnerability_class") or "idor",
-                              confidence=float(finding.get("confidence", 0.5) or 0.5),
-                              severity=finding.get("severity") or "medium",
-                              summary=finding.get("summary") or "access-control finding",
-                              evidence=finding.get("evidence") or "", suggested_test=finding.get("suggested_test") or "",
-                              basis="derived")
-                res = await _xval.validate(fnd, exchange)
-            except Exception:
-                return
-            if res.status == "confirmed" and res.confirmed:
-                finding["confirmed"] = True
-                finding["confidence"] = max(float(finding.get("confidence", 0) or 0), float(res.confidence or 0.9))
-                finding["evidence"] = ((finding.get("evidence") or "") + " || cross-identity CONFIRMED: "
-                                       + (res.summary or "")).strip(" |")
+            elif "xss" in low or "cross-site scripting" in low or "cross_site" in low:
+                # browser_xss executes payloads in a real browser; it CONFIRMS reflected
+                # XSS and (crucially for a JSON API) declines what never reaches an HTML
+                # sink. Skips gracefully if no browser engine is installed.
+                try:
+                    _apply(finding, await _bxss.validate(_as_finding(finding, "xss"), exchange), "browser-xss", 0.95)
+                except Exception:
+                    return
 
         async def _investigate(st, rs):
             outs = await worklist_investigator.investigate_worklist(
