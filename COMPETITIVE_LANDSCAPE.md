@@ -23,14 +23,25 @@
 
 ---
 
-> **Correction (2026-09-04):** §0 and the two struck bullets in §2 were
-> originally written from the now-archived `README`/`REVIEW.md`/
-> `SESSION_HANDOVER_2.md` and described a *superseded* single-shot copilot. The
-> current codebase (`orchestrator.investigate_engagement`, `_confirm` at
-> `harness/orchestrator.py:814`, six confirmation legs) **proves bugs and emits
-> replayable PoCs**. Verified below and reconciled against `CLAUDE.md` +
-> `CURRENT_STATE.md`. The archived framing is kept struck-through, not deleted,
-> so the drift is legible.
+> **Correction (2026-09-04):** the original draft was written from the
+> now-archived `README`/`REVIEW.md`/`SESSION_HANDOVER_2.md` and described a
+> *superseded* single-shot copilot. Verified against the live codebase +
+> `CLAUDE.md` + `CURRENT_STATE.md` + `testing/SCORECARD.md`, three of its
+> headline claims were wrong and are corrected in **§0 and §2** (struck-through,
+> not deleted, so the drift is legible):
+> 1. **"No working PoC."** Wrong — `_confirm` (`orchestrator.py:814`) proves bugs
+>    via six confirmation legs and emits replayable PoCs (13 confirmed, session-8).
+> 2. **"No autonomous chaining."** Wrong — `chain_linker` + `chaining.detect` +
+>    the credential closed-loop (`orchestrator.py:898`) chain and escalate.
+> 3. **"Never scored."** Wrong — `score.py` + `SCORECARD.md` give per-OWASP
+>    precision/recall (0.476 / 0.909 on PixelMart); CI runs the scorer + a
+>    detection smoke test.
+>
+> **§1, §3, and §4 have NOT been re-verified line-by-line** and may still carry
+> the copilot-era framing (e.g. §3's "test strategy inverted," §4's "score it
+> first"). Where a specific claim here conflicts with `CLAUDE.md` /
+> `CURRENT_STATE.md` / `SCORECARD.md`, **those win** — this file is the *framing*,
+> they are the *ground truth*.
 
 ## 0. The verdict, before the evidence
 
@@ -52,6 +63,15 @@ six fixed **confirmation legs** it doesn't ask the model "is this real?" — it
   proof). **Measured, not just written:** the session-8 VulnCorp run confirmed
   **13 findings across 3 classes** (JWT alg:none ×7, cross-identity IDOR incl.
   cross-org, SQLi) — `CURRENT_STATE.md`.
+- **It chains, too.** `chain_linker.link_findings` (`chain_linker.py:82`) writes
+  escalation edges into the task graph (a finding that grants a capability →
+  `obtain → recrawl_as_derived`) and composes known class-pairs (sqli+idor,
+  xxe+ssrf, admin_exposure+access_control) into `potential-attack-chain` tasks
+  via `chaining.detect`. The orchestrator then walks a **bounded closed loop**
+  (`orchestrator.py:898`): when a finding leaks a credential, it re-runs the
+  whole engagement *as that identity*. Composition is rule-based (not free-form
+  LLM chaining); the credential-pivot is genuinely autonomous. Measured: the
+  session-8 run produced **1 chain**.
 - **Proving is narrower than detecting** — the project's own current headline
   ("make confirmation as broad as detection"). Bugs outside the 6 legs still
   land *unconfirmed*: the `admin/debug` JWT-secret leak (conf 1.00,
@@ -90,7 +110,7 @@ This project's lane is marked ★.
 | Autonomous multi-agent orchestrator | PentAGI, Strix, Pentest Swarm, BlacksmithAI, CAI | End-to-end recon→exploit→report, parallelism, scales to real engagements | Orchestration overhead, multiplied API spend, infra (Docker/DB), hard-to-audit emergent behavior |
 | Planner-executor + task graph | VulnBot, HackSynth, PentestGPT, ARACNE | Explicit plan/state separation tames context overflow; DAGs kill redundant work | Graph/plan construction is itself complex; only as good as the planner model |
 | MCP tool-server | HexStrike (150+), AutoPentest-AI, PentestMCP, pentest-ai | Model-agnostic, huge tool ecosystems, composable with any MCP client | **No reasoning of its own** — all judgment offloaded to the client LLM |
-| ★ **Copilot / advisory** | Nebula, AI-OPS, PentestGPT, **this harness** | Human keeps control & authorization; low blast radius; fits existing workflow | Throughput bounded by the human; no autonomous chaining; easy to dismiss as "a wrapper" |
+| ★ **Copilot / advisory** | Nebula, AI-OPS, PentestGPT, **this harness (entry point only — see §0)** | Human keeps control & authorization; low blast radius; fits existing workflow | Throughput bounded by the human; easy to dismiss as "a wrapper" |
 | Static / binary discovery | VulnHuntr, VulHunt, Shannon (hybrid) | Sees whole call chain / binary; finds real zero-days; no live-traffic risk | Needs source or binary; blind to runtime/stateful behavior; language/format-bound |
 | Hybrid symbolic + LLM (CRS) | Atlantis, Buttercup, Theori, ARTIPHISHELL (DARPA AIxCC) | Symbolic layer = ground-truth verification; auto-patching; highest assurance | Enormous complexity/compute; aimed at C/CWE code vulns, **not web pentest — a different sport** |
 
@@ -137,14 +157,19 @@ the survey and is the thing worth protecting.
 
 ### Where the field is ahead (and who)
 
-- **No *full* scored efficacy in CI (the residual gap).** ~~506 tests all mocked,
-  never tallied~~ is outdated: there is now a measured live run (session-8: 13
-  confirmed / 3 classes), hermetic end-to-end smoke tests with negative controls
-  (`test_smoke_*`), 1021 tests, and a `--fail-under-precision` score gate
-  (`0b7db4e`). What's *still* missing is a full per-OWASP-category precision/
-  recall regression wired into CI against the answer key. *vs. Shannon (96.15%
-  reported), PentestGPT (USENIX + Distinguished Artifact Award), HackSynth
-  (200-challenge).* Still the biggest gap — but "never measured" is no longer true.
+- **Scored precision/recall EXISTS — the residual gap is the *blind-precision*
+  axis and turning the gate on.** ~~No scored efficacy; 506 mocked tests, never
+  tallied~~ is flatly wrong: `testing/score.py` computes precision/recall/F1
+  **per OWASP category** (unit-tested, `test_score.py`), and `testing/SCORECARD.md`
+  records real numbers on the uncontaminated PixelMart corpus (qwen3:8b,
+  2026-09-02): **precision 0.476 / recall 0.909**, per-category. CI (`ci.yml`)
+  already runs the suite + `test_smoke_detection.py` + the scorer self-test on
+  every push; only the **precision/recall floor tier is disabled** (`if: false`,
+  needs a self-hosted GPU runner). The *real* residual gaps: (a) **precision
+  collapses on a truly-blind target** — blind-target-2 scored recall 2/2 but
+  **0/6 secure controls clean**; (b) flip the scored CI tier on. *vs. Shannon
+  (96.15% reported), PentestGPT (USENIX award).* "Never measured" is false; "not
+  yet robust on blind negatives" is the honest claim.
 - **PoC coverage is bounded to 6 legs, not the OWASP surface.** ~~Single-shot;
   no working PoC~~ is outdated — `investigate_engagement` is a multi-node,
   multi-identity graph loop and it proves bugs within `jwt_forge` /
