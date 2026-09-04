@@ -16,6 +16,7 @@ from validators.sqlmap import (
     _responses_differ,
     _text_has_db_error_markers,
     _inferred_content_type_for_body,
+    _looks_like_auth_request,
 )
 
 
@@ -326,6 +327,94 @@ class SqlmapValidatorFallsBackWhenBinaryMissingTests(unittest.IsolatedAsyncioTes
         result = await v.validate(_finding(), exchange)
         self.assertEqual(result.status, "error")
         self.assertIn("sqlmap executable not found", result.summary)
+
+
+class AuthRequestDetectionTests(unittest.TestCase):
+    def test_credential_body_field_is_auth(self):
+        self.assertTrue(_looks_like_auth_request(_login_exchange()))
+
+    def test_auth_path_segment_is_auth(self):
+        for p in ("/account/login", "/oauth/token", "/api/session", "/v1/authenticate", "/signin"):
+            ex = HttpExchange(url=f"https://x.test{p}", method="POST", request_body="")
+            self.assertTrue(_looks_like_auth_request(ex), p)
+
+    def test_non_auth_is_not_flagged(self):
+        # "authors"/"passengers" must NOT substring-match "auth"/"pass".
+        cases = [("https://x.test/api/authors", "GET", ""),
+                 ("https://x.test/api/passengers", "POST", '{"name":"x"}'),
+                 ("https://x.test/api/products?id=1", "GET", "")]
+        for url, method, body in cases:
+            ex = HttpExchange(url=url, method=method, request_body=body)
+            self.assertFalse(_looks_like_auth_request(ex), url)
+
+
+class _FakeProc:
+    def __init__(self, returncode=1, stdout="", stderr=""):
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+class SqlmapAuthLoginTuningTests(unittest.IsolatedAsyncioTestCase):
+    """HANDOVER_6 §3/§6.3: a valid-cred (2xx) login capture defeats sqlmap because
+    its injection payloads flip the response to 401 and sqlmap skips non-2xx as
+    'not testable'. Two fixes: tell sqlmap to ignore the auth-rejection codes, and
+    fall back to the boolean-differential probe (which reads the 2xx<->401 flip
+    directly) when sqlmap still misses."""
+
+    def setUp(self):
+        reset_default_gate()
+        get_default_gate({"active_enabled": True, "allow_mutating_replay": True})
+
+    def tearDown(self):
+        reset_default_gate()
+
+    async def test_ignore_code_includes_auth_rejection_codes_for_login(self):
+        v = SqlmapValidator(binary="sqlmap")
+        exchange = _login_exchange()  # POST, 2xx baseline, password field
+        same = httpx.Response(200, content=b"x" * 100, request=httpx.Request("POST", exchange.url))
+        with patch("validators.sqlmap.subprocess.run",
+                   return_value=_FakeProc(returncode=1, stdout="not vulnerable")), \
+             patch("httpx.AsyncClient.request", new_callable=AsyncMock, return_value=same):
+            result = await v.validate(_finding(), exchange)
+        self.assertIn("--ignore-code", result.command)
+        codes = result.command[result.command.index("--ignore-code") + 1]
+        self.assertIn("401", codes)
+        self.assertIn("403", codes)
+
+    async def test_boolean_probe_secondary_confirms_when_sqlmap_misses_login(self):
+        v = SqlmapValidator(binary="sqlmap")
+        exchange = _login_exchange()
+        big = httpx.Response(200, content=b"x" * 500, request=httpx.Request("POST", exchange.url))
+        small = httpx.Response(401, content=b"y" * 5, request=httpx.Request("POST", exchange.url))
+        with patch("validators.sqlmap.subprocess.run",
+                   return_value=_FakeProc(returncode=1, stdout="not vulnerable")), \
+             patch("httpx.AsyncClient.request", new_callable=AsyncMock, side_effect=[big, small]):
+            result = await v.validate(_finding(), exchange)
+        self.assertEqual(result.status, "confirmed")
+        self.assertTrue(result.confirmed)
+        self.assertIn("boolean-differential probe", result.summary)
+
+    async def test_sqlmap_confirmation_is_not_overridden_by_secondary(self):
+        # If sqlmap DOES confirm, that result stands -- the secondary never runs.
+        v = SqlmapValidator(binary="sqlmap")
+        exchange = _login_exchange()
+        with patch("validators.sqlmap.subprocess.run",
+                   return_value=_FakeProc(returncode=0, stdout="parameter is vulnerable")), \
+             patch("httpx.AsyncClient.request", new_callable=AsyncMock) as mock_req:
+            result = await v.validate(_finding(), exchange)
+        self.assertEqual(result.status, "confirmed")
+        self.assertIn("sqlmap independently reported", result.summary)
+        mock_req.assert_not_called()  # secondary probe never fired
+
+    async def test_non_auth_endpoint_gets_no_auth_rejection_codes(self):
+        v = SqlmapValidator(binary="sqlmap")
+        url = "https://x.test/api/products?id=1"
+        exchange = HttpExchange(url=url, method="GET", response_status=200)
+        with patch("validators.sqlmap.subprocess.run",
+                   return_value=_FakeProc(returncode=1, stdout="not vulnerable")):
+            result = await v.validate(_finding(), exchange)
+        self.assertNotIn("--ignore-code", result.command)
 
 
 if __name__ == "__main__":

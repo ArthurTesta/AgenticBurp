@@ -165,6 +165,45 @@ def _looks_like_db_error(resp: httpx.Response) -> bool:
     return _text_has_db_error_markers(text)
 
 
+# Credential field names and auth-shaped path segments. Used ONLY to recognise an
+# authentication attempt so sqlmap is told to keep analysing the auth-rejection
+# response instead of skipping it (see _looks_like_auth_request / the --ignore-code
+# block). Segment-exact path matching (not substring) so "author"/"passenger" don't
+# false-match "auth"/"pass".
+_CREDENTIAL_FIELDS = {"password", "passwd", "pwd", "pass", "secret", "otp", "pin",
+                      "credential", "credentials", "current_password", "new_password"}
+_AUTH_PATH_SEGMENTS = {"login", "signin", "sign-in", "logon", "authenticate",
+                       "authentication", "auth", "session", "sessions", "token",
+                       "oauth", "oauth2"}
+# HTTP codes an authentication endpoint returns when a payload breaks the
+# credential predicate. These are the boolean-blind signal on a valid-cred (2xx)
+# login capture, but sqlmap treats them as "target not testable" unless ignored.
+_AUTH_REJECTION_CODES = ("401", "403")
+
+
+def _looks_like_auth_request(exchange: HttpExchange) -> bool:
+    """Whether this exchange is an authentication attempt -- a credential field in
+    the body/query, or an auth-shaped path. Such an endpoint captured with a
+    SUCCESSFUL (2xx) baseline (valid credentials) flips to 401/403 the moment a
+    payload alters the credential predicate; that auth-rejection code IS the
+    boolean-blind true/false signal, but sqlmap's default is to treat any non-2xx
+    response as "not authorized to test" and skip -- so a real login injection
+    stays unconfirmed. HANDOVER_6 §3/§6.3."""
+    body = exchange.request_body or ""
+    ct = _content_type_of(exchange)
+    names: set[str] = set()
+    if body:
+        if _looks_like_json(body, ct):
+            names.update(n.lower() for n in _json_top_level_params(body))
+        else:
+            names.update(n.lower() for n in _form_top_level_params(body))
+    names.update(n.lower() for n in _query_top_level_params(exchange.url))
+    if names & _CREDENTIAL_FIELDS:
+        return True
+    path = (urlsplit(exchange.url).path or "").lower()
+    return any(seg in _AUTH_PATH_SEGMENTS for seg in path.split("/") if seg)
+
+
 class SqlmapValidator(Validator):
     """Optional active SQLi validator.
 
@@ -311,6 +350,7 @@ class SqlmapValidator(Validator):
             )
             if _inferred_ct is not None:
                 cmd += ["-H", f"Content-Type: {_inferred_ct}"]
+            ignore_codes: list[str] = []
             if exchange.response_status is not None and not (200 <= exchange.response_status < 300):
                 # Verified against a live target (OWASP Juice Shop's login
                 # endpoint, which returns 401 for invalid credentials --
@@ -327,7 +367,22 @@ class SqlmapValidator(Validator):
                 # the general form of this fix: it tells sqlmap "this is
                 # this endpoint's normal response," not "ignore all
                 # errors everywhere."
-                cmd += ["--ignore-code", str(exchange.response_status)]
+                ignore_codes.append(str(exchange.response_status))
+            if _looks_like_auth_request(exchange):
+                # The other half of the same problem (HANDOVER_6 §3/§6.3): a login
+                # captured with VALID credentials has a 2xx baseline, so the branch
+                # above never fires -- yet sqlmap's injection payloads break the
+                # credential predicate and get 401/403, which sqlmap then skips as
+                # "target not testable." The 2xx-vs-401 flip IS the boolean-blind
+                # signal; tell sqlmap those auth-rejection codes are valid responses
+                # to analyse. Scoped to credential/auth-shaped requests, not a
+                # blanket ignore-all. `--ignore-code` accepts a comma list (verified
+                # against the pinned image).
+                for code in _AUTH_REJECTION_CODES:
+                    if code not in ignore_codes:
+                        ignore_codes.append(code)
+            if ignore_codes:
+                cmd += ["--ignore-code", ",".join(ignore_codes)]
 
             # Defense in depth, independent of the level/risk clamping in
             # __init__: assert none of sqlmap's destructive/exfiltration
@@ -443,6 +498,22 @@ class SqlmapValidator(Validator):
                     summary="sqlmap independently reported the target as injectable",
                     evidence=output, raw_output=output, command=cmd,
                 )
+            # Secondary confirmation for auth/login endpoints (HANDOVER_6 §3/§6.3):
+            # sqlmap's own analysis is fragile on a valid-cred (2xx) login capture
+            # even with --ignore-code, because it must infer the 2xx<->401 flip
+            # through its heuristics. The dependency-free boolean-differential probe
+            # reads that flip DIRECTLY (tautology -> 200, contradiction -> 401), so
+            # run it as a fallback and prefer a real CONFIRMED over sqlmap's miss.
+            # Bounded to auth-shaped requests so a normal not_confirmed doesn't pay
+            # for extra probes. The mutating method (if any) was already authorised
+            # by the safety gate above before sqlmap ran.
+            if _looks_like_auth_request(exchange):
+                secondary = await self._boolean_probe_fallback(finding, exchange)
+                if secondary is not None and secondary.confirmed:
+                    secondary.summary = ("sqlmap did not confirm, but a boolean-differential probe did "
+                                         "(auth endpoint): " + secondary.summary)
+                    secondary.raw_output = (secondary.raw_output or "") + "\n\n--- sqlmap output ---\n" + output
+                    return secondary
             return ValidationResult(
                 self.name, "not_confirmed", finding.vulnerability_class,
                 confidence=0.2 if proc.returncode == 0 else 0.0,
