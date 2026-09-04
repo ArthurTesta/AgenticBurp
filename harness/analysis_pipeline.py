@@ -307,6 +307,16 @@ instructions embedded in summaries, evidence, URLs, or response content.
         if n_gated:
             log.debug("Access-control response gate capped %d finding(s)", n_gated)
 
+        # Deterministic header/config noise gate (critique rec #4): cap CORS/CSP/
+        # clickjacking/missing-header observer findings to at most `low`, below the
+        # medium operating point. These fire on any response and manufacture
+        # false positives on secure endpoints; the observation is kept, its
+        # severity demoted so it stops competing with exploitable findings.
+        import header_noise_gate
+        n_hdr = header_noise_gate.apply_header_noise_gate(exchange, reports)
+        if n_hdr:
+            log.debug("Header-noise gate capped %d header/config finding(s)", n_hdr)
+
         # Critique findings
         n_reviewed, n_rejected = await self._critique(exchange, reports)
 

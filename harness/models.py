@@ -54,6 +54,9 @@ class Finding(BaseModel):
     original_confidence: Optional[float] = None
     review_verdict: Optional[str] = None  # "survived" | "downgraded" | "rejected"
     review_note: Optional[str] = None
+    # Pre-cap severity, set by header_noise_gate when it demotes a header/config
+    # observer finding below the medium operating point. None until capped.
+    original_severity: Optional[str] = None
 
     # True only when the harness has actually performed the suggested
     # confirming action (or another explicit verification path). LLM
