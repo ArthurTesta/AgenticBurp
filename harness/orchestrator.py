@@ -753,7 +753,11 @@ class Orchestrator:
         for r in roles:
             if r.headers:
                 identity_headers.set_identity(host, r.role, dict(r.headers), r.role)
-        _xval = CrossIdentityValidator(allowed_hosts=self.allowed_hosts)
+        _xid_cfg = (self.config.get("validators", {}) or {}).get("cross_identity", {}) or {}
+        _xval = CrossIdentityValidator(
+            allowed_hosts=self.allowed_hosts,
+            timeout=float(_xid_cfg.get("timeout", 10.0)),
+            max_identities=int(_xid_cfg.get("max_identities", 3)))
         _bxss = BrowserXssValidator(allowed_hosts=self.allowed_hosts)
         _jwt = JwtForgeValidator(allowed_hosts=self.allowed_hosts)
         _ssrf = SsrfValidator(allowed_hosts=self.allowed_hosts)
