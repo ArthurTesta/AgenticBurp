@@ -12,8 +12,11 @@ file map) is in [`CLAUDE.md`](CLAUDE.md) — read that first, then this.
 - **Branch:** `WorkingSunday`. **HEAD:** `a9476d2`. Working tree: only untracked `testing/`
   artifacts; tracked tree clean. **NOT pushed** (local only); `main` untouched.
 - **Suite green (Python):** from `harness/`, `python -m unittest discover -p "test_*.py"` →
-  **OK, 1021 tests** (verified this session). Java side is **unverified** — no JDK on this
-  machine (hazard #6); the Burp changes below compile only at the maintainer's `gradle shadowJar`.
+  **OK, 1021 tests** (verified this session).
+- **Java compiles + jar built:** the #7 Burp changes were compiled clean and packaged into
+  `burp-llm-harness-extension-0.1.0-all.jar` at the maintainer's `gradle` build (confirmed
+  off-machine; no JDK here — hazard #6). The jar is git-ignored (`.gitignore` `*.jar`), so it
+  lives at root for Burp to load and is not committed.
 - **Environment verified:** Ollama `qwen3:8b` reachable; Docker up with `harness/sqlmap:1.10.9`;
   host chromium/playwright present. No host `javac` anywhere. (See CLAUDE.md § Environment.)
 
@@ -39,9 +42,11 @@ file map) is in [`CLAUDE.md`](CLAUDE.md) — read that first, then this.
 - **#7 the 8 missing Burp typed executors** (`a9476d2`) — `crypto_transport`,
   `http_request_smuggling`, `nosql`, `oauth_flow`, `sql_injection`, `subdomain_takeover`,
   `web_cache_poisoning`, `websocket_cswsh`, each with a Montoya-free `*Logic` class + JUnit5
-  test. **BLIND: uncompiled / unit-unrun (no JDK).** Verified only by static consistency
-  (cases↔methods, imports, in-tree API idioms). **Unverified until `gradle shadowJar` + the
-  JUnit suite run green on a JDK machine.**
+  test. **Compiled clean** at the maintainer's `gradle` build and packaged into the root jar —
+  resolves the earlier blind/no-JDK caveat. Authored + static-consistency-checked here. If the
+  build ran the `test` task the new `*LogicTest`s are covered; otherwise run them to gate the
+  verdict logic (compilation alone doesn't exercise it). Live target testing of the executors
+  is the usual next step.
 
 ## Latest measured run (session 8, VERIFIED) — still the current empirical truth
 
@@ -67,8 +72,9 @@ etc., untracked). Tuning lesson: for a tractable run turn `autonomous_discovery`
 1. **Re-run max-coverage to measure #2** — does the `/api/tickets/import` XXE now confirm via
    the analyze() shape leg? Also confirms the #1 cross-org coverage. Use a FRESH cache DB; turn
    `autonomous_discovery`+`critique` off for the analyze pass (session-8 tuning lesson).
-2. **`gradle shadowJar` + JUnit on a JDK machine** to compile/verify the 8 blind Burp executors
-   (#7). Until green, treat them as unverified.
+2. **#7 follow-through:** compilation is confirmed and the jar is built. Confirm the JUnit5
+   `*LogicTest`s ran green (if the build was `shadowJar`-only they didn't), then live-test the
+   8 new executors against a target — compile-clean ≠ behaviour-correct.
 3. **Push `WorkingSunday` + open the PR into `main`** (17+ commits unpushed across sessions).
 4. **Update the report artifact** (`a56d56f5-…`) — still shows the first run's 228/32; fold in
    the session-8 measured result (13 confirmed / 3 classes) + the coupling framing.
