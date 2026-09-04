@@ -212,6 +212,10 @@ def main() -> int:
     ap.add_argument("--json", metavar="PATH", help="also write the full report as JSON")
     ap.add_argument("--fail-under-recall", type=float, default=None,
                     help="exit non-zero if overall (micro) recall is below this (CI gate)")
+    ap.add_argument("--fail-under-precision", type=float, default=None,
+                    help="exit non-zero if overall (micro) precision is below this (CI gate). "
+                         "The critique's core metric: on a blind corpus this is what collapses, "
+                         "so a blind precision floor is the gate that actually guards quality.")
     args = ap.parse_args()
 
     if not args.from_cache:
@@ -230,11 +234,16 @@ def main() -> int:
         json.dump(report, open(args.json, "w"), indent=2)
         print(f"\n(wrote {args.json})")
 
+    failed = False
     if args.fail_under_recall is not None and report["overall"]["recall"] < args.fail_under_recall:
         print(f"\nFAIL: overall recall {report['overall']['recall']:.3f} < floor {args.fail_under_recall}",
               file=sys.stderr)
-        return 1
-    return 0
+        failed = True
+    if args.fail_under_precision is not None and report["overall"]["precision"] < args.fail_under_precision:
+        print(f"\nFAIL: overall precision {report['overall']['precision']:.3f} < floor "
+              f"{args.fail_under_precision}", file=sys.stderr)
+        failed = True
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":
