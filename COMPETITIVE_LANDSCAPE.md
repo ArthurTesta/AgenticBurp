@@ -23,26 +23,60 @@
 
 ---
 
+> **Correction (2026-09-04):** §0 and the two struck bullets in §2 were
+> originally written from the now-archived `README`/`REVIEW.md`/
+> `SESSION_HANDOVER_2.md` and described a *superseded* single-shot copilot. The
+> current codebase (`orchestrator.investigate_engagement`, `_confirm` at
+> `harness/orchestrator.py:814`, six confirmation legs) **proves bugs and emits
+> replayable PoCs**. Verified below and reconciled against `CLAUDE.md` +
+> `CURRENT_STATE.md`. The archived framing is kept struck-through, not deleted,
+> so the drift is legible.
+
 ## 0. The verdict, before the evidence
 
-**This is the best-in-class member of a different, smaller category than the
-one the field is mostly about.** The Tier-1 headliners (PentAGI, Shannon,
-Strix, XBOW) are **autonomous exploitation engines** — they chain steps, send
-live traffic, and produce a working proof-of-concept. This harness is an
-**analyst-in-the-loop reasoning copilot that lives inside Burp**, looks at one
-request/response exchange at a time, and tells you what to try next in Repeater.
+**It's a graph-driven engagement loop with a deterministic confirmation stage —
+no longer a single-shot copilot.** The Tier-1 headliners (PentAGI, Shannon,
+Strix, XBOW) are **autonomous exploitation engines** that synthesise exploits
+across arbitrary bug classes. This harness proves bugs a *different* way: within
+six fixed **confirmation legs** it doesn't ask the model "is this real?" — it
+*demonstrates* the bug deterministically and keeps the replayable evidence.
 
-- Judged **as an autonomous agent**, it loses on nearly every benchmarked axis,
-  and its one fatal gap is unmissable: **it has never been scored** (no
-  precision/recall exists; all 506 tests are mocked — see `REVIEW.md`).
-- Judged **as a Burp copilot**, it is one of the most thoughtfully-architected
-  things in the entire survey, largely because of its **epistemic discipline**:
-  it refuses to let the model be the judge of "is this really vulnerable."
+- **It proves, and it produces PoCs — within 6 classes.** `_confirm`
+  (`harness/orchestrator.py:814`) routes each finding to a leg that
+  demonstrates it: `jwt_forge` (mint a forged `alg:none`/tampered token, replay
+  the real request, compare to a garbage-sig control), `cross_identity` (replay
+  the object request as other identities + anon), `sqlmap` (container), `xxe`/
+  `ssrf` (OOB `collaborator` callback), `browser_xss` (fire in headless
+  Chromium). A CONFIRMED finding carries the reproduction (forged token + the
+  accepted/rejected HTTP pair; the cross-identity request pair; the sqlmap
+  proof). **Measured, not just written:** the session-8 VulnCorp run confirmed
+  **13 findings across 3 classes** (JWT alg:none ×7, cross-identity IDOR incl.
+  cross-org, SQLi) — `CURRENT_STATE.md`.
+- **Proving is narrower than detecting** — the project's own current headline
+  ("make confirmation as broad as detection"). Bugs outside the 6 legs still
+  land *unconfirmed*: the `admin/debug` JWT-secret leak (conf 1.00,
+  hand-verified) and mass-assignment are detected with no leg to prove them.
+- **Discipline caveat on the legs.** Live-verified: `jwt_forge`,
+  `cross_identity`, `sqlmap`. Written + smoke-tested with a negative control but
+  **not yet live-measured**: `xxe`, `ssrf` (the `analyze()` wiring), and
+  `browser_xss` over CDP. Don't cite the latter three as proven yet.
 
-**Do not position this against XBOW / Shannon / PentAGI.** The right peer set is
-**PentestGPT, Nebula, AI-OPS** (advisory/copilot class). Positioning it against
-the autonomous engines is how you get an unfair, losing comparison — and it's
-the mistake the source article's framing invites.
+**Placement, corrected.** This has moved *out* of the pure advisory lane
+(PentestGPT/Nebula/AI-OPS) toward a **planner-executor + verification hybrid**.
+It is still **not** XBOW/Shannon: no free-form exploit synthesis, PoC coverage
+is the 6 legs not the whole OWASP surface, and it runs on local 8B models. But
+"tells you what to try in Repeater / no working PoC" is **false** for the
+current build — judge it as a confirmation engine with bounded but real
+autonomy, not as a copilot.
+
+> ~~*Archived framing (superseded — see Correction above):* an analyst-in-the-loop
+> copilot that looks at one exchange at a time and tells you what to try in
+> Repeater; never scored, all tests mocked; peer set PentestGPT/Nebula/AI-OPS.~~
+> The scoring point is also dated: there is now a measured live run (13
+> confirmed) plus hermetic end-to-end smoke tests with negative controls
+> (`test_smoke_*`) and a `--fail-under-precision` score gate (commit `0b7db4e`);
+> the *remaining* gap is a full per-category precision/recall regression in CI,
+> not a total absence of measurement.
 
 ---
 
@@ -60,11 +94,13 @@ This project's lane is marked ★.
 | Static / binary discovery | VulnHuntr, VulHunt, Shannon (hybrid) | Sees whole call chain / binary; finds real zero-days; no live-traffic risk | Needs source or binary; blind to runtime/stateful behavior; language/format-bound |
 | Hybrid symbolic + LLM (CRS) | Atlantis, Buttercup, Theori, ARTIPHISHELL (DARPA AIxCC) | Symbolic layer = ground-truth verification; auto-patching; highest assurance | Enormous complexity/compute; aimed at C/CWE code vulns, **not web pentest — a different sport** |
 
-**Key synthesis for a future agent:** this project sits in the *copilot* lane
-but quietly borrows the *CRS* lane's best idea — **a deterministic layer that
-verifies rather than trusts the model** (GitHub Advisory DB, CISA KEV, sqlmap).
-That combination — copilot ergonomics + symbolic-style verification — is
-genuinely rare in the survey and is the thing worth protecting.
+**Key synthesis for a future agent:** the ★ marks where this project *started*
+(copilot ergonomics) — but per §0 it has since grown a **planner-executor loop
+(`investigate_engagement`)** *and* deepened the *CRS* lane's best idea into
+active **confirmation legs that prove bugs by replay/execution**, not just
+passive CVE lookups. So its true position straddles two rows: copilot entry
+point + planner-executor + verification. That combination is genuinely rare in
+the survey and is the thing worth protecting.
 
 ---
 
@@ -101,38 +137,49 @@ genuinely rare in the survey and is the thing worth protecting.
 
 ### Where the field is ahead (and who)
 
-- **No scored efficacy — at all.** No precision/recall against a known-answer
-  corpus; 506 tests are all mocked (prove plumbing, not detection). *vs. Shannon
-  (96.15% reported), PentestGPT (USENIX + Distinguished Artifact Award),
-  HackSynth (200-challenge), AutoPentest ($96.20 cost-transparent run).*
-  **This is the single biggest gap. The corpus + answer key already exist in
-  `testing/` — they were just never tallied.**
-- **Single-exchange scope on the vulns that matter most.** IDOR/authz/business-
-  logic need multi-request, multi-identity differential testing; the core loop
-  is single-shot. (The iterative agent, cross-identity IDOR, and missing-auth
-  probe are *written but not wired in by default* — see `archive/SESSION_HANDOVER_2.md`
-  §1–2.) *vs. VulnBot's task-graph and every autonomous orchestrator.*
-- **No autonomous execution, no working PoC.** It tells you what to try; it
-  doesn't prove the bug. *vs. Shannon (PoCs), Strix/PentAGI/XBOW (autonomous
-  exploitation, real filed vulns).*
+- **No *full* scored efficacy in CI (the residual gap).** ~~506 tests all mocked,
+  never tallied~~ is outdated: there is now a measured live run (session-8: 13
+  confirmed / 3 classes), hermetic end-to-end smoke tests with negative controls
+  (`test_smoke_*`), 1021 tests, and a `--fail-under-precision` score gate
+  (`0b7db4e`). What's *still* missing is a full per-OWASP-category precision/
+  recall regression wired into CI against the answer key. *vs. Shannon (96.15%
+  reported), PentestGPT (USENIX + Distinguished Artifact Award), HackSynth
+  (200-challenge).* Still the biggest gap — but "never measured" is no longer true.
+- **PoC coverage is bounded to 6 legs, not the OWASP surface.** ~~Single-shot;
+  no working PoC~~ is outdated — `investigate_engagement` is a multi-node,
+  multi-identity graph loop and it proves bugs within `jwt_forge` /
+  `cross_identity` / `sqlmap` / `xxe` / `ssrf` / `browser_xss`. The real residual
+  gap: high-value classes *outside* those legs (mass-assignment, the `admin/debug`
+  JWT-secret leak, CSRF) are detected but have **no leg to prove them**, so they
+  ship unconfirmed. *vs. Shannon/XBOW, which synthesise a PoC for arbitrary
+  classes.* Widening confirmation coverage is the project's own stated next step.
+- **Three of the six legs aren't live-verified yet.** Proven in a real run:
+  `jwt_forge`, `cross_identity`, `sqlmap`. Written + smoke-tested but not yet
+  live-measured: `xxe`, `ssrf`, `browser_xss`-over-CDP (`CURRENT_STATE.md` §Next).
+  Classic "prove the XSS in a browser" therefore *exists but is unproven* today.
 - **8–9B local models on the hardest reasoning.** Business-logic/authz are
   exactly where `llama3.1:8b`/`gemma2:9b` are weakest — and the coordinator
   routing call (silently decides if an agent runs; fails open to all 36) is the
   highest-leverage, least-measured point. *vs. CAI (frontier-capable), PentAGI
   (12+ providers), XBOW/Mythos (frontier). `coordinator.cloud_primary` exists
   but defaults off.*
-- **The "deterministic confirmation" leg degrades in practice.** GHA is 60/hr
-  unauthenticated, KEV live-fetch "not verified working," sqlmap historically
-  not installed (`REVIEW.md`, `archive/HANDOVER.md` §4.2). The marketed strength often
-  falls back to "unconfirmed." *vs. AIxCC CRS, where verification IS the product.*
-- **Prototype, not a product.** Single squashed git commit, DBs + built `.jar`
-  tracked in git, a full divergent duplicate harness under `testing/`, no CI, no
-  pinned deps, no packaging. *vs. PentAGI (~14.7k★ product), Zen/Strix (GH
-  Actions), AIxCC finalists (competition-hardened).*
+- **The *known-CVE* confirmation leg still degrades in practice.** GHA is 60/hr
+  unauthenticated and KEV live-fetch was "not verified working" (`REVIEW.md`).
+  Note this no longer applies to sqlmap — it now runs in a Docker container
+  (`harness/sqlmap:1.10.9`) and confirmed the `/api/login` SQLi live (session-8).
+  The gap is narrower than originally written, but the component/CVE lookups can
+  still fall back to "unconfirmed." *vs. AIxCC CRS, where verification IS the product.*
+- **Prototype, not a product.** ~~Single squashed git commit~~ is outdated —
+  there is now real per-commit history (`ab40745`, `9996ac4`, `8e21bfa`, …). The
+  residual product gaps still hold: runtime DBs + built `.jar` tracked in git,
+  duplicate harness copies under `testing/`, no CI, no pinned deps, no packaging.
+  *vs. PentAGI (~14.7k★ product), Zen/Strix (GH Actions), AIxCC finalists.*
 - **History of "green tests, dead pipeline."** Detection has been silently zero
   multiple times while the mocked suite stayed green (a system-prompt validator
   rejected every agent; 12/13 active validators broken until first exercised —
-  `archive/HANDOVER.md` §0, §5i). A credibility gap until an end-to-end scored run exists.
+  `archive/HANDOVER.md` §0, §5i). Now partly mitigated by the `test_smoke_*`
+  end-to-end tests with negative controls, but it remains the project's stated
+  #0 discipline — the reason every claim above is tied to a verified run.
 
 ---
 
@@ -174,13 +221,16 @@ genuinely rare in the survey and is the thing worth protecting.
    suggested Repeater test and an honest "I'm guessing" flag, is genuinely
    useful for triage and for catching the bug I'd skim past at 2am. Nothing else
    in the survey meets me inside Burp.
-2. **But it doesn't do what bounties pay for.** Bounties pay for a *demonstrated*
-   cross-account IDOR, a chained SSRF→metadata, a working auth bypass — multi-
-   request, stateful, proven. Single-exchange analysis is the wrong shape for
-   the high-value categories, and "flagged IDOR on a 403-denied request" (which
-   the blind eval actually caught — `archive/SESSION_HANDOVER_2.md` §4) is the failure
-   that burns signal-to-noise and program reputation. It hands hypotheses;
-   XBOW/Shannon hand triagers a PoC.
+2. **It now does *some* of what bounties pay for — within its legs.** Bounties
+   pay for a *demonstrated* cross-account IDOR, a working auth bypass — proven,
+   not hypothesised. The engagement loop now delivers exactly that for its six
+   confirmed classes: a live-verified cross-org IDOR (`reports/1` read as another
+   org) and JWT `alg:none` forgery *are* the demonstrated bugs a triager wants.
+   Two honest limits remain: (a) outside the 6 legs it still only hands a
+   hypothesis (mass-assignment, the JWT-secret leak), and (b) even a real leg can
+   mis-fire on shape — "flagged IDOR on a 403-denied request" (blind eval,
+   `archive/SESSION_HANDOVER_2.md` §4) is why the access-control gate exists. *vs.
+   XBOW/Shannon, which hand a PoC for arbitrary classes, not a fixed six.*
 3. **Local models mean I trust the flags less on hard bugs — verify everything.**
    For SQLi/XSS/misconfig with a deterministic confirmer behind them, fine. For
    business-logic/authz — 8B weakest, confirmer often unavailable — every
