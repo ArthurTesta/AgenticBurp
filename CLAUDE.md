@@ -88,7 +88,11 @@ chain_linker.link_findings(...)                                  [C] escalate + 
 exchange, roles, base_url)` (pure, unit-tested) picks legs by endpoint *shape* —
 object-scoped GET → cross-identity; JWT-carrying → jwt-forge; XML body → xxe; URL param →
 ssrf — and reuses the live `_confirm` dispatcher. Shape is a reason to *try* a leg; only
-CONFIRMED results are kept, so it never adds unconfirmed noise.
+CONFIRMED results are kept, so it never adds unconfirmed noise. The captured-exchange path
+(`analyze()`) has the analogue: `orchestrator.shape_precondition_findings(exchange)` runs the
+XXE/SSRF legs the exchange's own shape warrants (appended as a rule-based report before
+validation, pruned to confirmed-only after), so an XML-accepting endpoint no agent labelled
+"xxe" still gets its external-entity leg.
 
 ### Deterministic confirmation legs
 
