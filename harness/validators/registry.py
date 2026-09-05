@@ -23,6 +23,7 @@ from .command_injection_validator import CommandInjectionValidator
 from .ssti_validator import SstiValidator
 from .path_traversal_validator import PathTraversalValidator
 from .open_redirect_validator import OpenRedirectValidator
+from .sequence_validator import SequenceValidator
 from safety_gate import get_default_gate, reset_default_gate
 
 
@@ -186,6 +187,13 @@ class ValidatorRegistry:
         if or_cfg.get("enabled", True):
             self.validators["open_redirect"] = OpenRedirectValidator(
                 allowed_hosts=_allowed, timeout=float(or_cfg.get("timeout", 10.0)))
+        # Stateful sequence leg -- write-then-re-read differential (mass-assignment /
+        # privilege escalation the single-shot echo check misses). Active; the write
+        # is mutating, so it also needs allow_mutating_replay.
+        seq_cfg = cfg.get("sequence", {})
+        if seq_cfg.get("enabled", True):
+            self.validators["sequence"] = SequenceValidator(
+                allowed_hosts=_allowed, timeout=float(seq_cfg.get("timeout", 10.0)))
 
         # Browser-driven XSS validator (A2) -- active: loads candidate URLs in a
         # real headless browser and confirms only on observed script execution.

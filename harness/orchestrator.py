@@ -888,6 +888,7 @@ class Orchestrator:
         from validators.ssti_validator import SstiValidator
         from validators.path_traversal_validator import PathTraversalValidator
         from validators.open_redirect_validator import OpenRedirectValidator
+        from validators.sequence_validator import SequenceValidator
         from models import Finding
         host = urlsplit(base_url).hostname or ""
         for r in roles:
@@ -906,6 +907,7 @@ class Orchestrator:
         _ssti = SstiValidator(allowed_hosts=self.allowed_hosts)
         _path = PathTraversalValidator(allowed_hosts=self.allowed_hosts)
         _redir = OpenRedirectValidator(allowed_hosts=self.allowed_hosts)
+        _seq = SequenceValidator(allowed_hosts=self.allowed_hosts)
 
         def _apply(finding, res, leg, floor):
             if res is not None and res.status == "confirmed" and res.confirmed:
@@ -986,6 +988,12 @@ class Orchestrator:
                 try:
                     _apply(finding, await _redir.validate(_as_finding(finding, "open_redirect"), exchange),
                            "open-redirect", 0.9)
+                except Exception:
+                    return
+            elif "mass" in low or "assignment" in low or "privilege" in low or low in ("api_security", "api security"):
+                try:
+                    _apply(finding, await _seq.validate(_as_finding(finding, "mass_assignment"), exchange),
+                           "sequence", 0.9)
                 except Exception:
                     return
 
