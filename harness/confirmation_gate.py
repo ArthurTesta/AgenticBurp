@@ -1,20 +1,30 @@
 """
-Confirmation-suppression gate.
+Confirmation-suppression gate -- leg-aware, 3-state (Phase 1.1).
 
-Enforces the operating-point discipline: for any vulnerability class that HAS
-a deterministic confirmation leg (IDOR, SQLi, XSS, SSRF, XXE, CMDi, SSTI,
-path traversal, open redirect, JWT forge), an unconfirmed hypothesis produced by
-an LLM must NEVER ship at actionable severity (medium/high/critical).
+An unconfirmed hypothesis is not one thing: what its non-confirmation MEANS
+depends on whether the harness even had a reliable way to confirm it. So the gate
+places every unconfirmed finding into one of three states, keyed off the
+verification TIER of the confirmation leg for its class:
 
-Instead, unconfirmed hypotheses are:
-- Demoted to severity "low" (or "info").
-- Capped at confidence <= 0.35 (below default triage gates).
-- Annotated as an unconfirmed hypothesis for audit and visibility in Burp.
-- Summary-prefixed with "[Hypothesis]" so the tester/triager immediately knows
-  this is an unvalidated model suspicion, not a confirmed finding.
+  1. CONFIRMED   -- a leg proved it (confirmed=True). Untouched; ships at its true
+                    severity/confidence with reproduction evidence.
+  2. REFUTED     -- unconfirmed, and the class has a LIVE-VERIFIED leg (one proven
+                    to actually confirm real instances on a live target). The
+                    leg had its shot and stayed silent, so this is likely a false
+                    positive: demote to "low", cap confidence <= 0.35, verdict
+                    "unconfirmed_hypothesis", prefix "[Hypothesis]".
+  3. UNPROVEN    -- unconfirmed, and the class's leg is only SMOKE/hermetic-verified
+                    (not yet proven to bite live). Its silence is weak evidence, so
+                    burying a possibly-real finding to "low" would cost recall:
+                    instead cap severity at "medium" (never high/critical
+                    unconfirmed), cap confidence <= 0.5, verdict
+                    "unproven_unverified_leg", prefix "[Unconfirmed]".
 
-A finding that WAS confirmed by its validator (confirmed=True) is untouched and
-ships at its true severity and confidence with full reproduction evidence.
+Classes with NO confirmation leg are left untouched (the gate is about classes we
+could have confirmed). The live-verified set is what Phase 2's leg
+live-verification refreshes: as a leg graduates smoke_only -> live_verified, its
+class moves from UNPROVEN (medium) to REFUTED (low) suppression. Callers may pass
+`live_verified_markers` to override the default seed.
 """
 from __future__ import annotations
 
@@ -26,9 +36,13 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("harness.confirmation_gate")
 
-# Confidence cap applied to unconfirmed hypotheses in confirmable classes.
-# Capped below the standard reporting and scoring threshold (0.50).
-_UNCONFIRMED_HYPOTHESIS_CONFIDENCE_CAP = 0.35
+# Confidence caps. REFUTED (live-verified leg stayed silent) is capped hard,
+# below the standard triage threshold; UNPROVEN (leg not live-verified) is capped
+# at the threshold -- visible but not asserted.
+_REFUTED_CONFIDENCE_CAP = 0.35
+_UNPROVEN_CONFIDENCE_CAP = 0.5
+# Back-compat alias (older imports).
+_UNCONFIRMED_HYPOTHESIS_CONFIDENCE_CAP = _REFUTED_CONFIDENCE_CAP
 
 # Vulnerability classes that possess a deterministic confirmation leg in this harness.
 # Matched case-insensitively as substrings against finding.vulnerability_class.
@@ -103,6 +117,28 @@ CONFIRMABLE_CLASS_MARKERS = frozenset({
     "open redirect",
     "unvalidated redirect",
     "unvalidated_redirect",
+
+    # Mass-assignment / privilege escalation (sequence_validator, Phase 3)
+    "mass_assignment",
+    "mass assignment",
+})
+
+# The subset of confirmable classes whose leg is LIVE-VERIFIED -- proven to
+# actually confirm real instances against a live target (session-11 max-coverage
+# run): cross_identity (IDOR/access control), sqlmap (SQLi), jwt_forge (JWT
+# alg:none), xxe, path_traversal. Everything else confirmable has a leg that is
+# only smoke/hermetic-verified (browser_xss, ssrf, command_injection, ssti,
+# open_redirect, sequence) and is therefore treated as UNPROVEN, not REFUTED,
+# until Phase 2 live-verification promotes it. THIS SET is what Phase 2 refreshes.
+LIVE_VERIFIED_MARKERS = frozenset({
+    "idor", "insecure_direct_object", "insecure direct object",
+    "broken_access_control", "broken access control", "bola", "bfla",
+    "missing authorization", "missing_authorization",
+    "sql_injection", "sql injection", "sqli",
+    "xxe", "xml_external_entity", "xml external entity",
+    "path_traversal", "path traversal", "directory traversal", "directory_traversal",
+    "lfi", "local file inclusion", "file inclusion",
+    "jwt", "jwt_forge", "algorithm confusion", "algorithm_confusion", "weak_token",
 })
 
 
@@ -114,61 +150,86 @@ def is_confirmable_class(vuln_class: str | None) -> bool:
     return any(marker in lowered for marker in CONFIRMABLE_CLASS_MARKERS)
 
 
+def leg_tier(vuln_class: str | None, live_verified_markers: frozenset | None = None) -> str:
+    """Verification tier of the confirmation leg for a class:
+    "live" (a live-verified leg exists), "provisional" (a leg exists but is only
+    smoke/hermetic-verified), or "none" (no leg). `live_verified_markers` overrides
+    the default LIVE_VERIFIED_MARKERS seed -- this is the seam Phase 2 uses to
+    promote a leg once it is live-verified."""
+    if not is_confirmable_class(vuln_class):
+        return "none"
+    live = LIVE_VERIFIED_MARKERS if live_verified_markers is None else live_verified_markers
+    lowered = (vuln_class or "").lower()
+    return "live" if any(marker in lowered for marker in live) else "provisional"
+
+
 def apply_confirmation_suppression(
     reports: list[AgentReport],
     validation_reports: list[ValidationReport] | None = None,
+    live_verified_markers: frozenset | None = None,
 ) -> int:
     """
-    Demote unconfirmed hypotheses in confirmable classes to low severity.
+    Place each unconfirmed finding into the leg-aware 3-state model (see module
+    docstring). Mutates findings in place; returns the number demoted (REFUTED +
+    UNPROVEN). Confirmed findings and no-leg classes are left untouched.
 
-    Any finding in a confirmable class that has NOT been validated (confirmed == False)
-    is capped to confidence <= 0.35, severity demoted to 'low', review_verdict set to
-    'unconfirmed_hypothesis', and summary tagged with '[Hypothesis]'.
+    - REFUTED  (class has a LIVE-verified leg): severity -> "low", confidence
+      <= 0.35, verdict "unconfirmed_hypothesis", prefix "[Hypothesis]".
+    - UNPROVEN (class has a leg, but only smoke/hermetic-verified): severity
+      capped at "medium" (high/critical -> medium), confidence <= 0.5, verdict
+      "unproven_unverified_leg", prefix "[Unconfirmed]".
 
-    Findings that are confirmed (confirmed == True) or findings in classes without
-    a confirmation leg (e.g. general info disclosure, business logic) are not touched.
-
-    Returns the number of findings demoted. Mutates findings in place.
+    `live_verified_markers` overrides which classes count as live-verified -- the
+    seam Phase 2 uses to promote a leg after live-verifying it.
     """
     demoted = 0
 
     for report in reports:
         for finding in report.findings:
-            if not is_confirmable_class(finding.vulnerability_class):
-                continue
-
-            # If it's already confirmed by a validator, it keeps its full severity & confidence
             if finding.confirmed:
-                continue
+                continue  # a leg proved it -- ships at true severity/confidence
+            tier = leg_tier(finding.vulnerability_class, live_verified_markers)
+            if tier == "none":
+                continue  # no leg could have confirmed it -- not the gate's business
 
-            # Unconfirmed hypothesis in a confirmable class -> demote
             demoted += 1
-
             if finding.original_confidence is None:
                 finding.original_confidence = finding.confidence
-            finding.confidence = min(finding.confidence, _UNCONFIRMED_HYPOTHESIS_CONFIDENCE_CAP)
 
-            if finding.severity in ("critical", "high", "medium"):
-                if finding.original_severity is None:
-                    finding.original_severity = finding.severity
-                finding.severity = "low"
+            if tier == "live":
+                # REFUTED: a reliable leg stayed silent -> likely a false positive.
+                finding.confidence = min(finding.confidence, _REFUTED_CONFIDENCE_CAP)
+                if finding.severity in ("critical", "high", "medium"):
+                    if finding.original_severity is None:
+                        finding.original_severity = finding.severity
+                    finding.severity = "low"
+                finding.review_verdict = "unconfirmed_hypothesis"
+                prefix = "[Hypothesis]"
+                note = ("Demoted by confirmation-suppression gate: this class has a LIVE-VERIFIED "
+                        "leg that did not confirm the finding on target -- treated as a likely "
+                        "false positive.")
+            else:  # provisional
+                # UNPROVEN: the leg isn't live-verified, so silence is weak
+                # evidence -- keep it visible (capped) rather than bury it.
+                finding.confidence = min(finding.confidence, _UNPROVEN_CONFIDENCE_CAP)
+                if finding.severity in ("critical", "high"):
+                    if finding.original_severity is None:
+                        finding.original_severity = finding.severity
+                    finding.severity = "medium"
+                finding.review_verdict = "unproven_unverified_leg"
+                prefix = "[Unconfirmed]"
+                note = ("Capped by confirmation-suppression gate: this class's confirmation leg is "
+                        "not yet live-verified, so the finding is neither confirmed nor reliably "
+                        "refutable -- kept at capped severity pending live verification (Phase 2).")
 
-            finding.review_verdict = "unconfirmed_hypothesis"
-            note = (
-                "Demoted by confirmation-suppression gate: this vulnerability class has a "
-                "deterministic verification leg, but the finding was not confirmed on target."
-            )
             finding.review_note = (
                 (finding.review_note + " " + note) if finding.review_note else note
             )
-
-            if finding.summary and not finding.summary.startswith("[Hypothesis]"):
-                finding.summary = f"[Hypothesis] {finding.summary}"
+            if finding.summary and not finding.summary.startswith(prefix):
+                finding.summary = f"{prefix} {finding.summary}"
 
     if demoted > 0:
-        log.info(
-            "Confirmation-suppression gate demoted %d unconfirmed finding(s) to low severity",
-            demoted,
-        )
+        log.info("Confirmation-suppression gate processed %d unconfirmed finding(s) "
+                 "(REFUTED to low / UNPROVEN capped at medium)", demoted)
 
     return demoted
