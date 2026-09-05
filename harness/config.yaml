@@ -66,6 +66,14 @@ coordinator:
   # ab_routing_recall.py before trusting it as primary on a fresh state.
   cloud_primary: false
   cloud_model: "gemma4:31b-cloud"
+  # Cloud-coordinator REASONING seam (Phase 4). DEFAULT OFF, and a stricter,
+  # separate opt-in from cloud_primary. When true, the reasoning-heavy passes --
+  # the iterative agent's investigation and the adversarial critique -- run on
+  # cloud_model instead of the local model. UNLIKE cloud_primary (which sends only
+  # an anonymized projection), this sends the REAL exchange content the reasoning
+  # needs OFF-HOST, so enable it only where that data egress is acceptable. Flip
+  # at runtime via POST /settings {"coordinator": {"cloud_reasoning": true}}.
+  cloud_reasoning: false
 
 # Adaptive re-spin loop (SESSION_HANDOVER.md §7). DEFAULT OFF, and further
 # a no-op unless coordinator.cloud_primary above is also on -- the loop is

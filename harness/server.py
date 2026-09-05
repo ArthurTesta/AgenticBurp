@@ -568,6 +568,9 @@ async def get_settings(authorization: str | None = Header(default=None)):
         # Live validator gating -- lets the UI reflect (and, via POST, flip) the
         # active-validator gate and the cross-identity arm at run time.
         "validators": orchestrator.validator_registry.state(),
+        # Cloud-coordinator reasoning seam (Phase 4): whether the iterative agent
+        # + critique run on the cloud model (sends real content off-host).
+        "coordinator": orchestrator.cloud_reasoning_state(),
     }
 
 
@@ -579,6 +582,10 @@ class SettingsRequest(_BaseModel):
     # Runtime validator toggles (in-memory only, never persisted): recognized keys
     # are `active_enabled` and `cross_identity` (both bool). Any omitted -> unchanged.
     validators: dict | None = None
+    # Cloud-coordinator seam toggle (in-memory): recognized key `cloud_reasoning`
+    # (bool). Enabling sends real exchange content to the cloud model -- see the
+    # config.yaml note. Any omitted -> unchanged.
+    coordinator: dict | None = None
 
 
 @app.post("/settings")
@@ -606,9 +613,14 @@ async def update_settings(req: SettingsRequest, authorization: str | None = Head
         if "cross_identity" in v:
             vr.set_cross_identity_enabled(bool(v["cross_identity"]))
         changed["validators"] = vr.state()
+    if req.coordinator and "cloud_reasoning" in req.coordinator:
+        # Cloud-coordinator reasoning seam (Phase 4). In-memory, not persisted.
+        changed["coordinator"] = orchestrator.set_cloud_reasoning(
+            bool(req.coordinator["cloud_reasoning"]))
     if not changed:
         raise HTTPException(status_code=400,
-                            detail="nothing to set: provide throttle_rps, retry_budget, and/or validators")
+                            detail="nothing to set: provide throttle_rps, retry_budget, "
+                                   "validators, and/or coordinator")
     return changed
 
 

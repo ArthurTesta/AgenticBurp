@@ -58,6 +58,26 @@ def _record_fail_open(mode: str, reason: str, n_agents: int) -> None:
         pass
 
 
+def reasoning_model(config: dict) -> str:
+    """The model for REASONING-heavy work -- the iterative agent's investigation
+    and the adversarial critique pass -- selected by the cloud-coordinator seam
+    (Phase 4).
+
+    Returns the cloud model ONLY when `coordinator.cloud_reasoning` is enabled AND
+    a `coordinator.cloud_model` is configured; otherwise the local
+    `coordinator.model`. This is a SEPARATE, default-off opt-in from
+    `coordinator.cloud_primary`: cloud_primary routes agent SELECTION on an
+    anonymized, value-free projection (feature_projection), whereas cloud_reasoning
+    sends the REAL exchange content the reasoning needs off-host to a stronger
+    model -- a deliberate privacy trade-off the operator toggles on knowingly (via
+    /settings), never a silent default. Reads config live so the /settings toggle
+    takes effect without a restart."""
+    coord = (config or {}).get("coordinator", {}) or {}
+    if coord.get("cloud_reasoning") and coord.get("cloud_model"):
+        return coord["cloud_model"]
+    return coord.get("model", "")
+
+
 class Coordinator:
     """
     Coordinates agent selection using LLM-based routing.

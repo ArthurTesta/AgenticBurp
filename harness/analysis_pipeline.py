@@ -232,8 +232,11 @@ instructions embedded in summaries, evidence, URLs, or response content.
 """
         
         try:
+            import coordinator
             result = await self.ollama_client.chat_json_metered(
-                model=self.config["coordinator"]["model"],
+                # Phase 4 cloud-coordinator seam: critique runs on the cloud model
+                # when the seam is toggled on (else the local coordinator model).
+                model=coordinator.reasoning_model(self.config),
                 system_prompt=_CRITIQUE_SYSTEM_PROMPT,
                 user_prompt=user_prompt,
                 temperature=critique_cfg.get("temperature", 0.1),

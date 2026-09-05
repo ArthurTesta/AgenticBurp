@@ -58,6 +58,20 @@ class SuppressionEndpointTests(unittest.TestCase):
         self.assertIn("coordinator_fail_opens", body)
         self.assertIn("count", body["coordinator_fail_opens"])
 
+    def test_settings_exposes_cloud_reasoning_seam(self):
+        resp = self.client.get("/settings")
+        self.assertEqual(resp.status_code, 200)
+        coord = resp.json().get("coordinator", {})
+        self.assertIn("cloud_reasoning", coord)
+        self.assertFalse(coord["cloud_reasoning"])  # default off
+
+    def test_settings_toggles_cloud_reasoning(self):
+        resp = self.client.post("/settings", json={"coordinator": {"cloud_reasoning": True}})
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()["coordinator"]["cloud_reasoning"])
+        # GET reflects the flip.
+        self.assertTrue(self.client.get("/settings").json()["coordinator"]["cloud_reasoning"])
+
     def test_telemetry_endpoint(self):
         resp = self.client.get("/telemetry")
         self.assertEqual(resp.status_code, 200)
