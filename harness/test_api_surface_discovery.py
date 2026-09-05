@@ -259,6 +259,65 @@ class SensitiveFileTests(unittest.TestCase):
         self.assertEqual(res.paths(), [])
 
 
+class BodyPathMiningTests(unittest.TestCase):
+    """Phase 0.2(d): mine response BODIES (not just JS assets) for path-like
+    strings and same-host URLs, fed back as candidate routes."""
+
+    def _responder(self, known):
+        def r(method, path):
+            return known.get(path, (500, _NF, ""))
+        return r
+
+    def test_paths_in_json_body_fed_back(self):
+        known = {
+            "/api/config": (200, '{"docs":"/internal/docs","help":"/help/topics"}', ""),
+            "/internal/docs": (200, "<html>docs</html>", ""),
+            "/help/topics": (200, "{}", ""),
+        }
+        disc = _FakeDiscovery(self._responder(known),
+                              prefixes=["/api/"], collections=[], nouns=["config"],
+                              actions=[], sensitive_files=[])
+        res = _run(disc)
+        self.assertIn("/internal/docs", res.paths())
+        self.assertIn("/help/topics", res.paths())
+        self.assertEqual(
+            next(r.source for r in res.routes if r.path == "/internal/docs"), "body")
+
+    def test_absolute_same_host_url_in_body_fed_back(self):
+        known = {
+            "/api/info": (200, '{"portal":"http://target.test/dashboard/home"}', ""),
+            "/dashboard/home": (200, "{}", ""),
+        }
+        disc = _FakeDiscovery(self._responder(known),
+                              prefixes=["/api/"], collections=[], nouns=["info"],
+                              actions=[], sensitive_files=[])
+        res = _run(disc)
+        self.assertIn("/dashboard/home", res.paths())
+
+    def test_body_mined_path_can_reveal_a_new_prefix(self):
+        # A path named in a body reveals /internal/, which is then swept (a(d)+(a)
+        # synergy): a sibling under that prefix is found by the noun sweep.
+        known = {
+            "/api/config": (200, '{"see":"/internal/docs"}', ""),
+            "/internal/docs": (200, "{}", ""),
+            "/internal/users": (200, "{}", ""),   # only reached once /internal/ derived
+        }
+        disc = _FakeDiscovery(self._responder(known),
+                              prefixes=["/api/"], collections=[],
+                              nouns=["config", "users"], actions=[], sensitive_files=[])
+        res = _run(disc)
+        self.assertIn("/internal/users", res.paths())
+
+    def test_body_without_paths_feeds_nothing(self):
+        # Negative control: a body with no path-shaped strings adds no routes.
+        known = {"/api/config": (200, '{"name":"prod","count":42}', "")}
+        disc = _FakeDiscovery(self._responder(known),
+                              prefixes=["/api/"], collections=[], nouns=["config"],
+                              actions=[], sensitive_files=[])
+        res = _run(disc)
+        self.assertEqual(res.paths(), ["/api/config"])
+
+
 class SpecTests(unittest.TestCase):
     def test_spec_paths_parsed(self):
         body = '{"openapi":"3.0.0","paths":{"/api/a":{},"/api/b/{id}":{},"bad":{}}}'

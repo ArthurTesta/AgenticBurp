@@ -271,8 +271,14 @@ class SurfaceDiscovery:
         #     exposes -- derived from caller seed paths and from hits so far.
         await self._derive_prefixes()
 
-        # 3. response-driven: mine 2xx JSON for ids -> enumerate id-scoped siblings.
-        await self._mine_response_ids()
+        # 3. response-driven: mine 2xx bodies for object ids (enumerate siblings)
+        #    AND for path-like strings / same-host URLs fed back as candidates
+        #    (Phase 0.2(d)).
+        await self._mine_responses()
+
+        # 3b. re-derive prefixes now that body mining may have revealed a namespace
+        #     the app references but the built-in guesses never named (0.2(a)+(d)).
+        await self._derive_prefixes()
 
         # 4. SUB-RESOURCES: nest nouns under one representative object per
         #    collection (/api/tickets/1/comments, /assign, /attachments...). One id
@@ -330,6 +336,9 @@ class SurfaceDiscovery:
             derived.append(pre)
             if len(derived) >= max_new:
                 break
+        # Record swept prefixes so a later call (e.g. after body mining reveals a
+        # new namespace) doesn't re-sweep them -- makes this safe to call twice.
+        self.prefixes.extend(derived)
         for pre in derived:
             for n in self.nouns:
                 if not self._budget_left():
@@ -359,14 +368,31 @@ class SurfaceDiscovery:
                     return
                 await self._check("/" + base.lstrip("/") + suf, "sensitive_file")
 
-    async def _mine_response_ids(self) -> None:
+    async def _mine_responses(self) -> None:
+        """Mine each 2xx body once for two candidate sources:
+          - Phase 0.2(d): path-like strings and same-host URLs anywhere in the
+            body (JSON payloads, HTML, help/error text), via js_endpoint_extractor
+            generalized off the JS-crawl -- fed back as candidate routes so an
+            internal path the app merely NAMES becomes probed surface.
+          - id enumeration: a JSON list/object's `id` fields -> id-scoped siblings.
+        Both work off the SAME fetch, so this is one GET per seed."""
+        import js_endpoint_extractor as jse
         seeds = [p for p, r in list(self._seen.items()) if 200 <= r.status < 300]
         for p in seeds:
+            if not self._budget_left():
+                return
             r = await self._raw("GET", p)
             if not r or _is_not_found(r[0], r[1]):
                 continue
+            body = r[1]
+            # (d) body path/URL mining -- runs on ANY body, not just parseable JSON.
+            for path in sorted(jse.extract_endpoints(body, self.base_url).same_origin_paths):
+                if not self._budget_left():
+                    return
+                await self._check(path.replace("{id}", "1"), "body")
+            # id enumeration (JSON only).
             try:
-                data = json.loads(r[1])
+                data = json.loads(body)
             except (ValueError, TypeError):
                 continue
             items = data if isinstance(data, list) else [data]
