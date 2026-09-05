@@ -121,6 +121,12 @@ CONFIRMABLE_CLASS_MARKERS = frozenset({
     # Mass-assignment / privilege escalation (sequence_validator, Phase 3)
     "mass_assignment",
     "mass assignment",
+
+    # Insecure deserialization -- active OOB pickle beacon (deserialization_oob)
+    "deserialization",
+    "insecure deserialization",
+    "insecure_deserialization",
+    "pickle",
 })
 
 # The subset of confirmable classes whose leg is LIVE-VERIFIED -- proven to
@@ -152,6 +158,9 @@ LIVE_VERIFIED_MARKERS = frozenset({
     "command_injection", "command injection", "rce", "remote code execution",
     "remote_code_execution", "shell injection", "shell_injection",
     "mass_assignment", "mass assignment",
+    # Session-13: active deserialization OOB pickle beacon, live-verified against a
+    # real pickle.loads sink in test_leg_live_verification.
+    "deserialization", "insecure deserialization", "insecure_deserialization", "pickle",
 })
 
 

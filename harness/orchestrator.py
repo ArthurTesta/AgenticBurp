@@ -273,6 +273,14 @@ def _has_redirect_param(exchange: HttpExchange) -> bool:
     return bool(_redirect_params(exchange))
 
 
+def _has_pickle_shape(exchange: HttpExchange) -> bool:
+    """A cookie/param whose value base64-decodes to pickle bytes -- a
+    deserialization sink. Reuses the deser leg's own detector so routing and the
+    leg never drift."""
+    from validators.deserialization_oob_validator import DeserializationOobValidator
+    return bool(DeserializationOobValidator()._sink_candidates(exchange))
+
+
 def shape_precondition_legs(node: dict, exchange: HttpExchange, roles, base_url: str,
                             id_fill: str = "1") -> list[tuple[str, HttpExchange]]:
     """The proactive confirmation legs an endpoint's shape warrants, as
@@ -310,6 +318,8 @@ def shape_precondition_legs(node: dict, exchange: HttpExchange, roles, base_url:
         legs.append(("path_traversal", exchange))
     if _has_redirect_param(exchange):
         legs.append(("open_redirect", exchange))
+    if _has_pickle_shape(exchange):
+        legs.append(("deserialization", exchange))
     return legs
 
 
@@ -363,6 +373,11 @@ def shape_precondition_findings(exchange: HttpExchange) -> list[Finding]:
         out.append(Finding(
             vulnerability_class="open_redirect", confidence=0.3, severity="medium",
             summary=f"Open-redirect precondition: redirect-shaped parameter on {exchange.url}",
+            evidence="", suggested_test="", basis="derived"))
+    if _has_pickle_shape(exchange):
+        out.append(Finding(
+            vulnerability_class="deserialization", confidence=0.3, severity="critical",
+            summary=f"Deserialization precondition: base64-pickle value on {exchange.url}",
             evidence="", suggested_test="", basis="derived"))
     return out
 
@@ -907,6 +922,7 @@ class Orchestrator:
         from validators.path_traversal_validator import PathTraversalValidator
         from validators.open_redirect_validator import OpenRedirectValidator
         from validators.sequence_validator import SequenceValidator
+        from validators.deserialization_oob_validator import DeserializationOobValidator
         from models import Finding
         host = urlsplit(base_url).hostname or ""
         for r in roles:
@@ -926,6 +942,7 @@ class Orchestrator:
         _path = PathTraversalValidator(allowed_hosts=self.allowed_hosts)
         _redir = OpenRedirectValidator(allowed_hosts=self.allowed_hosts)
         _seq = SequenceValidator(allowed_hosts=self.allowed_hosts)
+        _deser = DeserializationOobValidator(allowed_hosts=self.allowed_hosts)
 
         def _apply(finding, res, leg, floor):
             if res is not None and res.status == "confirmed" and res.confirmed:
@@ -1012,6 +1029,12 @@ class Orchestrator:
                 try:
                     _apply(finding, await _seq.validate(_as_finding(finding, "mass_assignment"), exchange),
                            "sequence", 0.9)
+                except Exception:
+                    return
+            elif "deserial" in low or "pickle" in low or "object injection" in low:
+                try:
+                    _apply(finding, await _deser.validate(_as_finding(finding, "deserialization"), exchange),
+                           "deserialization", 0.95)
                 except Exception:
                     return
 

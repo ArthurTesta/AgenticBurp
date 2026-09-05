@@ -38,6 +38,7 @@ from validators.open_redirect_validator import OpenRedirectValidator
 from validators.ssrf_validator import SsrfValidator
 from validators.sequence_validator import SequenceValidator
 from validators.command_injection_validator import CommandInjectionValidator
+from validators.deserialization_oob_validator import DeserializationOobValidator
 
 _FIXTURE = (Path(__file__).resolve().parent.parent
             / "testing" / "leg-verification" / "vuln_fixture.py")
@@ -188,6 +189,25 @@ class LiveLegVerificationTest(unittest.TestCase):
     def test_command_injection_silent_on_no_shell_control(self):
         v = CommandInjectionValidator(allowed_hosts=["127.0.0.1"], timeout=1.0)
         res = self._run(v, "/cmdi/safe?host=seed")
+        self.assertNotEqual(res.status, "confirmed")
+
+    # --- Active deserialization (pickle OOB beacon) ---------------------------
+    def _pickle_cookie_exchange(self, path):
+        import base64 as _b64, pickle as _pk
+        seed = _b64.b64encode(_pk.dumps({"user": "alice"})).decode()  # benign pickle-shaped cookie
+        return HttpExchange(url=f"{self._base}{path}", method="GET",
+                            request_headers={"Cookie": f"session={seed}"}, request_body="")
+
+    def test_deserialization_oob_confirms_on_pickle_sink(self):
+        v = DeserializationOobValidator(allowed_hosts=["127.0.0.1"], timeout=2.0)
+        res = self._run_ex(v, self._pickle_cookie_exchange("/deser/load"), "deserialization")
+        self.assertEqual(res.status, "confirmed",
+                         f"deserialization leg did not confirm a real pickle.loads sink: {res.summary}")
+        self.assertTrue(res.confirmed)
+
+    def test_deserialization_oob_silent_on_json_control(self):
+        v = DeserializationOobValidator(allowed_hosts=["127.0.0.1"], timeout=2.0)
+        res = self._run_ex(v, self._pickle_cookie_exchange("/deser/safe"), "deserialization")
         self.assertNotEqual(res.status, "confirmed")
 
 

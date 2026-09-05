@@ -18,8 +18,11 @@ or the hermetic test_leg_live_verification.
 """
 from __future__ import annotations
 
+import base64
 import html
+import json as _json
 import os
+import pickle
 import subprocess
 import urllib.request
 
@@ -173,6 +176,25 @@ def make_app(file_base: str | None = None) -> Flask:
                     if k in body:
                         state["profile_safe"][k] = body[k]
         return jsonify(state["profile_safe"])
+
+    # --- Insecure deserialization: TP pickle.loads a client cookie; control json --
+    @app.get("/deser/load")
+    def deser_load():
+        c = request.cookies.get("session", "")
+        try:
+            obj = pickle.loads(base64.b64decode(c + "==="))  # VULNERABLE: pickle on client input
+            return jsonify({"ok": True, "who": str(obj)[:40]})
+        except Exception:
+            return jsonify({"ok": False}), 200
+
+    @app.get("/deser/safe")
+    def deser_safe():
+        c = request.cookies.get("session", "")
+        try:
+            _json.loads(base64.b64decode(c + "===").decode("utf-8", "ignore"))  # safe: json, not pickle
+            return jsonify({"ok": True})
+        except Exception:
+            return jsonify({"ok": False}), 200
 
     return app
 

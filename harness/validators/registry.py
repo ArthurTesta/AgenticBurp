@@ -14,6 +14,7 @@ from .api_security_validator import ApiSecurityValidator
 from .websocket_validator import WebsocketValidator
 from .race_condition_validator import RaceConditionValidator
 from .deserialization_validator import DeserializationValidator
+from .deserialization_oob_validator import DeserializationOobValidator
 from .browser_xss_validator import BrowserXssValidator
 from .cross_identity_validator import CrossIdentityValidator
 from .jwt_forge_validator import JwtForgeValidator
@@ -194,6 +195,14 @@ class ValidatorRegistry:
         if seq_cfg.get("enabled", True):
             self.validators["sequence"] = SequenceValidator(
                 allowed_hosts=_allowed, timeout=float(seq_cfg.get("timeout", 10.0)))
+        # Active deserialization leg -- Python-pickle OOB beacon (benign loopback
+        # fetch proving code execution). Active; executes code, so self-gated on
+        # allow_mutating_replay. Distinct from the passive format-fingerprint
+        # "deserialization" validator, which stays registered above.
+        deser_oob_cfg = cfg.get("deserialization_oob", {})
+        if deser_oob_cfg.get("enabled", True):
+            self.validators["deserialization_oob"] = DeserializationOobValidator(
+                allowed_hosts=_allowed, timeout=float(deser_oob_cfg.get("timeout", 10.0)))
 
         # Browser-driven XSS validator (A2) -- active: loads candidate URLs in a
         # real headless browser and confirms only on observed script execution.
