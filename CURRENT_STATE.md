@@ -9,16 +9,16 @@ file map) is in [`CLAUDE.md`](CLAUDE.md) — read that first, then this.
 
 ## State (as of session 12)
 
-- **Branch:** `WorkingSunday`. **HEAD:** `0b264f0` (session-12 roadmap work, on top of the
-  session-11 `f627872`). **Thirteen new commits this session** — Phase 0.1/0.2(a–d)/0.3, Phase
-  1.2/1.3/1.4, Phase 3.5, and Phase 3 in full (sequence leg + secret-disclosure + offline
-  advisory snapshot). See "What shipped this session (12)" below.
+- **Branch:** `WorkingSunday`. **HEAD:** `39c3f06` (session-12; this handover commits on top).
+  Session-12 landed **Phase 0 (all) + Phase 1 (1.1–1.4) + Phase 2 + Phase 3 (all) + Phase 3.5**
+  — 15 roadmap commits + handovers. See "What shipped this session (12)" below.
   `harness/config.yaml` still carries safe defaults — session 12 flipped **no** toggle;
   `harness/config.local.yaml` (git-ignored) still holds the live-ON toggles.
-- **Pushed state:** `origin/WorkingSunday` stale (local far ahead); `main` untouched. Nothing
-  pushed this session.
+- **Pushed state:** `origin/main` and `origin/WorkingSunday` fast-forwarded to session-12 work
+  this session (clean FF, no merge commit; the untracked `testing/` answer-key artifacts stayed
+  local). `main` == `WorkingSunday`.
 - **Suite green (Python):** from `harness/`, `python -m unittest discover -p "test_*.py"` →
-  **OK, 1131 tests** (1049 → 1131 across the session; every new test carries a negative
+  **OK, 1141 tests** (1049 → 1141 across the session; every new test carries a negative
   control). NOTE: `test_hardening.py` is **pytest-only** (module-level `def test_*`, outside
   the `unittest discover` gate) — run `python -m pytest test_hardening.py` separately; it is
   green (7 passed), and session 12 fixed a pre-existing breakage in it (see 1.2 below).
@@ -82,18 +82,30 @@ verified by hermetic tests with negative controls (no live run this session).
   known-vuln source (`github_advisories.snapshot_path`/`offline`) the client falls back to when
   the live GitHub lookup rate-limits/errors, or uses solely in offline mode. Token-less /
   air-gapped runs now get matches instead of only "error: rate_limited".
+- **Phase 1.1 — leg-aware 3-state gate** (`4c25008`): `confirmation_gate` rebuilt. An
+  unconfirmed finding is CONFIRMED / REFUTED (class has a LIVE-verified leg → low) / UNPROVEN
+  (leg only smoke-verified → capped at medium, recall-preserving) / untouched (no leg).
+  `LIVE_VERIFIED_MARKERS` is the seam; `apply_confirmation_suppression(live_verified_markers=…)`
+  lets Phase 2 promote legs. Back-compat call site; blind-negative floor still green.
+- **Phase 2 — leg live-verification** (`39c3f06`): `testing/leg-verification/vuln_fixture.py`
+  (disposable vulnerable app) + `test_leg_live_verification` (real socket, real HTTP, no stubs)
+  live-verify **ssti + open_redirect** → promoted into `LIVE_VERIFIED_MARKERS`. Operator runner
+  `run_leg_verification.py` (all four in-band legs CONFIRMED on this machine, incl. browser_xss
+  with real Chromium + path_traversal). `LEG_VERIFICATION.md` = the live-vs-smoke split (2.4) +
+  freeze policy (2.1: no new legs until existing smoke_only ones are live-verified).
 
 ### Roadmap status / what's left
-- **Done:** Phase 0 (all), Phase 1.2/1.3/1.4, Phase 3.5, **Phase 3 (all: sequence leg + 3.1 +
-  3.3)**.
-- **Not started:** Phase 1.1 (confirmation-suppression rebuild — revised roadmap blocks it on
-  Phase 2; note the leg classes 3.1/3.5/sequence now exist, ready to graduate into 1.1's
-  suppressible set); **Phase 2** (leg live-verification — largely *operational*: needs live
-  Ollama/Docker + a true-positive fixture, not hermetic); Phase 4 (cloud coordinator seam);
-  Phase 5 (repo hygiene + Burp panel + the target 404→500 catch-all re-baseline).
-- **New modules this session (updated):** `recall_benchmark.py`, `host_dep_dedup.py`,
-  `attribution.py`, `validators/sequence_validator.py`, `secret_disclosure.py`,
-  `advisory_snapshot.py`, plus `orchestrator.review_captured_exchanges`.
+- **Done:** Phase 0 (all), **Phase 1 (1.1–1.4)**, **Phase 2** (in-band legs live-verified;
+  OOB/browser legs have an operator runner), Phase 3 (all), Phase 3.5.
+- **Not started:** Phase 4 (cloud coordinator seam); Phase 5 (repo hygiene + Burp panel + the
+  target 404→500 catch-all re-baseline). Also open: **live-verify the remaining smoke_only legs**
+  (ssrf/command_injection via a live collaborator + OOB fixture endpoints; sequence via a live
+  write→re-read fixture) and then promote them in `LIVE_VERIFIED_MARKERS` (see LEG_VERIFICATION.md);
+  a fresh **live max-coverage run** would re-measure recall with the new `recall_benchmark` harness.
+- **New modules this session:** `recall_benchmark.py`, `host_dep_dedup.py`, `attribution.py`,
+  `validators/sequence_validator.py`, `secret_disclosure.py`, `advisory_snapshot.py`,
+  `testing/leg-verification/*` + `test_leg_live_verification.py`, plus
+  `orchestrator.review_captured_exchanges`. `LEG_VERIFICATION.md` is new top-level doc.
 - **New modules this session:** `recall_benchmark.py`, `host_dep_dedup.py`, `attribution.py`,
   plus `orchestrator.review_captured_exchanges`. New tests: `test_smoke_phase0_capture_review`,
   `test_recall_benchmark`, `test_host_dep_dedup`, `test_attribution` (+ additions to
