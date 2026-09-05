@@ -9,16 +9,18 @@ file map) is in [`CLAUDE.md`](CLAUDE.md) — read that first, then this.
 
 ## State (as of session 12)
 
-- **Branch:** `WorkingSunday`. **HEAD:** `39c3f06` (session-12; this handover commits on top).
-  Session-12 landed **Phase 0 (all) + Phase 1 (1.1–1.4) + Phase 2 + Phase 3 (all) + Phase 3.5**
-  — 15 roadmap commits + handovers. See "What shipped this session (12)" below.
-  `harness/config.yaml` still carries safe defaults — session 12 flipped **no** toggle;
-  `harness/config.local.yaml` (git-ignored) still holds the live-ON toggles.
-- **Pushed state:** `origin/main` and `origin/WorkingSunday` fast-forwarded to session-12 work
-  this session (clean FF, no merge commit; the untracked `testing/` answer-key artifacts stayed
-  local). `main` == `WorkingSunday`.
+- **Branch:** `WorkingSunday`. **HEAD:** `e313db0` (session-12; this handover commits on top).
+  Session-12 landed **the entire improvement roadmap that is doable on this box**: Phase 0
+  (all) + Phase 1 (1.1–1.4) + Phase 2 (+ all remaining smoke_only legs live-verified) + Phase 3
+  (all) + Phase 3.5 + Phase 4 (cloud-coordinator seam) + Phase 5 (discovery soft-404 hardening).
+  `harness/config.yaml` still carries safe defaults — session 12 flipped **no** toggle (Phase 4
+  added `coordinator.cloud_reasoning: false`, default-off); `config.local.yaml` (git-ignored)
+  still holds the live-ON toggles.
+- **Pushed state:** `origin/main` and `origin/WorkingSunday` kept fast-forwarded to session-12
+  work (clean FF, no merge commit; the untracked `testing/` answer-key artifacts stayed local).
+  `main` == `WorkingSunday`.
 - **Suite green (Python):** from `harness/`, `python -m unittest discover -p "test_*.py"` →
-  **OK, 1141 tests** (1049 → 1141 across the session; every new test carries a negative
+  **OK, 1159 tests** (1049 → 1159 across the session; every new test carries a negative
   control). NOTE: `test_hardening.py` is **pytest-only** (module-level `def test_*`, outside
   the `unittest discover` gate) — run `python -m pytest test_hardening.py` separately; it is
   green (7 passed), and session 12 fixed a pre-existing breakage in it (see 1.2 below).
@@ -93,15 +95,34 @@ verified by hermetic tests with negative controls (no live run this session).
   `run_leg_verification.py` (all four in-band legs CONFIRMED on this machine, incl. browser_xss
   with real Chromium + path_traversal). `LEG_VERIFICATION.md` = the live-vs-smoke split (2.4) +
   freeze policy (2.1: no new legs until existing smoke_only ones are live-verified).
+- **Remaining smoke_only legs live-verified** (`7cc6752`): the fixture gained real OOB + mass-
+  assign endpoints; `test_leg_live_verification` now confirms **ssrf** (real server-side fetch →
+  in-process collaborator), **command_injection** (real shell runs the injected `curl`; skipped
+  when curl absent) and **sequence/mass_assignment** (real write → independent re-read). All
+  promoted into `LIVE_VERIFIED_MARKERS`. Only **xss** stays smoke_only-by-default (browser_xss
+  needs Chromium ON the harness; promote via the override where present).
+- **Phase 4 — cloud-coordinator reasoning seam** (`78bb26e`): `coordinator.reasoning_model(config)`
+  returns the cloud model for the iterative agent + critique when `coordinator.cloud_reasoning`
+  is toggled on (else local). Distinct from `cloud_primary` (anonymized routing) — this sends
+  REAL content off-host, so default-off, flipped via `POST /settings {"coordinator":
+  {"cloud_reasoning": true}}`. In-memory toggle, shared config with the pipeline.
+- **Phase 5 — discovery soft-404 hardening** (`e313db0`): `SurfaceDiscovery` calibrates a
+  soft-404 signature from known-bogus paths and suppresses shape-matching responses whatever
+  their status — so a 404→500 / catch-all no longer makes every probe look like a route. Keys
+  off content/shape, not "not-404". Honest-404 and genuinely-varying apps calibrate nothing.
 
 ### Roadmap status / what's left
-- **Done:** Phase 0 (all), **Phase 1 (1.1–1.4)**, **Phase 2** (in-band legs live-verified;
-  OOB/browser legs have an operator runner), Phase 3 (all), Phase 3.5.
-- **Not started:** Phase 4 (cloud coordinator seam); Phase 5 (repo hygiene + Burp panel + the
-  target 404→500 catch-all re-baseline). Also open: **live-verify the remaining smoke_only legs**
-  (ssrf/command_injection via a live collaborator + OOB fixture endpoints; sequence via a live
-  write→re-read fixture) and then promote them in `LIVE_VERIFIED_MARKERS` (see LEG_VERIFICATION.md);
-  a fresh **live max-coverage run** would re-measure recall with the new `recall_benchmark` harness.
+- **Done:** Phase 0 (all), Phase 1 (1.1–1.4), Phase 2 (**every confirmation leg live-verified
+  except xss-by-default**), Phase 3 (all), Phase 3.5, Phase 4, Phase 5 (discovery hardening).
+- **Remaining (needs off-box work, not code on this machine):**
+  - **Burp panel** — the Cross-Identity + Discovery tabs need a JDK to compile (hazard #6);
+    Java changes here are self-review only. Owner builds via `gradle shadowJar`.
+  - **Target 404→500 catch-all patch** — the target owner's one-line fix (external dependency);
+    re-baseline recall only after it lands. The harness side (soft-404 calibration) is done.
+  - **Fresh live max-coverage run** — re-measure recall with the new `recall_benchmark` harness
+    now that discovery breadth, the legs, and the gate have all changed; promote `browser_xss`
+    to live where a run confirms it. Needs Ollama/Docker + hours.
+  - Optional: OOB re-check of `xxe` and a live-collaborator `browser_xss` promotion.
 - **New modules this session:** `recall_benchmark.py`, `host_dep_dedup.py`, `attribution.py`,
   `validators/sequence_validator.py`, `secret_disclosure.py`, `advisory_snapshot.py`,
   `testing/leg-verification/*` + `test_leg_live_verification.py`, plus
