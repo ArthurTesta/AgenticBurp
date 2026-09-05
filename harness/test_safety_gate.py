@@ -302,7 +302,10 @@ class TestNoValidatorBypassesTheGate(unittest.TestCase):
                                   # auth_sequence replays the captured auth method (login/register)
                                   # for its multi-request flow, gate-routed + self-gated on
                                   # allow_mutating_replay.
-                                  "auth_sequence_validator.py"}
+                                  "auth_sequence_validator.py",
+                                  # stored_xss replays the captured write method to plant the
+                                  # payload, gate-routed + self-gated on allow_mutating_replay.
+                                  "stored_xss_validator.py"}
         # Files whose exchange.method reference is provably not a live
         # send at all -- verified by reading the code, not assumed.
         inert_usage_exceptions = {
@@ -381,7 +384,7 @@ class TestNoValidatorBypassesTheGate(unittest.TestCase):
                      "command_injection_validator.py", "ssti_validator.py",
                      "path_traversal_validator.py", "open_redirect_validator.py",
                      "sequence_validator.py", "deserialization_oob_validator.py",
-                     "auth_sequence_validator.py"):
+                     "auth_sequence_validator.py", "stored_xss_validator.py"):
             src = (here / "validators" / name).read_text()
             self.assertIn("GatedAsyncClient", src,
                           f"{name} replays exchange.method but doesn't route through GatedAsyncClient")

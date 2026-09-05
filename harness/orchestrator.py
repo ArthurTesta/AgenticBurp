@@ -924,6 +924,7 @@ class Orchestrator:
         from validators.sequence_validator import SequenceValidator
         from validators.deserialization_oob_validator import DeserializationOobValidator
         from validators.auth_sequence_validator import AuthSequenceValidator
+        from validators.stored_xss_validator import StoredXssValidator
         from models import Finding
         host = urlsplit(base_url).hostname or ""
         for r in roles:
@@ -945,6 +946,7 @@ class Orchestrator:
         _seq = SequenceValidator(allowed_hosts=self.allowed_hosts)
         _deser = DeserializationOobValidator(allowed_hosts=self.allowed_hosts)
         _auth = AuthSequenceValidator(allowed_hosts=self.allowed_hosts)
+        _sxss = StoredXssValidator(allowed_hosts=self.allowed_hosts)
 
         def _apply(finding, res, leg, floor):
             if res is not None and res.status == "confirmed" and res.confirmed:
@@ -987,6 +989,10 @@ class Orchestrator:
                 # sink. Skips gracefully if no browser engine is installed.
                 try:
                     _apply(finding, await _bxss.validate(_as_finding(finding, "xss"), exchange), "browser-xss", 0.95)
+                    # reflected browser_xss handles GET reflections; a write-shaped
+                    # exchange may instead be a STORED-XSS plant point -- try that leg too.
+                    if not finding.get("confirmed") and (exchange.method or "GET").upper() in ("POST", "PUT", "PATCH"):
+                        _apply(finding, await _sxss.validate(_as_finding(finding, "xss"), exchange), "stored-xss", 0.9)
                 except Exception:
                     return
             elif "jwt" in low or "algorithm confusion" in low or "algorithm_confusion" in low or "weak_token" in low:

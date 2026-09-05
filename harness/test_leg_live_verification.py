@@ -40,6 +40,7 @@ from validators.sequence_validator import SequenceValidator
 from validators.command_injection_validator import CommandInjectionValidator
 from validators.deserialization_oob_validator import DeserializationOobValidator
 from validators.auth_sequence_validator import AuthSequenceValidator
+from validators.stored_xss_validator import StoredXssValidator
 
 _FIXTURE = (Path(__file__).resolve().parent.parent
             / "testing" / "leg-verification" / "vuln_fixture.py")
@@ -251,6 +252,30 @@ class LiveLegVerificationTest(unittest.TestCase):
         v = AuthSequenceValidator(allowed_hosts=["127.0.0.1"])
         ex = self._auth_exchange("/auth/login-uniform", '{"username": "alice", "password": "alicepw"}')
         res = self._run_ex(v, ex, "username_enumeration")
+        self.assertNotEqual(res.status, "confirmed")
+
+    # --- Stored / second-order XSS (plant -> independent HTML render) ---------
+    def _stored_reset(self):
+        urllib.request.urlopen(urllib.request.Request(
+            f"{self._base}/stored/reset", method="POST"), timeout=2).read()
+
+    def _comment_exchange(self, path):
+        return HttpExchange(url=f"{self._base}{path}", method="POST",
+                            request_headers={"Content-Type": "application/json"},
+                            request_body='{"text": "hello world"}')
+
+    def test_stored_xss_confirms_on_raw_render(self):
+        self._stored_reset()
+        v = StoredXssValidator(allowed_hosts=["127.0.0.1"])
+        res = self._run_ex(v, self._comment_exchange("/stored/comments"), "xss")
+        self.assertEqual(res.status, "confirmed",
+                         f"stored-XSS leg missed a plant->raw-render flow: {res.summary}")
+        self.assertTrue(res.confirmed)
+
+    def test_stored_xss_silent_on_escaped_render_control(self):
+        self._stored_reset()
+        v = StoredXssValidator(allowed_hosts=["127.0.0.1"])
+        res = self._run_ex(v, self._comment_exchange("/stored/comments-safe"), "xss")
         self.assertNotEqual(res.status, "confirmed")
 
 

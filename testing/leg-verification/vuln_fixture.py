@@ -247,6 +247,35 @@ def make_app(file_base: str | None = None) -> Flask:
     def login_uniform():
         return jsonify({"error": "invalid credentials"}), 401  # uniform -> safe
 
+    # --- Stored XSS (stored_xss leg): POST stores; GET renders all as HTML. TP
+    #     renders raw (stored XSS); control escapes on render. ---------------------
+    stored = {"comments": [], "comments_safe": []}
+
+    @app.post("/stored/reset")
+    def stored_reset():
+        stored["comments"].clear(); stored["comments_safe"].clear()
+        return jsonify({"ok": True})
+
+    @app.route("/stored/comments", methods=["GET", "POST"])
+    def stored_comments():
+        if request.method == "POST":
+            b = request.get_json(silent=True) or {}
+            stored["comments"].append(str(b.get("text", "")))
+            return jsonify({"ok": True}), 201
+        body = "<html><body>" + "".join(f"<div>{c}</div>" for c in stored["comments"]) + "</body></html>"
+        return Response(body, mimetype="text/html")  # VULNERABLE: stored text rendered raw
+
+    @app.route("/stored/comments-safe", methods=["GET", "POST"])
+    def stored_comments_safe():
+        if request.method == "POST":
+            b = request.get_json(silent=True) or {}
+            stored["comments_safe"].append(str(b.get("text", "")))
+            return jsonify({"ok": True}), 201
+        body = ("<html><body>"
+                + "".join(f"<div>{html.escape(c)}</div>" for c in stored["comments_safe"])
+                + "</body></html>")
+        return Response(body, mimetype="text/html")  # escaped on render -> safe
+
     return app
 
 
