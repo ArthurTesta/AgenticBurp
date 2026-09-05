@@ -58,6 +58,42 @@ def _trust(role: str) -> int:
     return _TRUST.get((role or "").lower(), 1)
 
 
+# Role "feature" words used to de-duplicate discovery sweeps by the feature-set a
+# role plausibly unlocks (not by trust -- custom labels like "carol-agent-org1"
+# all default to trust 1 yet gate DIFFERENT features). Distinct roles differing
+# only by tenant/instance (two "user" accounts) collapse to one sweep.
+_ROLE_WORDS = ("admin", "administrator", "superuser", "root", "manager", "supervisor",
+               "agent", "operator", "staff", "moderator", "support", "service",
+               "editor", "author", "reviewer", "auditor", "billing", "finance",
+               "user", "member", "customer", "guest")
+
+
+def _feature_key(role: str) -> str:
+    low = (role or "").lower()
+    for w in _ROLE_WORDS:
+        if w in low:
+            return w
+    return low
+
+
+def _distinct_discovery_roles(roles: list, cap: int = 6) -> list:
+    """Authenticated roles to run the discovery sweep AS, one per distinct feature
+    key -- so an agent-only / manager-only endpoint (404 or 403 for other roles)
+    is reached by sweeping as that role. Falls back to the highest-trust role, or
+    anonymous, when no authenticated role is present. Highest-trust always kept."""
+    authed = [r for r in roles if r.norm_headers()]
+    if not authed:
+        return [max(roles, key=lambda r: _trust(r.role))] if roles else []
+    top = max(authed, key=lambda r: _trust(r.role))
+    picked: dict[str, object] = {_feature_key(top.role): top}
+    for r in authed:
+        picked.setdefault(_feature_key(r.role), r)
+    out = list(picked.values())
+    # keep the highest-trust first, then stable order; cap the fan-out.
+    out.sort(key=lambda r: (r is not top, r.role))
+    return out[:cap]
+
+
 @dataclass
 class RoleSession:
     role: str                 # "anonymous" | "user" | "admin" | "service" | free label
@@ -185,19 +221,31 @@ async def crawl_roles(
     if active_discovery:
         try:
             from api_surface_discovery import SurfaceDiscovery
-            seed = max(roles, key=lambda r: _trust(r.role))
-            # Feed the crawler's HTML/JS-mined links in as seed paths so active
-            # discovery derives the namespaces they reveal (Phase 0.2(a)) -- a
-            # server-rendered surface under a non-default prefix gets swept.
-            disc = SurfaceDiscovery(base_url, headers=seed.norm_headers(),
-                                    allowed_hosts=allowed_hosts, max_probes=discovery_max_probes,
-                                    seed_paths=sorted(discovered))
-            sres = await disc.discover()
-            discovered |= {_template_ids(rt.path) for rt in sres.routes}
-            if sres.spec_found:
-                result.errors.append(f"[discovery] used spec {sres.spec_found}")
-            log.info("role_crawl: active discovery added surface -> %d routes (%d probes)",
-                     len(sres.routes), sres.probes_sent)
+            # Sweep discovery AS each distinct-feature authenticated role, not just
+            # the single highest-trust one: role feature-sets differ (an agent-only
+            # integrations/webhook endpoint is 404/403 for admin), so a one-identity
+            # sweep structurally misses them. Union the routes; split the probe
+            # budget across the sweeps so the total stays within discovery_max_probes.
+            sweep_roles = _distinct_discovery_roles(roles)
+            per_budget = max(500, discovery_max_probes // max(1, len(sweep_roles)))
+            total_routes, total_probes = 0, 0
+            for sr in sweep_roles:
+                try:
+                    # Feed the crawler's HTML/JS-mined links (and routes found by an
+                    # earlier sweep) in as seed paths so active discovery derives the
+                    # namespaces they reveal (Phase 0.2(a)) and later sweeps benefit.
+                    disc = SurfaceDiscovery(base_url, headers=sr.norm_headers(),
+                                            allowed_hosts=allowed_hosts, max_probes=per_budget,
+                                            seed_paths=sorted(discovered))
+                    sres = await disc.discover()
+                    discovered |= {_template_ids(rt.path) for rt in sres.routes}
+                    total_routes += len(sres.routes); total_probes += sres.probes_sent
+                    if sres.spec_found:
+                        result.errors.append(f"[discovery] used spec {sres.spec_found}")
+                except Exception as e:
+                    result.errors.append(f"[discovery] sweep as {sr.role!r} failed: {e.__class__.__name__}")
+            log.info("role_crawl: active discovery swept %d role(s) -> %d routes (%d probes), "
+                     "%d unique paths", len(sweep_roles), total_routes, total_probes, len(discovered))
         except Exception as e:
             result.errors.append(f"[discovery] failed: {e.__class__.__name__}")
 

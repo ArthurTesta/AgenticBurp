@@ -64,6 +64,13 @@ DEFAULT_NOUNS = (
     "tickets ticket comments attachments replies assign escalate close reopen import export search mine "
     "kb articles faq categories tags labels "
     "integrations webhook webhooks connect oauth callback fetch proxy notify "
+    # injection-prone feature surface: SSTI (templates/render/preview/email),
+    # open-redirect (redirect/url/next/return/continue), command-injection
+    # (ping/exec/run/convert/process). These are the agent-role features the
+    # session-13 frontier legs never reached.
+    "templates template render preview email emails message messages send "
+    "redirect url link next return continue goto forward "
+    "ping exec run execute convert process transform generate command "
     "refunds reports invoices payments billing credits approve reject "
     "diagnostics debug logs audit config settings backup system health status metrics maintenance "
     "files upload uploads download media avatar "

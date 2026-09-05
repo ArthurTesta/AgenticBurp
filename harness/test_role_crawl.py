@@ -5,7 +5,38 @@ from unittest.mock import patch
 
 import global_throttle
 import role_crawl
-from role_crawl import RoleSession
+from role_crawl import RoleSession, _distinct_discovery_roles, _feature_key
+
+
+class DiscoverySweepRoleSelectionTests(unittest.TestCase):
+    """Discovery must sweep AS each distinct-feature role, so a role-gated
+    (agent/manager-only) endpoint is reached -- not just the highest-trust one."""
+
+    def test_dedup_by_feature_not_trust(self):
+        # VulnCorp-shaped labels: 3 users (dup feature), one agent, one manager,
+        # one admin -- all authenticated. Expect one sweep per FEATURE, users
+        # collapsed, agent+manager+admin each kept.
+        roles = [
+            RoleSession("anonymous", {}),
+            RoleSession("alice-user-org1", {"Authorization": "a"}),
+            RoleSession("bob-user-org1", {"Authorization": "b"}),
+            RoleSession("carol-agent-org1", {"Authorization": "c"}),
+            RoleSession("dave-manager-org1", {"Authorization": "d"}),
+            RoleSession("admin", {"Authorization": "e"}),
+            RoleSession("eve-user-org2", {"Authorization": "f"}),
+        ]
+        keys = {_feature_key(r.role) for r in _distinct_discovery_roles(roles)}
+        self.assertEqual(keys, {"user", "agent", "manager", "admin"})
+
+    def test_anonymous_only_falls_back(self):
+        roles = [RoleSession("anonymous", {})]
+        picked = _distinct_discovery_roles(roles)
+        self.assertEqual([r.role for r in picked], ["anonymous"])
+
+    def test_cap_bounds_fanout(self):
+        roles = [RoleSession(f"role{i}-agent", {"Authorization": str(i)}) for i in range(20)]
+        # all share feature "agent" -> collapse to one sweep
+        self.assertEqual(len(_distinct_discovery_roles(roles)), 1)
 
 
 class _Resp:
