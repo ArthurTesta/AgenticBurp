@@ -128,11 +128,13 @@ CONFIRMABLE_CLASS_MARKERS = frozenset({
 #   - session-11 max-coverage run vs VulnCorp: cross_identity (IDOR/access
 #     control), sqlmap (SQLi), jwt_forge (JWT alg:none), xxe, path_traversal.
 #   - Phase 2 (this session), test_leg_live_verification against a real local
-#     vulnerable fixture: ssti (Jinja render), open_redirect (blind 302).
-# Everything else confirmable still has a leg that is only smoke/hermetic-verified
-# (browser_xss, ssrf, command_injection, sequence) and is treated as UNPROVEN, not
-# REFUTED, until live-verified. THIS SET is what Phase 2 refreshes as legs graduate.
-# See LEG_VERIFICATION.md for the full live-verified-vs-smoke-only split.
+#     vulnerable fixture: ssti (Jinja render), open_redirect (blind 302), ssrf
+#     (real server-side fetch to the collaborator), command_injection (real shell
+#     fetch), and the sequence leg (real mass-assignable write -> re-read).
+# The only confirmable class still smoke_only-by-default is xss: its browser_xss
+# leg needs a real Chromium ON THE HARNESS, so it stays UNPROVEN unless an operator
+# with a browser promotes it via the live_verified_markers override. THIS SET is
+# what live-verification refreshes. See LEG_VERIFICATION.md for the full split.
 LIVE_VERIFIED_MARKERS = frozenset({
     "idor", "insecure_direct_object", "insecure direct object",
     "broken_access_control", "broken access control", "bola", "bfla",
@@ -142,9 +144,14 @@ LIVE_VERIFIED_MARKERS = frozenset({
     "path_traversal", "path traversal", "directory traversal", "directory_traversal",
     "lfi", "local file inclusion", "file inclusion",
     "jwt", "jwt_forge", "algorithm confusion", "algorithm_confusion", "weak_token",
-    # Phase 2 live-verified (test_leg_live_verification):
+    # Phase 2 live-verified (test_leg_live_verification, real local fixture):
     "ssti", "template_injection", "template injection",
     "open_redirect", "open redirect", "unvalidated redirect", "unvalidated_redirect",
+    "ssrf", "server_side_request_forgery", "server-side request forgery",
+    "server side request forgery",
+    "command_injection", "command injection", "rce", "remote code execution",
+    "remote_code_execution", "shell injection", "shell_injection",
+    "mass_assignment", "mass assignment",
 })
 
 

@@ -98,12 +98,15 @@ class TestConfirmationGate(unittest.TestCase):
 
 class TestLegAwareThreeState(unittest.TestCase):
     def test_leg_tier(self):
-        # live: session-11 legs + Phase-2 live-verified ssti / open_redirect.
+        # live: session-11 legs + Phase-2 live-verified ssti/open_redirect/ssrf/
+        # command_injection/mass_assignment (real-fixture verification).
         for live in ("idor", "SQL_INJECTION", "xxe", "jwt algorithm confusion",
-                     "path_traversal", "ssti", "open_redirect"):
+                     "path_traversal", "ssti", "open_redirect", "ssrf",
+                     "command injection", "mass_assignment"):
             self.assertEqual(leg_tier(live), "live", live)
-        # provisional: leg exists but only smoke/hermetic-verified.
-        for prov in ("reflected xss", "ssrf", "command injection", "mass_assignment"):
+        # provisional: xss's browser_xss leg needs Chromium on the harness, so it
+        # stays smoke_only-by-default.
+        for prov in ("reflected xss", "cross-site scripting"):
             self.assertEqual(leg_tier(prov), "provisional", prov)
         for none in ("business_logic", "information_disclosure", "csrf", None, ""):
             self.assertEqual(leg_tier(none), "none", none)
@@ -128,18 +131,18 @@ class TestLegAwareThreeState(unittest.TestCase):
         self.assertTrue(f.summary.startswith("[Unconfirmed] "))
 
     def test_provisional_low_severity_unchanged(self):
-        f = _apply(_finding("ssrf", severity="low", confidence=0.3))
+        f = _apply(_finding("reflected xss", severity="low", confidence=0.3))
         self.assertEqual(f.severity, "low")  # medium cap never RAISES severity
 
-    def test_phase2_override_promotes_a_provisional_leg_to_refuted(self):
-        # The Phase-2 seam: ssrf is still provisional (UNPROVEN -> medium); once
-        # its leg is live-verified, passing it in the live set flips its
-        # suppression to REFUTED (low).
+    def test_override_promotes_a_provisional_leg_to_refuted(self):
+        # xss is still provisional (browser_xss needs a browser) -> UNPROVEN
+        # (medium); an operator with Chromium passes it in the live set to flip
+        # its suppression to REFUTED (low). This is also the Phase-2 promotion seam.
         from confirmation_gate import LIVE_VERIFIED_MARKERS
-        base = _apply(_finding("ssrf", severity="high"))
+        base = _apply(_finding("reflected xss", severity="high"))
         self.assertEqual(base.severity, "medium")  # provisional today
-        promoted = LIVE_VERIFIED_MARKERS | {"ssrf"}
-        f = _apply(_finding("ssrf", severity="high"), live_verified_markers=promoted)
+        promoted = LIVE_VERIFIED_MARKERS | {"xss"}
+        f = _apply(_finding("reflected xss", severity="high"), live_verified_markers=promoted)
         self.assertEqual(f.severity, "low")
         self.assertEqual(f.review_verdict, "unconfirmed_hypothesis")
 

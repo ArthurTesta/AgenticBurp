@@ -20,8 +20,10 @@ from __future__ import annotations
 
 import html
 import os
+import subprocess
+import urllib.request
 
-from flask import Flask, request, redirect, Response
+from flask import Flask, request, redirect, Response, jsonify
 from jinja2 import Template
 
 
@@ -82,6 +84,67 @@ def make_app(file_base: str | None = None) -> Flask:
     def xss_safe():
         q = request.args.get("q", "")
         return Response(f"<html><body>hello {html.escape(q)}</body></html>", mimetype="text/html")
+
+    # --- SSRF: TP fetches the url param server-side; control never fetches -----
+    @app.get("/ssrf/fetch")
+    def ssrf_fetch():
+        url = request.args.get("url", "")
+        try:
+            with urllib.request.urlopen(url, timeout=2) as r:  # VULNERABLE: fetches attacker URL
+                r.read(64)
+            return Response("fetched", mimetype="text/plain")
+        except Exception:
+            return Response("fetch failed", mimetype="text/plain")
+
+    @app.get("/ssrf/safe")
+    def ssrf_safe():
+        return Response(f"url noted: {html.escape(request.args.get('url', ''))}",  # never fetched
+                        mimetype="text/plain")
+
+    # --- Command injection: TP passes the param to a shell; control does not ---
+    @app.get("/cmdi/ping")
+    def cmdi_ping():
+        host = request.args.get("host", "")
+        try:
+            out = subprocess.run(f"echo {host}", shell=True, capture_output=True,  # VULNERABLE
+                                 timeout=5, text=True)
+            return Response(out.stdout, mimetype="text/plain")
+        except Exception:
+            return Response("cmd failed", mimetype="text/plain")
+
+    @app.get("/cmdi/safe")
+    def cmdi_safe():
+        return Response(f"host noted: {html.escape(request.args.get('host', ''))}",  # no shell
+                        mimetype="text/plain")
+
+    # --- Mass assignment (sequence leg): TP binds ALL body fields to the object,
+    #     readable back via GET; control binds only an allowlist. state resets. --
+    def _fresh():
+        return {"id": 1, "name": "alice", "role": "user"}
+    state = {"profile": _fresh(), "profile_safe": _fresh()}  # independent per endpoint
+
+    @app.post("/account/reset")
+    def account_reset():
+        state["profile"], state["profile_safe"] = _fresh(), _fresh()
+        return jsonify(state["profile"])
+
+    @app.route("/account/profile", methods=["GET", "PATCH", "POST", "PUT"])
+    def account_profile():
+        if request.method != "GET":
+            body = request.get_json(silent=True) or {}
+            if isinstance(body, dict):
+                state["profile"].update(body)  # VULNERABLE: no settable-field allowlist
+        return jsonify(state["profile"])
+
+    @app.route("/account/profile-safe", methods=["GET", "PATCH", "POST", "PUT"])
+    def account_profile_safe():
+        if request.method != "GET":
+            body = request.get_json(silent=True) or {}
+            if isinstance(body, dict):
+                for k in ("name", "bio"):  # allowlist -- privileged fields ignored
+                    if k in body:
+                        state["profile_safe"][k] = body[k]
+        return jsonify(state["profile_safe"])
 
     return app
 

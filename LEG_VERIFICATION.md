@@ -25,11 +25,11 @@ class.
 | `path_traversal` | path_traversal | **live_verified** | session-11 run (`/uploads/1` → win.ini); re-confirmed via `run_leg_verification` against the fixture |
 | `ssti` | ssti | **live_verified** | Phase 2, `test_leg_live_verification` — real Jinja render endpoint (`{{89*97}}`→8633) + escaped-echo negative control |
 | `open_redirect` | open_redirect | **live_verified** | Phase 2, `test_leg_live_verification` — real blind 302 to a sentinel host + fixed-target negative control |
+| `ssrf` | ssrf | **live_verified** | `test_leg_live_verification` — a real server-side fetch of the `url` param to the in-process collaborator + a no-fetch negative control |
+| `command_injection` | command_injection | **live_verified** | `test_leg_live_verification` — a real shell endpoint runs the injected `curl` fetch to the collaborator (skipped when `curl` is absent) + a no-shell negative control |
+| `sequence` | mass_assignment | **live_verified** | `test_leg_live_verification` — a real mass-assignable write persists across an independent re-read + an allowlisted-write negative control |
 | `secret_disclosure` | jwt (signing key) | live (offline proof) | Phase 3.1 — HMAC verification is cryptographic proof; no live send needed |
-| `browser_xss` | xss | smoke_only (default) | seam-mocked unit test. OBSERVED confirming live via `run_leg_verification` (real Chromium executed the reflected payload) — but kept smoke_only in the DEFAULT gate set because Chromium is optional infra; on a browser-equipped machine promote it via `apply_confirmation_suppression(live_verified_markers=...)` |
-| `ssrf` | ssrf | smoke_only | shape/OOB smoke test; needs a live collaborator + an OOB fixture endpoint |
-| `command_injection` | command_injection | smoke_only | OOB smoke test; needs a live collaborator + an OOB fixture endpoint |
-| `sequence` | mass_assignment | smoke_only | Phase 3 hermetic test (fake app); a live write→re-read fixture would confirm |
+| `browser_xss` | xss | smoke_only (default) | seam-mocked unit test. OBSERVED confirming live via `run_leg_verification` (real Chromium executed the reflected payload) — but kept smoke_only in the DEFAULT gate set because Chromium is optional infra ON THE HARNESS; on a browser-equipped machine promote it via `apply_confirmation_suppression(live_verified_markers=...)` |
 
 The ~13 analyze-only class validators (`cors`, `csp`, `crypto`, `recon`,
 `oauth`, `header_injection`, `http_request_smuggling`, `web_cache_poisoning`,
@@ -39,15 +39,18 @@ confirmable set.
 
 ## How to live-verify
 
-- **Hermetic, portable** (`ssti`, `open_redirect`): `harness/test_leg_live_verification.py`
+- **Hermetic, in the `unittest` suite** — `harness/test_leg_live_verification.py`
   stands up `testing/leg-verification/vuln_fixture.py` on a real localhost socket
-  and runs the leg against a true-positive endpoint + a matched control. Runs in
-  the normal `unittest` suite.
-- **Infra-dependent** (`path_traversal` needs a real system file; `browser_xss`
-  needs Chromium): `python testing/leg-verification/run_leg_verification.py`
-  (operator-run, machine-specific).
-- **OOB** (`ssrf`, `command_injection`, and re-checking `xxe`): need a live
-  collaborator and OOB endpoints on the fixture — the next fixture step.
+  and runs each leg against a true-positive endpoint + a matched control, with
+  real HTTP (no stubs): `ssti`, `open_redirect`, `ssrf` and the `sequence`
+  (mass-assignment) leg all run here. `command_injection` runs here too but is
+  skipped when `curl` is absent (the injected payload needs it on the host). The
+  OOB legs reach the in-process collaborator (`collaborator.py`), which is itself
+  just a loopback listener — no external service needed.
+- **Operator-run** (`python testing/leg-verification/run_leg_verification.py`) for
+  the legs whose confirmation depends on host infra the suite can't assume:
+  `path_traversal` (a real canonical system file) and `browser_xss` (a real
+  Chromium). Both confirmed on the dev machine this session.
 
 When a leg is newly live-verified, add its class markers to
 `confirmation_gate.LIVE_VERIFIED_MARKERS` and update the table above.
