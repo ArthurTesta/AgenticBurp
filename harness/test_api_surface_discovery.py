@@ -158,6 +158,56 @@ class PrefixDerivationTests(unittest.TestCase):
             next(r.source for r in res.routes if r.path == "/admin/users"), "derived")
 
 
+class ActionSuffixTests(unittest.TestCase):
+    """Phase 0.2(b): object-scoped action suffixes, beyond the fixed noun list --
+    built-in workflow verbs and verbs generated from actions the app exposes."""
+
+    def _responder(self, known):
+        def r(method, path):
+            return known.get(path, (500, _NF, ""))
+        return r
+
+    def test_builtin_action_suffix_found_under_object(self):
+        known = {
+            "/api/tickets": (200, '[{"id":1}]', ""),   # reveals object id 1
+            "/api/tickets/1": (200, "{}", ""),
+            "/api/tickets/1/lock": (200, "{}", ""),     # a built-in action, not a noun
+        }
+        disc = _FakeDiscovery(self._responder(known),
+                              prefixes=["/api/"], collections=["tickets"],
+                              nouns=["tickets"], actions=["lock", "unlock"])
+        res = _run(disc)
+        self.assertIn("/api/tickets/1/lock", res.paths())
+        self.assertEqual(
+            next(r.source for r in res.routes if r.path == "/api/tickets/1/lock"), "action")
+
+    def test_generated_action_from_spec_applied_across_objects(self):
+        # A spec declares escalate on tickets; escalate is in NO built-in list,
+        # yet it must be tried on a structurally similar object (orders).
+        spec = '{"openapi":"3.0.0","paths":{"/api/tickets/{id}/escalate":{}}}'
+        known = {
+            "/openapi.json": (200, spec, ""),
+            "/api/orders": (200, '[{"id":1}]', ""),
+            "/api/orders/1": (200, "{}", ""),
+            "/api/orders/1/escalate": (200, "{}", ""),   # found only via generation
+        }
+        disc = _FakeDiscovery(self._responder(known),
+                              prefixes=["/api/"], collections=["orders"],
+                              nouns=["orders"], actions=[])   # no built-in escalate
+        res = _run(disc)
+        self.assertIn("/api/orders/1/escalate", res.paths())
+
+    def test_no_object_no_action_probes(self):
+        # Negative control: with no object-scoped route to hang an action on,
+        # action mining probes nothing (and invents nothing).
+        known = {"/api/health": (200, "{}", "")}
+        disc = _FakeDiscovery(self._responder(known),
+                              prefixes=["/api/"], collections=[],
+                              nouns=["health"], actions=["lock"])
+        res = _run(disc)
+        self.assertEqual(res.paths(), ["/api/health"])
+
+
 class SpecTests(unittest.TestCase):
     def test_spec_paths_parsed(self):
         body = '{"openapi":"3.0.0","paths":{"/api/a":{},"/api/b/{id}":{},"bad":{}}}'

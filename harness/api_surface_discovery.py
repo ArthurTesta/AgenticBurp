@@ -74,6 +74,18 @@ DEFAULT_COLLECTIONS = (
     "billing config me files"
 ).split()
 
+# Object-scoped ACTION verbs (state changes / workflow transitions), distinct
+# from the resource NOUNS above. These live as suffixes on an object
+# (/tickets/1/lock), not as bare collections. Deliberately excludes verbs already
+# in DEFAULT_NOUNS (assign/escalate/close/reopen/approve/reject/verify/refresh)
+# so the two lists don't re-probe the same paths.
+DEFAULT_ACTIONS = (
+    "activate deactivate enable disable lock unlock ban unban suspend unsuspend "
+    "restore archive unarchive publish unpublish submit cancel confirm retry "
+    "resend duplicate clone promote demote grant revoke invite accept decline "
+    "start stop pause resume rotate impersonate"
+).split()
+
 DEFAULT_PREFIXES = ("/api/", "/api/v1/", "/", "/admin/", "/internal/")
 
 
@@ -143,12 +155,13 @@ class SurfaceDiscovery:
     def __init__(self, base_url: str, *, headers: dict | None = None,
                  allowed_hosts: list[str] | None = None,
                  nouns=None, collections=None, prefixes=None, seed_paths=None,
-                 timeout: float = 8.0, max_probes: int = 6000):
+                 actions=None, timeout: float = 8.0, max_probes: int = 6000):
         self.base_url = base_url.rstrip("/")
         self.headers = headers or {}
         self.allowed_hosts = allowed_hosts or []
         self.nouns = list(nouns) if nouns is not None else list(DEFAULT_NOUNS)
         self.collections = list(collections) if collections is not None else list(DEFAULT_COLLECTIONS)
+        self.actions = list(actions) if actions is not None else list(DEFAULT_ACTIONS)
         self.prefixes = list(prefixes) if prefixes is not None else list(DEFAULT_PREFIXES)
         # Paths the caller already knows exist (e.g. the crawler's HTML/JS-mined
         # links). Used to DERIVE namespaces the app actually exposes -- see
@@ -241,6 +254,11 @@ class SurfaceDiscovery:
         #    so this finds the pattern without re-probing it for every object.
         await self._mine_subresources()
 
+        # 4b. Phase 0.2(b): object-scoped action suffixes (built-in workflow verbs
+        #     + verbs generated from actions the app already exposes). Before Allow
+        #     mining so a POST-only action route gets its real verbs learned.
+        await self._mine_actions()
+
         # 5. Allow mining (LAST, over the FULL route set incl. sub-resources): a
         #    route that rejects GET answers 405 with an `Allow` header -> learn its
         #    real verbs so POST-only routes aren't mislabelled GET-only.
@@ -303,18 +321,49 @@ class SurfaceDiscovery:
                 if isinstance(it, dict) and "id" in it and self._budget_left():
                     await self._check(f"{base_coll}/{it['id']}", "response")
 
-    async def _mine_subresources(self) -> None:
-        # One representative id per collection (lowest), nest nouns under it.
+    def _representative_ids(self) -> dict[str, str]:
+        """One representative (lowest) object id per collection, from routes of
+        the shape /<collection>/<digits>. Shared by sub-resource and action
+        mining: the SHAPE repeats across ids, so one id per collection is enough."""
         reps: dict[str, str] = {}
         for p in list(self._seen):
             m = re.match(r"^(.*)/(\d+)$", p)
             if m and (m.group(1) not in reps or int(m.group(2)) < int(reps[m.group(1)])):
                 reps[m.group(1)] = m.group(2)
-        for coll, idv in reps.items():
+        return reps
+
+    async def _mine_subresources(self) -> None:
+        # Nest nouns under one representative id per collection.
+        for coll, idv in self._representative_ids().items():
             for n in self.nouns:
                 if not self._budget_left():
                     return
                 await self._check(f"{coll}/{idv}/{n}", "subresource")
+
+    async def _mine_actions(self) -> None:
+        """Phase 0.2(b): probe object-scoped ACTION suffixes (/tickets/1/lock),
+        beyond the fixed noun list. Two sources: the built-in workflow-verb
+        vocabulary, and verbs GENERATED from actions the app already exposes --
+        an /api/tickets/{id}/escalate seen in a spec (or found on any object)
+        makes `escalate` worth trying on every other object, catching actions
+        specific to this app that no built-in list would name. Verbs already in
+        the noun list are skipped -- sub-resource mining tried those already."""
+        reps = self._representative_ids()
+        if not reps:
+            return
+        harvested: set[str] = set()
+        for p in list(self._seen):
+            m = re.search(r"/(?:\d+|\{[^/]+\})/([A-Za-z][A-Za-z0-9_-]{1,29})$", p)
+            if m:
+                harvested.add(m.group(1).lower())
+        noun_set = set(self.nouns)
+        actions = [a for a in dict.fromkeys(list(self.actions) + sorted(harvested))
+                   if a not in noun_set]
+        for coll, idv in reps.items():
+            for act in actions:
+                if not self._budget_left():
+                    return
+                await self._check(f"{coll}/{idv}/{act}", "action")
 
 
 def _looks_like_spec(body: str) -> bool:
