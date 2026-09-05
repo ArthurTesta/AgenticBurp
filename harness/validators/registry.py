@@ -25,6 +25,7 @@ from .ssti_validator import SstiValidator
 from .path_traversal_validator import PathTraversalValidator
 from .open_redirect_validator import OpenRedirectValidator
 from .sequence_validator import SequenceValidator
+from .auth_sequence_validator import AuthSequenceValidator
 from safety_gate import get_default_gate, reset_default_gate
 
 
@@ -203,6 +204,12 @@ class ValidatorRegistry:
         if deser_oob_cfg.get("enabled", True):
             self.validators["deserialization_oob"] = DeserializationOobValidator(
                 allowed_hosts=_allowed, timeout=float(deser_oob_cfg.get("timeout", 10.0)))
+        # Auth-mechanism legs -- session fixation / weak-password / username enum
+        # multi-request flows. Active; POST sends need allow_mutating_replay.
+        auth_cfg = cfg.get("auth_sequence", {})
+        if auth_cfg.get("enabled", True):
+            self.validators["auth_sequence"] = AuthSequenceValidator(
+                allowed_hosts=_allowed, timeout=float(auth_cfg.get("timeout", 10.0)))
 
         # Browser-driven XSS validator (A2) -- active: loads candidate URLs in a
         # real headless browser and confirms only on observed script execution.

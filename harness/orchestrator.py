@@ -923,6 +923,7 @@ class Orchestrator:
         from validators.open_redirect_validator import OpenRedirectValidator
         from validators.sequence_validator import SequenceValidator
         from validators.deserialization_oob_validator import DeserializationOobValidator
+        from validators.auth_sequence_validator import AuthSequenceValidator
         from models import Finding
         host = urlsplit(base_url).hostname or ""
         for r in roles:
@@ -943,6 +944,7 @@ class Orchestrator:
         _redir = OpenRedirectValidator(allowed_hosts=self.allowed_hosts)
         _seq = SequenceValidator(allowed_hosts=self.allowed_hosts)
         _deser = DeserializationOobValidator(allowed_hosts=self.allowed_hosts)
+        _auth = AuthSequenceValidator(allowed_hosts=self.allowed_hosts)
 
         def _apply(finding, res, leg, floor):
             if res is not None and res.status == "confirmed" and res.confirmed:
@@ -1035,6 +1037,14 @@ class Orchestrator:
                 try:
                     _apply(finding, await _deser.validate(_as_finding(finding, "deserialization"), exchange),
                            "deserialization", 0.95)
+                except Exception:
+                    return
+            elif ("session fixation" in low or "session_fixation" in low or "weak password" in low
+                  or "weak_password" in low or "enumeration" in low or "broken authentication" in low
+                  or "broken_authentication" in low):
+                try:
+                    _apply(finding, await _auth.validate(_as_finding(finding, low or "broken_authentication"), exchange),
+                           "auth-sequence", 0.85)
                 except Exception:
                     return
 

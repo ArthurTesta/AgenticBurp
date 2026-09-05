@@ -39,6 +39,7 @@ from validators.ssrf_validator import SsrfValidator
 from validators.sequence_validator import SequenceValidator
 from validators.command_injection_validator import CommandInjectionValidator
 from validators.deserialization_oob_validator import DeserializationOobValidator
+from validators.auth_sequence_validator import AuthSequenceValidator
 
 _FIXTURE = (Path(__file__).resolve().parent.parent
             / "testing" / "leg-verification" / "vuln_fixture.py")
@@ -208,6 +209,48 @@ class LiveLegVerificationTest(unittest.TestCase):
     def test_deserialization_oob_silent_on_json_control(self):
         v = DeserializationOobValidator(allowed_hosts=["127.0.0.1"], timeout=2.0)
         res = self._run_ex(v, self._pickle_cookie_exchange("/deser/safe"), "deserialization")
+        self.assertNotEqual(res.status, "confirmed")
+
+    # --- Auth-mechanism legs (session fixation / weak pw / username enum) -----
+    def _auth_exchange(self, path, body):
+        return HttpExchange(url=f"{self._base}{path}", method="POST",
+                            request_headers={"Content-Type": "application/json"},
+                            request_body=body)
+
+    def test_auth_session_fixation_confirms(self):
+        v = AuthSequenceValidator(allowed_hosts=["127.0.0.1"])
+        ex = self._auth_exchange("/auth/login-fixation", '{"username": "alice", "password": "x"}')
+        res = self._run_ex(v, ex, "session_fixation")
+        self.assertEqual(res.status, "confirmed", f"session-fixation leg missed a non-rotating session: {res.summary}")
+
+    def test_auth_session_fixation_silent_on_rotating_control(self):
+        v = AuthSequenceValidator(allowed_hosts=["127.0.0.1"])
+        ex = self._auth_exchange("/auth/login-rotate", '{"username": "alice", "password": "x"}')
+        res = self._run_ex(v, ex, "session_fixation")
+        self.assertNotEqual(res.status, "confirmed")
+
+    def test_auth_weak_password_confirms(self):
+        v = AuthSequenceValidator(allowed_hosts=["127.0.0.1"])
+        ex = self._auth_exchange("/auth/register-weak", '{"username": "alice", "password": "alicepw123"}')
+        res = self._run_ex(v, ex, "weak_password")
+        self.assertEqual(res.status, "confirmed", f"weak-password leg missed an unrestricted policy: {res.summary}")
+
+    def test_auth_weak_password_silent_on_policy_control(self):
+        v = AuthSequenceValidator(allowed_hosts=["127.0.0.1"])
+        ex = self._auth_exchange("/auth/register-strong", '{"username": "alice", "password": "alicepw123"}')
+        res = self._run_ex(v, ex, "weak_password")
+        self.assertNotEqual(res.status, "confirmed")
+
+    def test_auth_username_enum_confirms(self):
+        v = AuthSequenceValidator(allowed_hosts=["127.0.0.1"])
+        ex = self._auth_exchange("/auth/login-enum", '{"username": "alice", "password": "alicepw"}')
+        res = self._run_ex(v, ex, "username_enumeration")
+        self.assertEqual(res.status, "confirmed", f"username-enum leg missed a discriminating response: {res.summary}")
+
+    def test_auth_username_enum_silent_on_uniform_control(self):
+        v = AuthSequenceValidator(allowed_hosts=["127.0.0.1"])
+        ex = self._auth_exchange("/auth/login-uniform", '{"username": "alice", "password": "alicepw"}')
+        res = self._run_ex(v, ex, "username_enumeration")
         self.assertNotEqual(res.status, "confirmed")
 
 

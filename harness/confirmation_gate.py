@@ -127,6 +127,16 @@ CONFIRMABLE_CLASS_MARKERS = frozenset({
     "insecure deserialization",
     "insecure_deserialization",
     "pickle",
+
+    # Auth-mechanism family (auth_sequence): session fixation / weak-password /
+    # username enumeration multi-request flows.
+    "session_fixation",
+    "session fixation",
+    "weak_password",
+    "weak password",
+    "username_enumeration",
+    "username enumeration",
+    "user enumeration",
 })
 
 # The subset of confirmable classes whose leg is LIVE-VERIFIED -- proven to
@@ -161,6 +171,10 @@ LIVE_VERIFIED_MARKERS = frozenset({
     # Session-13: active deserialization OOB pickle beacon, live-verified against a
     # real pickle.loads sink in test_leg_live_verification.
     "deserialization", "insecure deserialization", "insecure_deserialization", "pickle",
+    # Session-13: auth-mechanism legs, live-verified against fixture flows
+    # (session-not-rotated / weak-password-accepted / existence-discriminating error).
+    "session_fixation", "session fixation", "weak_password", "weak password",
+    "username_enumeration", "username enumeration", "user enumeration",
 })
 
 

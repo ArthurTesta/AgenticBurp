@@ -298,7 +298,11 @@ class TestNoValidatorBypassesTheGate(unittest.TestCase):
                                   "sequence_validator.py",
                                   # deserialization_oob replays the captured method carrying the
                                   # pickle beacon, gate-routed + self-gated on allow_mutating_replay.
-                                  "deserialization_oob_validator.py"}
+                                  "deserialization_oob_validator.py",
+                                  # auth_sequence replays the captured auth method (login/register)
+                                  # for its multi-request flow, gate-routed + self-gated on
+                                  # allow_mutating_replay.
+                                  "auth_sequence_validator.py"}
         # Files whose exchange.method reference is provably not a live
         # send at all -- verified by reading the code, not assumed.
         inert_usage_exceptions = {
@@ -376,7 +380,8 @@ class TestNoValidatorBypassesTheGate(unittest.TestCase):
         for name in ("ssrf_validator.py", "xxe_validator.py",
                      "command_injection_validator.py", "ssti_validator.py",
                      "path_traversal_validator.py", "open_redirect_validator.py",
-                     "sequence_validator.py", "deserialization_oob_validator.py"):
+                     "sequence_validator.py", "deserialization_oob_validator.py",
+                     "auth_sequence_validator.py"):
             src = (here / "validators" / name).read_text()
             self.assertIn("GatedAsyncClient", src,
                           f"{name} replays exchange.method but doesn't route through GatedAsyncClient")

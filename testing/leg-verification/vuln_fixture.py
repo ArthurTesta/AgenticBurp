@@ -23,10 +23,11 @@ import html
 import json as _json
 import os
 import pickle
+import secrets as _secrets
 import subprocess
 import urllib.request
 
-from flask import Flask, request, redirect, Response, jsonify
+from flask import Flask, request, redirect, Response, jsonify, make_response
 from jinja2 import Template
 
 
@@ -195,6 +196,56 @@ def make_app(file_base: str | None = None) -> Flask:
             return jsonify({"ok": True})
         except Exception:
             return jsonify({"ok": False}), 200
+
+    # --- Auth family (auth_sequence leg) --------------------------------------
+    # root issues a session cookie so the fixation leg has a pre-auth id to fix.
+    @app.get("/")
+    def _root():
+        resp = make_response(jsonify({"ok": True}))
+        resp.set_cookie("sid", request.cookies.get("sid") or _secrets.token_hex(8))
+        return resp
+
+    # session fixation: TP reuses the presented sid across login; control rotates it.
+    @app.route("/auth/login-fixation", methods=["POST"])
+    def login_fixation():
+        resp = make_response(jsonify({"ok": True}))
+        sid = request.cookies.get("sid")
+        if sid:
+            resp.set_cookie("sid", sid)  # VULNERABLE: no rotation on auth
+        return resp
+
+    @app.route("/auth/login-rotate", methods=["POST"])
+    def login_rotate():
+        resp = make_response(jsonify({"ok": True}))
+        resp.set_cookie("sid", _secrets.token_hex(8))  # rotates -> safe
+        return resp
+
+    # weak password policy: TP accepts anything; control enforces a minimum.
+    @app.route("/auth/register-weak", methods=["POST"])
+    def register_weak():
+        body = request.get_json(silent=True) or {}
+        return jsonify({"ok": True, "user": body.get("username")}), 200  # VULNERABLE: no policy
+
+    @app.route("/auth/register-strong", methods=["POST"])
+    def register_strong():
+        body = request.get_json(silent=True) or {}
+        if len(str(body.get("password", ""))) < 8:
+            return jsonify({"error": "password too weak: minimum 8 characters"}), 400
+        return jsonify({"ok": True}), 200
+
+    # username enumeration: TP distinguishes existing vs missing account; control uniform.
+    _known = {"alice", "alice@example.com"}
+
+    @app.route("/auth/login-enum", methods=["POST"])
+    def login_enum():
+        body = request.get_json(silent=True) or {}
+        if str(body.get("username", "")) in _known:
+            return jsonify({"error": "invalid password"}), 401  # VULNERABLE: reveals existence
+        return jsonify({"error": "user not found"}), 404
+
+    @app.route("/auth/login-uniform", methods=["POST"])
+    def login_uniform():
+        return jsonify({"error": "invalid credentials"}), 401  # uniform -> safe
 
     return app
 
