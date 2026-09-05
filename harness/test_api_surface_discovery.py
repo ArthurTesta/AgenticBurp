@@ -318,6 +318,58 @@ class BodyPathMiningTests(unittest.TestCase):
         self.assertEqual(res.paths(), ["/api/config"])
 
 
+class SoftNotFoundTests(unittest.TestCase):
+    """Phase 5: discovery keys off content/shape, not just HTTP status. A
+    catch-all that answers non-404 for unknown paths must not make every probe
+    look like a real route."""
+
+    def _soft_responder(self, real):
+        # Unknown paths return a 200 catch-all that ECHOES the path (a soft-404);
+        # real routes return distinct content.
+        def r(method, path):
+            if path in real:
+                return real[path]
+            return (200, f"<html><body>Not Found: {path}</body></html>", "")
+        return r
+
+    def test_soft_404_paths_not_reported_as_routes(self):
+        real = {"/api/users": (200, '{"users":[]}', "")}
+        disc = _FakeDiscovery(self._soft_responder(real),
+                              prefixes=["/api/"], collections=[],
+                              nouns=["users", "orders", "health"], actions=[], sensitive_files=[])
+        res = _run(disc)
+        self.assertIsNotNone(disc._soft404)              # calibrated the catch-all
+        self.assertIn("/api/users", res.paths())          # real route -> distinct content
+        self.assertNotIn("/api/orders", res.paths())      # soft-404 -> suppressed by shape
+        self.assertNotIn("/api/health", res.paths())
+
+    def test_hard_404_app_records_no_soft_signature(self):
+        # An app that returns honest 404s -> nothing calibrated -> unchanged.
+        def r(method, path):
+            return (200, '{"u":1}', "") if path == "/api/users" else (404, "nope", "")
+        disc = _FakeDiscovery(r, prefixes=["/api/"], collections=[],
+                              nouns=["users", "orders"], actions=[], sensitive_files=[])
+        res = _run(disc)
+        self.assertIsNone(disc._soft404)
+        self.assertIn("/api/users", res.paths())
+        self.assertNotIn("/api/orders", res.paths())
+
+    def test_varying_bogus_responses_do_not_calibrate(self):
+        # If two bogus paths return DIFFERENT non-404 bodies (responses genuinely
+        # vary), no soft-404 signature is set -- we must not suppress by shape.
+        calls = {"n": 0}
+        def r(method, path):
+            if path == "/api/users":
+                return (200, '{"u":1}', "")
+            calls["n"] += 1
+            return (200, "error variant " + ("x" * calls["n"]), "")  # differs (letters, not digits/path)
+        disc = _FakeDiscovery(r, prefixes=["/api/"], collections=[],
+                              nouns=["users"], actions=[], sensitive_files=[])
+        res = _run(disc)
+        self.assertIsNone(disc._soft404)
+        self.assertIn("/api/users", res.paths())
+
+
 class SpecTests(unittest.TestCase):
     def test_spec_paths_parsed(self):
         body = '{"openapi":"3.0.0","paths":{"/api/a":{},"/api/b/{id}":{},"bad":{}}}'

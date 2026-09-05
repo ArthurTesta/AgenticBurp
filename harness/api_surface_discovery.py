@@ -33,8 +33,10 @@ sweep for Allow mining); it never sends a mutating body.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
+import secrets
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
@@ -198,6 +200,12 @@ class SurfaceDiscovery:
         self.max_probes = max_probes
         self._seen: dict[str, Route] = {}
         self._probes = 0
+        # Soft-404 signature (Phase 5): (status, normalized-body-hash) that a
+        # KNOWN-BOGUS path returns, so a catch-all that answers non-404 for
+        # everything (404->500, a 200 "not found" page, an SPA index) is
+        # recognised as "not found" by SHAPE, not mistaken for a real route.
+        # None until calibrated, or when the app returns honest 404s.
+        self._soft404: tuple[int, str] | None = None
 
     async def _probe(self, method: str, path: str):
         """One live request. A method seam so tests inject a canned responder and
@@ -227,6 +235,43 @@ class SurfaceDiscovery:
         self._probes += 1
         return await self._probe(method, path)
 
+    def _norm_body_hash(self, body: str, path: str) -> str:
+        """A body fingerprint stable across the ECHOED PATH and numeric ids -- so
+        two bogus paths that only differ by the path they echo hash the same, and
+        a soft-404 is recognised whatever path it was probed with."""
+        b = (body or "").replace(path, "PATH")
+        b = re.sub(r"\d+", "N", b)
+        return hashlib.sha1(b[:2000].encode("utf-8", "ignore")).hexdigest()[:16]
+
+    def _not_found(self, status: int, body: str, path: str) -> bool:
+        """Existence oracle: a hard 404/framework marker, OR a match to the
+        calibrated soft-404 signature (Phase 5 -- content/shape, not status)."""
+        if _is_not_found(status, body):
+            return True
+        if self._soft404 is not None and (status, self._norm_body_hash(body, path)) == self._soft404:
+            return True
+        return False
+
+    async def _calibrate_not_found(self) -> None:
+        """Fingerprint the app's answer to KNOWN-BOGUS paths. A soft-404 signature
+        is recorded ONLY if two independent random paths return the SAME non-404
+        (status, normalized-body) -- otherwise responses genuinely vary and
+        suppressing by shape would hide real routes. If the app returns honest
+        404s (or a framework marker), nothing is recorded and behavior is
+        unchanged."""
+        sigs = []
+        for _ in range(2):
+            bogus = "/" + secrets.token_hex(12)
+            r = await self._raw("GET", bogus)
+            if r is None:
+                return
+            status, body, _allow = r
+            if _is_not_found(status, body):
+                continue  # honest not-found already handled by the oracle
+            sigs.append((status, self._norm_body_hash(body, bogus)))
+        if len(sigs) == 2 and sigs[0] == sigs[1]:
+            self._soft404 = sigs[0]
+
     async def _check(self, path: str, source: str, method: str = "GET") -> Route | None:
         if path in self._seen:
             return self._seen[path]
@@ -234,7 +279,7 @@ class SurfaceDiscovery:
         if r is None:
             return None
         status, body, allow = r
-        if _is_not_found(status, body):
+        if self._not_found(status, body, path):
             return None
         methods = tuple(m.strip().upper() for m in allow.split(",") if m.strip()) or (method,)
         route = Route(path=path, status=status, methods=methods, length=len(body), source=source)
@@ -243,6 +288,14 @@ class SurfaceDiscovery:
 
     async def discover(self) -> SurfaceResult:
         result = SurfaceResult(base_url=self.base_url)
+
+        # 0. Calibrate the soft-404 signature FIRST (Phase 5): if the target has a
+        #    catch-all that answers non-404 for unknown paths, learn its shape now
+        #    so the whole sweep below keys off content, not just "not a 404".
+        await self._calibrate_not_found()
+        if self._soft404 is not None:
+            result.errors.append(f"soft-404 calibrated: status {self._soft404[0]} treated as "
+                                 f"not-found by body shape")
 
         # 1. spec probe -- if the app hands us its contract, use it verbatim.
         for sp in SPEC_PATHS:
