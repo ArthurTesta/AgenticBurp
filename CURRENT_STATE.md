@@ -7,6 +7,106 @@ file map) is in [`CLAUDE.md`](CLAUDE.md) — read that first, then this.
 
 ---
 
+## State (as of session 13)
+
+- **Branch:** `WorkingSunday`. **HEAD:** `233eab9` (session-12 handover). Session 13 has
+  **one uncommitted code fix staged in the working tree** (see below) — not yet committed
+  (the user drove a run, not a commit).
+- **What session 13 did:** ran the roadmap's outstanding **fresh live max-coverage run** end
+  to end against VulnCorp (2.46 h, Ollama + Docker + sqlmap-in-container, all active legs on),
+  re-measured recall with the new `recall_benchmark`, and — in the process — **found and fixed
+  a real pipeline crash** the mocked suite had hidden.
+- **PIPELINE BUG FIXED (the #0 failure mode, again):** `attribution.py` (Phase 3.5, added
+  *after* the session-11 run) writes `finding.shape_inconsistent` and
+  `finding.original_vulnerability_class`, but the `Finding` pydantic model declared **neither**
+  field, so **every `analyze()` call that hit a shape-inconsistent (or leg-relabelled) finding
+  raised `ValueError: "Finding" object has no field …`** and lost that exchange's findings.
+  `test_attribution` passed only because it exercised **dicts**, never a real `Finding`. Fix:
+  added both fields to the model (`harness/models.py`) + a new `PydanticFindingTests` class in
+  `test_attribution.py` that runs both attribution passes against real `Finding` objects (the
+  negative control that was missing). **Suite now 1161 OK** (1159 → 1161). This bug was live in
+  the pipeline from session 12 until now; the session-11 run predates Phase 3.5 so its numbers
+  are unaffected. **This one-file model change is the only uncommitted harness code** — ready to
+  commit; not committed pending the user's go-ahead.
+- **Config untouched:** `harness/config.yaml` still at safe defaults; `config.local.yaml`
+  unchanged. The run built its config **in memory** (never touched on-disk config) — hazard #1
+  intact.
+- **browser_xss NOT promoted.** The run exercised the leg; XSS was *detected* on 5 endpoints
+  but all non-HTML sinks (JSON comment API, uploads, XML import), so browser_xss correctly
+  confirmed **0** — it stays `smoke_only`. `LIVE_VERIFIED_MARKERS` unchanged. (The task was
+  "promote where a run confirms it"; this run did not, so no promotion — honest outcome.)
+- **Environment verified:** Ollama `qwen3:8b`, Docker + `harness/sqlmap:1.10.9`, host Chromium
+  all live this session. VulnCorp was found in a **DB-polluted** state from prior mutating-replay
+  runs (alice resolving to admin; a stored `curl` OOB payload in a JWT `org_id`) and was
+  restarted to a clean seed before the run (hazard #5). It is left running (and re-dirtied by
+  this run's PASS-2 mutating replay) — restart it for the next clean run.
+
+### Session-13 measured run (VERIFIED) — the new empirical truth
+
+2.46 h run vs VulnCorp, fresh cache/state DBs, all active features. Runner + ground truth +
+offline scorer live in `testing/vulncorp-helpdesk/maxrun/` (`run_maxcov_recall.py`,
+`vulncorp_ground_truth.py`, `score_recall.py`; outputs `maxcov_results_recall_full.json`,
+`recall_final_recall_full.md`). Exhaustive: PASS 1 over **all 37** captured exchanges (session
+11 used 17); PASS 2 `investigate_engagement` with wider budgets (max_nodes 40→60, step_budget
+8→10, probes 6000→12000, chains 2→3).
+
+- **394 fused findings → 32 raw confirmed → 22 unique confirmed.** vs session-11's
+  **17 confirmed** — up, and the pipeline ran crash-free across all 37 + PASS 2.
+- **Confirmed classes (6):** SQLi (`/api/login` + `/api/tickets/search`, sqlmap), IDOR /
+  broken-object-access (`/api/tickets/{id}`, `/api/reports/{id}`, `/api/tickets/{id}/comments`,
+  cross_identity), JWT alg:none forgery (jwt_forge, across 5 authed endpoints), XXE
+  (`/api/tickets/import`), path_traversal (`/uploads/{id}`), **+ NEW: JWT signing-key disclosure
+  on `/api/admin/debug` CONFIRMED via the Phase-3.1 `secret_disclosure` leg (critical)** — this
+  was the top *unconfirmed* item in session 11 (conf-1.00, no leg); now proven.
+- **Path-matched recall vs the 13 documented endpoint-known planted vulns:** **8/13 confirmed
+  (7 earned via the intended leg, 1 "lucky"), 4 detected-unconfirmed, 1 missed.** (Effectively
+  9/13 — GT12 `/api/admin/debug` disclosure is confirmed but under the `jwt` class, not the
+  `information_disclosure` class the ground truth anchored it to, so it scored "detected".)
+- **Discovery breadth improved: 12 → 21 endpoints** in the PASS-2 worklist (now finds `/.env`
+  via the Phase-0.2c sensitive-file wordlist, `/uploads`, `/api/tickets/{id}/attachments`,
+  `/api/tickets/{id}/assign`). But the **cmd-inj / ssti / open-redirect (V23/V24/V30) and the
+  SSRF integrations feature are STILL not reached** — the one `missed` (SSRF) and the three
+  frontier classes remain a discovery gap on agent-role feature surface, exactly as session 11.
+- **Detected-but-not-confirmed:** mass-assignment on `/api/account/profile` + `/register` (the
+  Phase-3 **`sequence` leg RAN and returned `not_confirmed`** — the injected fields did not
+  persist across an independent re-read; either the endpoints aren't mass-assignable that way or
+  the re-read path needs work — a real follow-up, not a crash); BFLA `/api/admin/users`.
+
+### Session-13 leg build-out (committed on `WorkingSunday`, suite 1178 OK)
+
+Operator-directed push to close the missing-class gaps found by the run. Each new/
+changed leg ships with a disposable fixture TP + a matched negative control + a
+`test_leg_live_verification` case in the same commit (the freeze-policy discipline,
+see `LEG_VERIFICATION.md`). Commits on top of `233eab9`:
+
+- `0e237f7` — the attribution/`Finding` crash fix (was uncommitted; now in).
+- `3d37935` — **sequence/mass-assignment generalised**: recursive nested-response
+  detection + authority-named schema-derived candidate fields (the session-13 miss
+  was top-level-only + fixed-name-only).
+- `110f71a` — **active deserialization leg** (`deserialization_oob`): benign OOB
+  pickle beacon proving RCE on a `pickle.loads` sink; no gadget chain.
+- `f920d5d` — **auth-mechanism legs** (`auth_sequence`): session-fixation /
+  weak-password / username-enumeration multi-request flows.
+- `be1c5b9` — **stored/second-order XSS leg** (`stored_xss`): plant→independent-
+  HTML-render; the plant→observe primitive for second-order flows (task 4 + 6).
+- `5334549` — **discovery breadth (task 2b)**: sweep active discovery AS each
+  distinct-feature role (union routes) so agent/manager-only endpoints are reached,
+  + injection-prone feature vocabulary. This is the lever for the frontier legs.
+- `3088d70` — **JWT `kid` key-confusion** (V9) added to `jwt_forge`.
+
+All wired into the graph `_confirm` dispatcher, shape-preconditions where
+applicable, the `ValidatorRegistry`, and `confirmation_gate` CONFIRMABLE +
+LIVE_VERIFIED markers; safety-gate greps updated for each new gate-routed validator.
+
+**Deferred (architectural decision needed) — see `LEG_DECISIONS.md`:** verb-tamper
+(V15), CSRF (V32), file-upload (V33), rate-limit (V4), reset-token entropy (V3),
+and explicit second-order-SQLi chain composition (V22). Each is blocked on a
+safety/precision CHOICE, not effort; the doc gives the oracle, the decision, and a
+recommended safe implementation for each.
+
+**Pending:** the fresh max-coverage RE-RUN with all the above (in progress at
+handover) to measure the recall delta vs the 9-confirmed / 6-class baseline.
+
 ## State (as of session 12)
 
 - **Branch:** `WorkingSunday`. **HEAD:** `e313db0` (session-12; this handover commits on top).
@@ -119,10 +219,18 @@ verified by hermetic tests with negative controls (no live run this session).
     Java changes here are self-review only. Owner builds via `gradle shadowJar`.
   - **Target 404→500 catch-all patch** — the target owner's one-line fix (external dependency);
     re-baseline recall only after it lands. The harness side (soft-404 calibration) is done.
-  - **Fresh live max-coverage run** — re-measure recall with the new `recall_benchmark` harness
-    now that discovery breadth, the legs, and the gate have all changed; promote `browser_xss`
-    to live where a run confirms it. Needs Ollama/Docker + hours.
+  - **Fresh live max-coverage run** — ✅ **DONE session 13** (see "Session-13 measured run"
+    above): 22 confirmed / 6 classes (adds secret_disclosure), recall 8–9/13 on the documented
+    endpoint-known set, discovery 12→21 endpoints. `browser_xss` was exercised but confirmed
+    nothing live (XSS only on non-HTML sinks) so it **stayed `smoke_only`** — re-attempt the
+    promotion only if a future run reaches an HTML-sink reflected XSS.
   - Optional: OOB re-check of `xxe` and a live-collaborator `browser_xss` promotion.
+  - **Discovery still cannot reach the agent-role feature surface** (cmd-inj/ssti/open-redirect
+    V23/V24/V30 + the SSRF integrations endpoint) — the recurring frontier gap; next lever is
+    discovery of authenticated agent-role features, not another leg.
+  - **`sequence` (mass-assignment) leg did not bite on VulnCorp** (ran, `not_confirmed` on
+    profile/settings) — investigate whether those endpoints persist injected fields across an
+    independent re-read, or whether the leg's verify path needs adjusting.
 - **New modules this session:** `recall_benchmark.py`, `host_dep_dedup.py`, `attribution.py`,
   `validators/sequence_validator.py`, `secret_disclosure.py`, `advisory_snapshot.py`,
   `testing/leg-verification/*` + `test_leg_live_verification.py`, plus
@@ -235,12 +343,15 @@ tracked files; `config.local.yaml` stays git-ignored).
   verdict logic (compilation alone doesn't exercise it). Live target testing of the executors
   is the usual next step.
 
-## Latest measured run (session 11, VERIFIED) — supersedes session 8
+## Latest measured run (session 13, VERIFIED) — supersedes session 11
 
-See "Full max-coverage run this session" above: **162 raw → 17 confirmed / 92 unconfirmed /
-2 chains**, **5 confirmed classes** (adds XXE + path_traversal over the session-8 3-class
-baseline). The session-8 run (151 raw → 13 confirmed / 3 classes) is the prior datapoint.
-Tuning lesson still holds: `autonomous_discovery` + `critique` off for the analyze pass.
+See "Session-13 measured run" near the top: **394 fused → 32 raw / 22 unique confirmed,
+6 confirmed classes** (adds `secret_disclosure` — the `/api/admin/debug` JWT-key leak — over
+the session-11 5-class baseline), on a **crash-free** pipeline after the attribution/`Finding`
+fix. Recall 8–9/13 on the documented endpoint-known ground truth; discovery 12→21 endpoints.
+Prior datapoints: session 11 = 162 raw → 17 confirmed / 5 classes; session 8 = 151 raw → 13 /
+3 classes. Tuning lesson still holds: `autonomous_discovery` + `critique` off for the analyze
+pass; config built in memory over `config.yaml`.
 
 ## Known gaps (the honest column)
 
