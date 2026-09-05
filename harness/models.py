@@ -58,6 +58,16 @@ class Finding(BaseModel):
     # observer finding below the medium operating point. None until capped.
     original_severity: Optional[str] = None
 
+    # Set by attribution.py (Phase 3.5). `original_vulnerability_class` records the
+    # pre-relabel class when a confirming leg overrides the agent's label;
+    # `shape_inconsistent` flags an unconfirmed label that contradicts the
+    # endpoint's shape. These are real (serialized) fields so the annotation
+    # survives model_dump() into the report and the recall benchmark -- without
+    # them, setting the attribute on this pydantic model raises (the attribution
+    # passes run on Finding objects in analyze(), not the dicts the unit tests use).
+    original_vulnerability_class: Optional[str] = None
+    shape_inconsistent: bool = False
+
     # True only when the harness has actually performed the suggested
     # confirming action (or another explicit verification path). LLM
     # reasoning alone never sets this.

@@ -8,7 +8,7 @@ import unittest
 import attribution
 from attribution import (relabel_confirmed_finding, shape_consistent,
                          chain_input_speculative, annotate_shape_inconsistent)
-from models import HttpExchange
+from models import HttpExchange, Finding
 import chaining
 
 
@@ -86,6 +86,44 @@ class ShapeConsistencyTests(unittest.TestCase):
         self.assertTrue(findings[0].get("shape_inconsistent"))
         self.assertNotIn("shape_inconsistent", findings[1])
         self.assertNotIn("shape_inconsistent", findings[2])
+
+
+class PydanticFindingTests(unittest.TestCase):
+    """Regression: the attribution passes run on real pydantic Finding objects in
+    analyze() (orchestrator.py), NOT the plain dicts the other tests use. Setting
+    an undeclared attribute on a Finding raises ValueError, so this class exercises
+    the exact object type the live pipeline passes -- the negative control that a
+    dict-only test can never provide ("green tests, dead pipeline")."""
+
+    def _finding(self, **over):
+        base = dict(vulnerability_class="algorithm_confusion", confidence=0.6,
+                    summary="s", evidence="e", suggested_test="t", basis="derived")
+        base.update(over)
+        return Finding(**base)
+
+    def test_relabel_on_real_finding_object(self):
+        f = self._finding(confirmed=True,
+                          evidence="hyp || jwt-forge CONFIRMED: alg:none accepted")
+        # Must not raise (previously: Finding has no field original_vulnerability_class).
+        self.assertTrue(relabel_confirmed_finding(f))
+        self.assertEqual(f.vulnerability_class, "jwt")
+        self.assertEqual(f.original_vulnerability_class, "algorithm_confusion")
+
+    def test_annotate_shape_inconsistent_on_real_finding_object(self):
+        json_ = _ex(method="POST", ctype="application/json", body='{"a":1}')
+        findings = [
+            self._finding(vulnerability_class="xxe", confirmed=False),  # inconsistent
+            self._finding(vulnerability_class="xxe", confirmed=True),   # confirmed -> skip
+            self._finding(vulnerability_class="info_disclosure", confirmed=False),  # no shape req
+        ]
+        # Must not raise (previously: Finding has no field shape_inconsistent).
+        n = annotate_shape_inconsistent(findings, json_)
+        self.assertEqual(n, 1)
+        self.assertTrue(findings[0].shape_inconsistent)
+        self.assertFalse(findings[1].shape_inconsistent)
+        self.assertFalse(findings[2].shape_inconsistent)
+        # annotation survives serialization into report / recall benchmark
+        self.assertTrue(findings[0].model_dump()["shape_inconsistent"])
 
 
 class ChainInputGatingTests(unittest.TestCase):
