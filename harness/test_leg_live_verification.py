@@ -41,6 +41,7 @@ from validators.command_injection_validator import CommandInjectionValidator
 from validators.deserialization_oob_validator import DeserializationOobValidator
 from validators.auth_sequence_validator import AuthSequenceValidator
 from validators.stored_xss_validator import StoredXssValidator
+from validators.jwt_forge_validator import JwtForgeValidator
 
 _FIXTURE = (Path(__file__).resolve().parent.parent
             / "testing" / "leg-verification" / "vuln_fixture.py")
@@ -276,6 +277,27 @@ class LiveLegVerificationTest(unittest.TestCase):
         self._stored_reset()
         v = StoredXssValidator(allowed_hosts=["127.0.0.1"])
         res = self._run_ex(v, self._comment_exchange("/stored/comments-safe"), "xss")
+        self.assertNotEqual(res.status, "confirmed")
+
+    # --- JWT kid key-confusion (jwt_forge kid variant) ------------------------
+    def _jwt_exchange(self, path):
+        import base64 as _b, json as _j
+        h = _b.urlsafe_b64encode(_j.dumps({"alg": "HS256", "typ": "JWT"}).encode()).rstrip(b"=").decode()
+        p = _b.urlsafe_b64encode(_j.dumps({"role": "user", "sub": "alice"}).encode()).rstrip(b"=").decode()
+        seed = f"{h}.{p}.Z2FyYmFnZQ"  # decodable header/payload, garbage signature
+        return HttpExchange(url=f"{self._base}{path}", method="GET",
+                            request_headers={"Authorization": f"Bearer {seed}"}, request_body="")
+
+    def test_jwt_kid_confusion_confirms(self):
+        v = JwtForgeValidator(allowed_hosts=["127.0.0.1"])
+        res = self._run_ex(v, self._jwt_exchange("/jwt/kid"), "jwt")
+        self.assertEqual(res.status, "confirmed",
+                         f"jwt kid key-confusion not confirmed: {res.summary}")
+        self.assertIn("kid", res.summary.lower())
+
+    def test_jwt_kid_silent_on_fixed_secret_control(self):
+        v = JwtForgeValidator(allowed_hosts=["127.0.0.1"])
+        res = self._run_ex(v, self._jwt_exchange("/jwt/kid-safe"), "jwt")
         self.assertNotEqual(res.status, "confirmed")
 
 

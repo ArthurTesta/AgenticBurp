@@ -19,6 +19,8 @@ or the hermetic test_leg_live_verification.
 from __future__ import annotations
 
 import base64
+import hashlib as _hashlib
+import hmac as _hmac
 import html
 import json as _json
 import os
@@ -275,6 +277,41 @@ def make_app(file_base: str | None = None) -> Flask:
                 + "".join(f"<div>{html.escape(c)}</div>" for c in stored["comments_safe"])
                 + "</body></html>")
         return Response(body, mimetype="text/html")  # escaped on render -> safe
+
+    # --- JWT kid key-confusion (jwt_forge kid variant) ------------------------
+    def _b64url(b):
+        return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+
+    def _verify_hs256(token, key):
+        try:
+            h, p, s = token.split(".")
+            expected = _b64url(_hmac.new(key, f"{h}.{p}".encode(), _hashlib.sha256).digest())
+            return s == expected
+        except Exception:
+            return False
+
+    def _bearer():
+        a = request.headers.get("Authorization", "")
+        return a.split(" ", 1)[-1] if " " in a else a
+
+    @app.get("/jwt/kid")
+    def jwt_kid():
+        tok = _bearer()
+        try:
+            hdr = _json.loads(base64.urlsafe_b64decode(tok.split(".")[0] + "==="))
+            key = str(hdr.get("kid", "")).encode()  # VULNERABLE: key derived from attacker kid
+            if key and _verify_hs256(tok, key):
+                payload = _json.loads(base64.urlsafe_b64decode(tok.split(".")[1] + "==="))
+                return jsonify({"ok": True, "role": payload.get("role")})
+        except Exception:
+            pass
+        return jsonify({"error": "unauthorized"}), 401
+
+    @app.get("/jwt/kid-safe")
+    def jwt_kid_safe():
+        if _verify_hs256(_bearer(), b"fixed-server-secret-value"):  # ignores kid -> safe
+            return jsonify({"ok": True})
+        return jsonify({"error": "unauthorized"}), 401
 
     return app
 
