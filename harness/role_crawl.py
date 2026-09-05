@@ -186,8 +186,12 @@ async def crawl_roles(
         try:
             from api_surface_discovery import SurfaceDiscovery
             seed = max(roles, key=lambda r: _trust(r.role))
+            # Feed the crawler's HTML/JS-mined links in as seed paths so active
+            # discovery derives the namespaces they reveal (Phase 0.2(a)) -- a
+            # server-rendered surface under a non-default prefix gets swept.
             disc = SurfaceDiscovery(base_url, headers=seed.norm_headers(),
-                                    allowed_hosts=allowed_hosts, max_probes=discovery_max_probes)
+                                    allowed_hosts=allowed_hosts, max_probes=discovery_max_probes,
+                                    seed_paths=sorted(discovered))
             sres = await disc.discover()
             discovered |= {_template_ids(rt.path) for rt in sres.routes}
             if sres.spec_found:

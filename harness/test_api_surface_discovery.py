@@ -108,6 +108,56 @@ class DiscoveryTests(unittest.TestCase):
         self.assertLessEqual(res.probes_sent, 5)  # every phase is budget-guarded
 
 
+class PrefixDerivationTests(unittest.TestCase):
+    """Phase 0.2(a): discovery must not assume the surface lives under the
+    built-in prefixes. It derives the namespaces the app actually exposes (from
+    caller seed paths and from hits) and sweeps them."""
+
+    def _responder(self, known):
+        def r(method, path):
+            return known.get(path, (500, _NF, ""))
+        return r
+
+    def test_derives_novel_prefix_from_seed_and_sweeps_it(self):
+        # /portal/ is not a default prefix; a single crawler-found seed under it
+        # must make discovery sweep the noun list there and reach its routes.
+        known = {
+            "/portal/users": (200, "{}", ""),
+            "/portal/orders": (200, "{}", ""),
+        }
+        disc = _FakeDiscovery(self._responder(known),
+                              prefixes=["/api/"], collections=[],
+                              nouns=["users", "orders", "health"],
+                              seed_paths=["/portal/dashboard"])
+        res = _run(disc)
+        self.assertIn("/portal/users", res.paths())
+        self.assertIn("/portal/orders", res.paths())
+        self.assertEqual(
+            next(r.source for r in res.routes if r.path == "/portal/users"), "derived")
+
+    def test_derived_prefix_with_no_real_routes_adds_nothing(self):
+        # Negative control: a seed under a namespace that 404s everywhere must
+        # not invent routes -- derivation is a reason to PROBE, not to assert.
+        disc = _FakeDiscovery(self._responder({}),
+                              prefixes=["/api/"], collections=[],
+                              nouns=["users", "reports"],
+                              seed_paths=["/ghost/x"])
+        res = _run(disc)
+        self.assertEqual(res.paths(), [])
+
+    def test_default_prefixes_not_re_derived(self):
+        # A seed under an already-built-in prefix must not be re-swept as
+        # "derived" (dedup + no wasted classification).
+        known = {"/admin/users": (200, "{}", "")}
+        disc = _FakeDiscovery(self._responder(known),
+                              prefixes=["/api/", "/admin/"], collections=[],
+                              nouns=["users"], seed_paths=["/admin/panel"])
+        res = _run(disc)
+        self.assertIn("/admin/users", res.paths())
+        self.assertNotEqual(
+            next(r.source for r in res.routes if r.path == "/admin/users"), "derived")
+
+
 class SpecTests(unittest.TestCase):
     def test_spec_paths_parsed(self):
         body = '{"openapi":"3.0.0","paths":{"/api/a":{},"/api/b/{id}":{},"bad":{}}}'

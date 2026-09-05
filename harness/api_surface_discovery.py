@@ -77,6 +77,19 @@ DEFAULT_COLLECTIONS = (
 DEFAULT_PREFIXES = ("/api/", "/api/v1/", "/", "/admin/", "/internal/")
 
 
+def _first_segment_prefix(path: str) -> str:
+    """The leading '/<segment>/' of a path with >=2 segments, else '/'.
+    /portal/users -> /portal/ ; /a/b/c -> /a/ ; /dashboard -> / (a leaf, no
+    namespace to derive). Used to learn the namespaces an app actually exposes."""
+    p = (path or "").split("?", 1)[0]
+    if not p.startswith("/"):
+        p = "/" + p
+    segs = [s for s in p.split("/") if s]
+    if len(segs) < 2:
+        return "/"
+    return "/" + segs[0] + "/"
+
+
 @dataclass(frozen=True)
 class Route:
     """One discovered route. `methods` are the real HTTP verbs it accepts
@@ -129,7 +142,7 @@ def _host_in_scope(url: str, allowed_hosts) -> bool:
 class SurfaceDiscovery:
     def __init__(self, base_url: str, *, headers: dict | None = None,
                  allowed_hosts: list[str] | None = None,
-                 nouns=None, collections=None, prefixes=None,
+                 nouns=None, collections=None, prefixes=None, seed_paths=None,
                  timeout: float = 8.0, max_probes: int = 6000):
         self.base_url = base_url.rstrip("/")
         self.headers = headers or {}
@@ -137,6 +150,11 @@ class SurfaceDiscovery:
         self.nouns = list(nouns) if nouns is not None else list(DEFAULT_NOUNS)
         self.collections = list(collections) if collections is not None else list(DEFAULT_COLLECTIONS)
         self.prefixes = list(prefixes) if prefixes is not None else list(DEFAULT_PREFIXES)
+        # Paths the caller already knows exist (e.g. the crawler's HTML/JS-mined
+        # links). Used to DERIVE namespaces the app actually exposes -- see
+        # _derive_prefixes -- so a server-rendered surface under a non-default
+        # prefix is reached, not only the built-in /api|/admin guesses.
+        self.seed_paths = [s for s in (seed_paths or []) if isinstance(s, str) and s.startswith("/")]
         self.timeout = timeout
         self.max_probes = max_probes
         self._seen: dict[str, Route] = {}
@@ -209,6 +227,11 @@ class SurfaceDiscovery:
                 for n in self.nouns:
                     await self._check(f"{pre}{coll}/{n}", "nested")
 
+        # 2c. Phase 0.2(a): don't assume the surface lives under the built-in
+        #     prefixes. Sweep the noun list under the namespaces the app actually
+        #     exposes -- derived from caller seed paths and from hits so far.
+        await self._derive_prefixes()
+
         # 3. response-driven: mine 2xx JSON for ids -> enumerate id-scoped siblings.
         await self._mine_response_ids()
 
@@ -235,6 +258,34 @@ class SurfaceDiscovery:
         result.routes = list(self._seen.values())
         result.probes_sent = self._probes
         return result
+
+    async def _derive_prefixes(self, max_new: int = 8) -> None:
+        """Phase 0.2(a): sweep the namespaces the app actually exposes, not only
+        the built-in prefix guesses. Collect the '/<segment>/' prefixes present
+        across caller-supplied seed paths (the crawler's server-rendered links)
+        and routes already found, and sweep the noun list (bare + id-scoped)
+        under any prefix outside the built-in set. This reaches a non-API /
+        server-rendered surface living under a different prefix as soon as
+        anything reveals it -- a headless-API run with no seeds simply derives
+        nothing and this is a no-op. Bounded by max_new prefixes and the probe
+        budget so it can't fan out unboundedly."""
+        known = set(self.prefixes)
+        derived: list[str] = []
+        seen_new: set[str] = set()
+        for path in list(self.seed_paths) + list(self._seen.keys()):
+            pre = _first_segment_prefix(path)
+            if pre == "/" or pre in known or pre in seen_new:
+                continue
+            seen_new.add(pre)
+            derived.append(pre)
+            if len(derived) >= max_new:
+                break
+        for pre in derived:
+            for n in self.nouns:
+                if not self._budget_left():
+                    return
+                for suffix in ("", "/1"):
+                    await self._check(pre + n + suffix, "derived")
 
     async def _mine_response_ids(self) -> None:
         seeds = [p for p, r in list(self._seen.items()) if 200 <= r.status < 300]
