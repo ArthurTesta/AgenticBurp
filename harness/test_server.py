@@ -48,6 +48,24 @@ class SuppressionEndpointTests(unittest.TestCase):
         results = store.all_host_findings(url, include_suppressed=True)
         return results[0]["fingerprint"]
 
+    def test_health_exposes_fail_open_telemetry(self):
+        # Phase 1.4: /health surfaces the coordinator fail-open counters so the
+        # historically-silent "firing all agents" state is observable.
+        resp = self.client.get("/health")
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body["status"], "ok")
+        self.assertIn("coordinator_fail_opens", body)
+        self.assertIn("count", body["coordinator_fail_opens"])
+
+    def test_telemetry_endpoint(self):
+        resp = self.client.get("/telemetry")
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertIn("coordinator_fail_open", body)
+        self.assertIn("count", body["coordinator_fail_open"])
+        self.assertIn("effort_budget", body)
+
     def test_suppress_finding_via_post(self):
         fp = self._persist_and_get_fingerprint()
         response = self.client.post("/findings/suppress", json={"fingerprint": fp, "reason": "false positive"})

@@ -81,8 +81,22 @@ def _require_auth(authorization: str | None) -> None:
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "coordinator_model": orchestrator.coordinator_model,
-             "agents": list(orchestrator.agent_manager.get_enabled_agents())}
+    import coordinator
+    return {
+        "status": "ok",
+        "coordinator_model": orchestrator.coordinator_model,
+        "agents": list(orchestrator.agent_manager.get_enabled_agents()),
+        "coordinator_fail_opens": coordinator.fail_open_stats(),
+    }
+
+
+@app.get("/telemetry")
+async def telemetry():
+    import coordinator
+    return {
+        "coordinator_fail_open": coordinator.fail_open_stats(),
+        "effort_budget": orchestrator.effort_status().model_dump() if hasattr(orchestrator, "effort_status") else {},
+    }
 
 
 @app.get("/report")

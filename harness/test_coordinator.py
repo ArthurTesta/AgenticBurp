@@ -10,6 +10,7 @@ had never run against anything, mocked or real, before this file existed.
 import unittest
 from unittest.mock import AsyncMock
 
+import coordinator
 from coordinator import Coordinator
 from models import HttpExchange
 from ollama_client import OllamaError, OllamaResult
@@ -209,6 +210,49 @@ class RespinSuggestionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(new_agents, [])
         self.assertEqual((p, c), (0, 0))
         self.assertIn("error", reason)
+
+
+class FailOpenTelemetryTests(unittest.IsolatedAsyncioTestCase):
+    """Phase 1.4: the coordinator fail-open must be OBSERVABLE, not just safe.
+    A routing failure that falls back to all agents has to increment the
+    process-wide telemetry counters -- otherwise the historically-silent
+    "quietly firing all 36 agents on every exchange" state is invisible again."""
+
+    def setUp(self):
+        self.ollama = AsyncMock()
+        self.coordinator = Coordinator(self.ollama, {
+            "model": "qwen3:8b", "cloud_primary": True, "cloud_model": "gemma4:31b-cloud"})
+        self.available = ["sqli", "xss", "idor"]
+        coordinator.reset_fail_open_stats()
+
+    def tearDown(self):
+        coordinator.reset_fail_open_stats()  # counters are process-wide -- don't leak
+
+    async def test_error_fail_open_is_recorded(self):
+        self.ollama.chat_json_metered.side_effect = RuntimeError("cloud down")
+        ex = HttpExchange(url="https://shop.test/x", method="GET", response_status=200)
+        dispatch, _ = await self.coordinator.choose_agents_cloud(ex, self.available)
+        self.assertEqual(dispatch, self.available)  # failed open
+        stats = coordinator.fail_open_stats()
+        self.assertEqual(stats["count"], 1)
+        self.assertEqual(stats["by_reason"].get("cloud:error:RuntimeError"), 1)
+
+    async def test_empty_dispatch_fail_open_is_recorded(self):
+        self.ollama.chat_json_metered.return_value = OllamaResult(
+            data={"dispatch": [], "reason": "nothing"}, prompt_tokens=1, completion_tokens=1)
+        ex = HttpExchange(url="https://shop.test/x", method="GET", response_status=200)
+        dispatch, _ = await self.coordinator.choose_agents_cloud(ex, self.available)
+        self.assertEqual(dispatch, self.available)
+        self.assertEqual(coordinator.fail_open_stats()["by_reason"].get("cloud:no-valid-targets"), 1)
+
+    async def test_successful_routing_records_no_fail_open(self):
+        # Negative control: a clean route must NOT touch the fail-open counters.
+        self.ollama.chat_json_metered.return_value = OllamaResult(
+            data={"dispatch": ["sqli"], "reason": "sqli shape"}, prompt_tokens=1, completion_tokens=1)
+        ex = HttpExchange(url="https://shop.test/x", method="GET", response_status=200)
+        dispatch, _ = await self.coordinator.choose_agents_cloud(ex, self.available)
+        self.assertEqual(dispatch, ["sqli"])
+        self.assertEqual(coordinator.fail_open_stats()["count"], 0)
 
 
 if __name__ == "__main__":
