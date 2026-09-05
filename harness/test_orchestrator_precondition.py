@@ -11,10 +11,14 @@ from models import HttpExchange
 from role_crawl import RoleSession
 from orchestrator import (
     shape_precondition_legs,
+    shape_precondition_findings,
     _carries_jwt,
     _jwt_identity,
     _accepts_xml,
     _has_url_param,
+    _has_injectable_param,
+    _has_file_shape,
+    _has_redirect_param,
 )
 
 # A structurally-valid JWT (header.payload.sig) the regex must recognise.
@@ -145,6 +149,71 @@ class ShapePreconditionLegsTests(unittest.TestCase):
         classes = [c for c, _ in legs]
         self.assertIn("idor", classes)
         self.assertIn("jwt", classes)
+
+    def test_injectable_param_routes_cmdi_and_ssti(self):
+        node = {"method": "GET", "path": "/api/tickets/search", "reachable_roles": ["user"]}
+        ex = _ex(url="http://t/api/tickets/search?q=test")
+        classes = [c for c, _ in shape_precondition_legs(node, ex, self.ROLES, "http://t")]
+        self.assertIn("command_injection", classes)
+        self.assertIn("ssti", classes)
+
+    def test_fileish_path_segment_routes_path_traversal(self):
+        node = {"method": "GET", "path": "/uploads/{id}", "reachable_roles": ["anonymous"]}
+        ex = _ex(url="http://t/uploads/1")
+        classes = [c for c, _ in shape_precondition_legs(node, ex, self.ROLES, "http://t")]
+        self.assertIn("path_traversal", classes)
+
+    def test_redirect_param_routes_open_redirect(self):
+        node = {"method": "GET", "path": "/login", "reachable_roles": ["anonymous"]}
+        ex = _ex(url="http://t/login?next=/dashboard")
+        classes = [c for c, _ in shape_precondition_legs(node, ex, self.ROLES, "http://t")]
+        self.assertIn("open_redirect", classes)
+
+    def test_bare_object_path_does_not_route_injection_legs(self):
+        # /api/tickets/1 has no params and is not file-ish -> no cmdi/ssti/path/redir.
+        classes = [c for c, _ in shape_precondition_legs(
+            {"method": "GET", "path": "/api/tickets/{id}", "reachable_roles": ["user"]},
+            _ex(), self.ROLES, "http://t")]
+        for c in ("command_injection", "ssti", "path_traversal", "open_redirect"):
+            self.assertNotIn(c, classes)
+
+
+class ShapePredicateTests(unittest.TestCase):
+    def test_has_injectable_param(self):
+        self.assertTrue(_has_injectable_param(_ex(url="http://t/s?q=1")))
+        self.assertTrue(_has_injectable_param(_ex(method="POST", headers={"Content-Type": "application/json"},
+                                                  body='{"a":1}')))
+        self.assertFalse(_has_injectable_param(_ex(url="http://t/api/tickets/1")))
+
+    def test_has_file_shape(self):
+        self.assertTrue(_has_file_shape(_ex(url="http://t/d?file=a.txt")))     # file param
+        self.assertTrue(_has_file_shape(_ex(url="http://t/uploads/1")))        # file-ish segment
+        self.assertFalse(_has_file_shape(_ex(url="http://t/api/tickets/1")))   # neither
+
+    def test_has_redirect_param(self):
+        self.assertTrue(_has_redirect_param(_ex(url="http://t/login?next=/x")))
+        self.assertFalse(_has_redirect_param(_ex(url="http://t/s?q=1")))
+
+
+class ShapePreconditionFindingsTests(unittest.TestCase):
+    def test_injectable_param_yields_cmdi_and_ssti_findings(self):
+        classes = {f.vulnerability_class for f in
+                   shape_precondition_findings(_ex(url="http://t/s?q=test"))}
+        self.assertIn("command_injection", classes)
+        self.assertIn("ssti", classes)
+
+    def test_fileish_segment_yields_path_traversal_finding(self):
+        classes = {f.vulnerability_class for f in
+                   shape_precondition_findings(_ex(url="http://t/uploads/1"))}
+        self.assertIn("path_traversal", classes)
+
+    def test_redirect_param_yields_open_redirect_finding(self):
+        classes = {f.vulnerability_class for f in
+                   shape_precondition_findings(_ex(url="http://t/go?next=/x"))}
+        self.assertIn("open_redirect", classes)
+
+    def test_benign_object_get_yields_nothing(self):
+        self.assertEqual(shape_precondition_findings(_ex(url="http://t/api/tickets/1")), [])
 
 
 if __name__ == "__main__":

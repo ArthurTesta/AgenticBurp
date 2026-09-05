@@ -251,6 +251,26 @@ def _has_url_param(exchange: HttpExchange) -> bool:
     return bool(_URL_PARAM_RE.search(blob))
 
 
+def _has_injectable_param(exchange: HttpExchange) -> bool:
+    """Any query/body parameter to inject a shell/template payload into."""
+    from validators.injection_targets import param_targets
+    return bool(param_targets(exchange))
+
+
+def _has_file_shape(exchange: HttpExchange) -> bool:
+    """A file/path-shaped parameter, or a file-ish path segment (e.g. /uploads/<id>).
+    Reuses the path-traversal validator's own detectors so the routing decision and
+    the leg's own targeting never drift."""
+    from validators.path_traversal_validator import _file_shaped, _fileish_segment
+    return bool(_file_shaped(exchange)) or _fileish_segment(exchange.url)
+
+
+def _has_redirect_param(exchange: HttpExchange) -> bool:
+    """A redirect-shaped parameter to point off-origin."""
+    from validators.open_redirect_validator import _redirect_params
+    return bool(_redirect_params(exchange))
+
+
 def shape_precondition_legs(node: dict, exchange: HttpExchange, roles, base_url: str,
                             id_fill: str = "1") -> list[tuple[str, HttpExchange]]:
     """The proactive confirmation legs an endpoint's shape warrants, as
@@ -277,6 +297,17 @@ def shape_precondition_legs(node: dict, exchange: HttpExchange, roles, base_url:
         legs.append(("xxe", exchange))
     if _has_url_param(exchange):
         legs.append(("ssrf", exchange))
+    # Injection legs need a real captured param/body to mutate (like xxe/ssrf), so
+    # they fire only on an exchange that actually carries one -- never on a bare
+    # route seed. Confirmation is kept only where the leg CONFIRMS, so breadth here
+    # adds no unconfirmed noise, just cost.
+    if _has_injectable_param(exchange):
+        legs.append(("command_injection", exchange))
+        legs.append(("ssti", exchange))
+    if _has_file_shape(exchange):
+        legs.append(("path_traversal", exchange))
+    if _has_redirect_param(exchange):
+        legs.append(("open_redirect", exchange))
     return legs
 
 
@@ -309,6 +340,27 @@ def shape_precondition_findings(exchange: HttpExchange) -> list[Finding]:
         out.append(Finding(
             vulnerability_class="ssrf", confidence=0.3, severity="high",
             summary=f"SSRF precondition: URL-shaped parameter on {exchange.url}",
+            evidence="", suggested_test="", basis="derived"))
+    # Injection legs: a captured param/body is enough shape to TRY them; kept only
+    # if the validator confirms (analyze() prunes shape legs to confirmed-only).
+    if _has_injectable_param(exchange):
+        out.append(Finding(
+            vulnerability_class="command_injection", confidence=0.3, severity="high",
+            summary=f"Command-injection precondition: injectable parameter on {exchange.url}",
+            evidence="", suggested_test="", basis="derived"))
+        out.append(Finding(
+            vulnerability_class="ssti", confidence=0.3, severity="high",
+            summary=f"SSTI precondition: injectable parameter on {exchange.url}",
+            evidence="", suggested_test="", basis="derived"))
+    if _has_file_shape(exchange):
+        out.append(Finding(
+            vulnerability_class="path_traversal", confidence=0.3, severity="high",
+            summary=f"Path-traversal precondition: file/path-shaped target on {exchange.url}",
+            evidence="", suggested_test="", basis="derived"))
+    if _has_redirect_param(exchange):
+        out.append(Finding(
+            vulnerability_class="open_redirect", confidence=0.3, severity="medium",
+            summary=f"Open-redirect precondition: redirect-shaped parameter on {exchange.url}",
             evidence="", suggested_test="", basis="derived"))
     return out
 
@@ -781,6 +833,10 @@ class Orchestrator:
         from validators.jwt_forge_validator import JwtForgeValidator
         from validators.ssrf_validator import SsrfValidator
         from validators.xxe_validator import XxeValidator
+        from validators.command_injection_validator import CommandInjectionValidator
+        from validators.ssti_validator import SstiValidator
+        from validators.path_traversal_validator import PathTraversalValidator
+        from validators.open_redirect_validator import OpenRedirectValidator
         from models import Finding
         host = urlsplit(base_url).hostname or ""
         for r in roles:
@@ -795,6 +851,10 @@ class Orchestrator:
         _jwt = JwtForgeValidator(allowed_hosts=self.allowed_hosts)
         _ssrf = SsrfValidator(allowed_hosts=self.allowed_hosts)
         _xxe = XxeValidator(allowed_hosts=self.allowed_hosts)
+        _cmdi = CommandInjectionValidator(allowed_hosts=self.allowed_hosts)
+        _ssti = SstiValidator(allowed_hosts=self.allowed_hosts)
+        _path = PathTraversalValidator(allowed_hosts=self.allowed_hosts)
+        _redir = OpenRedirectValidator(allowed_hosts=self.allowed_hosts)
 
         def _apply(finding, res, leg, floor):
             if res is not None and res.status == "confirmed" and res.confirmed:
@@ -852,6 +912,29 @@ class Orchestrator:
             elif "xxe" in low or "xml external" in low or "xml_external" in low:
                 try:
                     _apply(finding, await _xxe.validate(_as_finding(finding, "xxe"), exchange), "xxe", 0.95)
+                except Exception:
+                    return
+            elif "command" in low or low in ("rce", "remote code execution", "code injection", "shell injection"):
+                try:
+                    _apply(finding, await _cmdi.validate(_as_finding(finding, "command_injection"), exchange),
+                           "command-injection", 0.95)
+                except Exception:
+                    return
+            elif "ssti" in low or "template injection" in low:
+                try:
+                    _apply(finding, await _ssti.validate(_as_finding(finding, "ssti"), exchange), "ssti", 0.95)
+                except Exception:
+                    return
+            elif "traversal" in low or "lfi" in low or "file inclusion" in low:
+                try:
+                    _apply(finding, await _path.validate(_as_finding(finding, "path_traversal"), exchange),
+                           "path-traversal", 0.95)
+                except Exception:
+                    return
+            elif "redirect" in low:
+                try:
+                    _apply(finding, await _redir.validate(_as_finding(finding, "open_redirect"), exchange),
+                           "open-redirect", 0.9)
                 except Exception:
                     return
 

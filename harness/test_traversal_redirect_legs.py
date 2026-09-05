@@ -78,6 +78,30 @@ class PathTraversalTests(_GateActive):
         # no file-shaped param, and finding class doesn't apply -> not applicable
         self.assertFalse(v.applies(_f("misconfig"), ex))
 
+    def test_confirms_via_path_segment(self):
+        # VulnCorp shape: file served by path segment (/uploads/<id>), no query param.
+        ex = HttpExchange(url="http://t.test/uploads/1", method="GET", request_headers={},
+                          request_body="", response_status=200, response_body="binary")
+
+        async def _req(self, method, url, content=None, headers=None, **kw):
+            # the traversal is injected into the path (spanning segments); a
+            # vulnerable server resolves it and serves /etc/passwd
+            low = url.lower()
+            if "etc/passwd" in low or "etc%2fpasswd" in low:
+                return _Resp("root:x:0:0:root:/root:/bin/bash")
+            return _Resp("not found", status=404)
+        v = PathTraversalValidator(allowed_hosts=["t.test"])
+        with patch("httpx.AsyncClient.request", _req):
+            r = asyncio.run(v.validate(_f("path traversal"), ex))
+        self.assertEqual(r.status, "confirmed")
+        self.assertIn("path segment", r.summary)
+
+    def test_fileish_segment_makes_it_applicable(self):
+        ex = HttpExchange(url="http://t.test/uploads/1", method="GET", request_headers={},
+                          request_body="", response_status=200, response_body="x")
+        # applies even with an unrelated finding class, purely on the file-ish segment
+        self.assertTrue(PathTraversalValidator(allowed_hosts=["t.test"]).applies(_f("misconfig"), ex))
+
 
 class OpenRedirectTests(_GateActive):
     def _exchange(self):
