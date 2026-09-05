@@ -34,7 +34,7 @@ import httpx
 import crawler
 import global_throttle
 import missing_auth_probe as map_
-from models import Finding
+from models import Finding, HttpExchange
 
 log = logging.getLogger("harness.role_crawl")
 
@@ -100,6 +100,14 @@ class RoleCrawlResult:
     idor_candidates: list = field(default_factory=list)         # dicts
     # Findings from the same-object cross-identity comparison (Finding.model_dump()).
     idor_findings: list = field(default_factory=list)
+    # Every substantive 2xx encountered during discovery, retained as an
+    # analyzable HttpExchange (model_dump dict) so content-level review can reach
+    # it. The access-matrix lens above only asks "does this differ across
+    # identities?"; a body correctly scoped to its authorized identity that
+    # itself leaks (a secret, PII, an internal path) yields no signal there and
+    # would otherwise be dropped without ever becoming reviewable. Deduped by
+    # response content, so identical bodies across roles collapse to one.
+    captured: list = field(default_factory=list)
     errors: list = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -111,20 +119,23 @@ class RoleCrawlResult:
             "auth_bypass_candidates": self.auth_bypass_candidates,
             "idor_candidates": self.idor_candidates,
             "idor_findings": self.idor_findings,
+            "captured": self.captured,
             "errors": self.errors,
         }
 
 
-async def _probe(method: str, url: str, headers: dict, timeout: float) -> tuple[int | None, str]:
+async def _probe(method: str, url: str, headers: dict, timeout: float) -> tuple[int | None, str, dict]:
     if not method:
         method = "GET"
     try:
         await global_throttle.acquire()
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
             resp = await client.request(method, url, headers=headers or None)
-        return resp.status_code, (resp.text or "")
+        # getattr guard: test stubs return a minimal response object with no
+        # .headers -- capture must degrade to empty headers, not crash.
+        return resp.status_code, (resp.text or ""), dict(getattr(resp, "headers", None) or {})
     except httpx.HTTPError as e:
-        return None, f"request failed: {e.__class__.__name__}"
+        return None, f"request failed: {e.__class__.__name__}", {}
 
 
 async def crawl_roles(
@@ -138,6 +149,7 @@ async def crawl_roles(
     timeout: float = 15.0,
     active_discovery: bool = False,
     discovery_max_probes: int = 6000,
+    max_captured: int = 200,
 ) -> RoleCrawlResult:
     """Crawl `base_url` once per role, union the surface, probe every endpoint
     with every role, and derive auth-bypass + IDOR candidates from the matrix.
@@ -190,17 +202,33 @@ async def crawl_roles(
         result.errors.append(f"surface truncated to {max_endpoints} of {len(discovered)} endpoints for probing")
 
     # 2. Probe each endpoint with each role -> access matrix.
+    captured_keys: set[tuple] = set()   # (method, path, body-fp) -> dedup captures
     for path in paths:
         url = map_._build_url(base_url, path, id_fill)
         if not map_._host_allowed(url, allowed_hosts):
             continue
         access = EndpointAccess(method="GET", path=path)
         for r in roles:
-            status, body = await _probe("GET", url, r.norm_headers(), timeout)
+            status, body, resp_headers = await _probe("GET", url, r.norm_headers(), timeout)
             access.by_role[r.role] = status
             substantive = map_._substantive(status, body)
             if substantive:
                 access.reachable_roles.append(r.role)
+                # Phase 0.1: retain the substantive 2xx as an analyzable exchange
+                # so full content-level review reaches it. Dedup by response
+                # content -- identical bodies returned to several roles are one
+                # exchange for content purposes (the cross-identity lens already
+                # owns the "same body to two identities" signal separately).
+                cap_key = (access.method, path, _body_fp(body))
+                if cap_key not in captured_keys and len(result.captured) < max_captured:
+                    captured_keys.add(cap_key)
+                    result.captured.append(HttpExchange(
+                        url=url, method=access.method,
+                        request_headers=r.norm_headers(), request_body="",
+                        response_status=status, response_headers=resp_headers,
+                        response_body=body,
+                        analyst_note=f"role_crawl discovery capture as '{r.role}' (HTTP {status})",
+                    ).model_dump())
             # Record a body fingerprint for object-scoped endpoints so the SAME
             # object's response can be compared across identities below.
             if access.object_scoped:
@@ -212,9 +240,10 @@ async def crawl_roles(
 
     _derive_candidates(result, roles)
     _compare_identities(result, roles, id_fill)
-    log.info("role_crawl: %s -- %d endpoints, %d auth-bypass, %d idor candidates, %d idor findings",
+    log.info("role_crawl: %s -- %d endpoints, %d auth-bypass, %d idor candidates, "
+             "%d idor findings, %d captured exchanges",
              base_url, len(result.endpoints), len(result.auth_bypass_candidates),
-             len(result.idor_candidates), len(result.idor_findings))
+             len(result.idor_candidates), len(result.idor_findings), len(result.captured))
     return result
 
 

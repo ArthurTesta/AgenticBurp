@@ -134,6 +134,48 @@ class RoleCrawlTests(unittest.TestCase):
         self.assertLessEqual(len(r.endpoints), 5)
         self.assertTrue(any("truncated" in e for e in r.errors))
 
+    # --- Phase 0.1: substantive 2xx responses become analyzable captures ------
+
+    def test_captures_substantive_responses(self):
+        # Every substantive 2xx is retained as an HttpExchange so content-level
+        # review can reach it -- even one correctly scoped to its own identity.
+        roles = [RoleSession("user", {"Authorization": "Bearer u"})]
+        matrix = {
+            "/api/config": lambda auth: (200, '{"aws":"AKIAIOSFODNN7EXAMPLE"}'),  # leaky
+            "/api/health": lambda auth: (200, '{"ok":true}'),                     # benign 2xx
+            "/api/empty":  lambda auth: (200, ''),                                # not substantive
+            "/api/denied": lambda auth: (403, "no"),                              # not 2xx
+        }
+        r = self._run(list(matrix), matrix, roles)
+        urls = {c["url"] for c in r.captured}
+        self.assertIn("http://shop.test/api/config", urls)
+        self.assertIn("http://shop.test/api/health", urls)
+        self.assertNotIn("http://shop.test/api/empty", urls)   # empty body dropped
+        self.assertNotIn("http://shop.test/api/denied", urls)  # non-2xx dropped
+        cfg = next(c for c in r.captured if c["url"].endswith("/api/config"))
+        self.assertIn("AKIA", cfg["response_body"])            # real body carried through
+        self.assertEqual(cfg["method"], "GET")
+        self.assertEqual(cfg["response_status"], 200)
+        # captured exchanges are also exported for the /crawl-roles endpoint.
+        self.assertEqual({c["url"] for c in r.to_dict()["captured"]}, urls)
+
+    def test_capture_dedupes_identical_content_across_roles(self):
+        # The same body returned to two identities is ONE exchange for content
+        # review (the cross-identity lens owns the "same body, two roles" signal).
+        roles = [RoleSession("user", {"Authorization": "Bearer u"}),
+                 RoleSession("admin", {"Authorization": "Bearer a"})]
+        matrix = {"/api/shared": lambda auth: (200, '{"same":"content"}')}
+        r = self._run(["/api/shared"], matrix, roles)
+        shared = [c for c in r.captured if c["url"].endswith("/api/shared")]
+        self.assertEqual(len(shared), 1)
+
+    def test_capture_bound_respected(self):
+        roles = [RoleSession("user", {"Authorization": "Bearer u"})]
+        endpoints = [f"/api/e{i}" for i in range(10)]
+        matrix = {f"/api/e{i}": (lambda auth, i=i: (200, f'{{"n":{i}}}')) for i in range(10)}
+        r = self._run(endpoints, matrix, roles, max_captured=3)
+        self.assertLessEqual(len(r.captured), 3)
+
 
 class RoleCrawlEndpointTests(unittest.TestCase):
     def setUp(self):

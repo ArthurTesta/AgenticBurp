@@ -185,6 +185,7 @@ class AnalysisResponse(BaseModel):
     # (tool_catalog.py). Deterministic mapping from finding class to catalog
     # tools, each with a command templated to this exchange's URL.
     tool_recommendations: list[dict] = Field(default_factory=list)
+    telemetry: dict = Field(default_factory=dict)
 
 
 class UrlEstimateItem(BaseModel):
