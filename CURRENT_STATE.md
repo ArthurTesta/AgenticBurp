@@ -7,24 +7,146 @@ file map) is in [`CLAUDE.md`](CLAUDE.md) — read that first, then this.
 
 ---
 
-## State (as of session 10)
+## State (as of session 12)
 
-- **Branch:** `WorkingSunday`. **HEAD:** the session-10 reconciliation commit (on top of
-  `3bc01eb`) — `harness/config.yaml` (active toggles → safe defaults) plus the doc-accuracy
-  edits below. `harness/config.local.yaml` (git-ignored) holds the live toggles and is NOT
-  committed. Working tree otherwise clean apart from untracked `testing/` artifacts.
-- **Pushed state:** `origin/WorkingSunday` **exists but is stale** — local is **32 commits
-  ahead** of it (remote tip is the old session-4 `04e0fc9`). HEAD is **88 commits ahead of
-  `origin/main`**, 0 behind; `main` untouched. (Earlier notes said "NOT pushed / local only" —
-  that was wrong: the branch was pushed once at session 4 and never re-pushed.)
+- **Branch:** `WorkingSunday`. **HEAD:** `0b264f0` (session-12 roadmap work, on top of the
+  session-11 `f627872`). **Thirteen new commits this session** — Phase 0.1/0.2(a–d)/0.3, Phase
+  1.2/1.3/1.4, Phase 3.5, and Phase 3 in full (sequence leg + secret-disclosure + offline
+  advisory snapshot). See "What shipped this session (12)" below.
+  `harness/config.yaml` still carries safe defaults — session 12 flipped **no** toggle;
+  `harness/config.local.yaml` (git-ignored) still holds the live-ON toggles.
+- **Pushed state:** `origin/WorkingSunday` stale (local far ahead); `main` untouched. Nothing
+  pushed this session.
 - **Suite green (Python):** from `harness/`, `python -m unittest discover -p "test_*.py"` →
-  **OK, 1021 tests** (re-verified this session, before and after the config change).
+  **OK, 1131 tests** (1049 → 1131 across the session; every new test carries a negative
+  control). NOTE: `test_hardening.py` is **pytest-only** (module-level `def test_*`, outside
+  the `unittest discover` gate) — run `python -m pytest test_hardening.py` separately; it is
+  green (7 passed), and session 12 fixed a pre-existing breakage in it (see 1.2 below).
+- **Still uncommitted (deliberately left):** this file's session-11 edits (now folded into
+  session 12), and the untracked `testing/` run artifacts. Everything in `harness/` that
+  session 12 touched is committed.
 - **Java compiles + jar built:** the #7 Burp changes were compiled clean and packaged into
   `burp-llm-harness-extension-0.1.0-all.jar` at the maintainer's `gradle` build (confirmed
   off-machine; no JDK here — hazard #6). The jar is git-ignored (`.gitignore` `*.jar`), so it
   lives at root for Burp to load and is not committed.
 - **Environment verified:** Ollama `qwen3:8b` reachable; Docker up with `harness/sqlmap:1.10.9`;
   host chromium/playwright present. No host `javac` anywhere. (See CLAUDE.md § Environment.)
+
+## What shipped this session (12) — roadmap Phase 0 + Phase 1 quick wins + Phase 3.5
+
+Worked the improvement roadmap top-down, one item per commit, full suite green at each. All
+verified by hermetic tests with negative controls (no live run this session).
+
+- **Phase 0.1 — recall of discarded discovery hits** (`a752172`): `role_crawl` now RETAINS
+  every substantive 2xx as an `HttpExchange` (`RoleCrawlResult.captured`, deduped by response
+  content); `orchestrator.review_captured_exchanges` routes each through the full `analyze()`
+  (chosen: full agent review, always on), folding findings into the engagement state. A body
+  correctly access-scoped but itself leaking (secret/PII) is no longer dropped. Smoke test
+  with the confidential-info negative control. NOTE: this commit also bundled pre-existing
+  uncommitted work that was entangled in `orchestrator.py` — `confirmation_gate.py`(+test) and
+  the `models.py`/`analyze()` `telemetry` field — to stay green on a clean checkout.
+- **Phase 0.2 — discovery breadth** (`a9afc8f` a, `04ab6bf` b, `ba20ec4` c, `3b36206` d):
+  (a) derive+sweep the namespaces an app actually exposes (crawler seeds threaded in), not a
+  fixed prefix set; (b) generated action-suffixes (verb vocabulary + verbs harvested from the
+  app and generalized); (c) sensitive-file wordlist (`.env`/configs/VCS/dumps + `*.bak`
+  generation) distinct from REST nouns; (d) mine 2xx BODIES for path-like strings/URLs fed
+  back as candidates (generalizing `js_endpoint_extractor`), re-deriving prefixes after.
+- **Phase 0.3 — recall benchmark harness** (`5a80e09`): new `recall_benchmark.py` scores a run
+  vs hand-authored ground truth as X/N confirmed / detected-unconfirmed / missed, with an
+  earned-vs-lucky provenance verdict per confirmation. Adapters pull findings from an
+  `AnalysisResponse` / `investigate_engagement` result. Never reads a blind answer key.
+- **Phase 1.4 — fail-open telemetry** (`dc59593`): `/health` + new `/telemetry` expose the
+  coordinator fail-open counters; tests assert they actually record on error/empty-dispatch
+  and stay untouched on a clean route.
+- **Phase 1.3 — blind-negative regression** (`182fd5e`): the 6 confirmed_secure controls ship
+  ZERO medium+ findings through the real `apply_confirmation_suppression` gate (the precision
+  floor). Fixture `testing/blind-target-2/blind_eval_exchanges.json` already tracked.
+- **Phase 1.2 — host-dep passive-banner policy** (`8034b2d`): extracted `is_passive_banner` +
+  `cap_passive_banner_severity` into testable `host_dep_dedup.py` (orchestrator calls them,
+  behavior-identical); fixed a pre-existing pytest-only breakage in `test_hardening`.
+- **Phase 3.5 — attribution reliability** (`24414ce`): new `attribution.py` — (a) relabel a
+  CONFIRMED finding's class from the leg that proved it; (b) shape-consistency prior flags an
+  unconfirmed label that contradicts the endpoint shape; (c) `chaining.detect` tags chains
+  built on speculative (assumed/recalled, unconfirmed) inputs. Paired-fixture precision tests.
+- **Phase 3 — stateful sequence leg** (`df038b2`): `validators/sequence_validator.py` — the
+  missing A→verify-B shape. baseline GET → mutate (inject privileged fields) → verify GET;
+  confirms only when a field persists across an INDEPENDENT re-read (catches silent
+  mass-assignment the single-shot echo check misses). Registered + wired into the graph
+  `_confirm`; gate-routed (needs allow_mutating_replay); on the safety-gate allowlist.
+- **Phase 3.1 — secret-disclosure confirmation** (`8a2f6ba`): `secret_disclosure.py` — if a
+  string in a response HMAC-verifies the signature of a JWT the client presents, that string
+  IS the signing key (proof, not a guess; zero false positives). Emits a CONFIRMED critical
+  finding, secret redacted; deterministic + offline. Wired into `analyze()` beside
+  confidential_info.
+- **Phase 3.3 — offline advisory snapshot** (`0b264f0`): `advisory_snapshot.py` — a file-backed
+  known-vuln source (`github_advisories.snapshot_path`/`offline`) the client falls back to when
+  the live GitHub lookup rate-limits/errors, or uses solely in offline mode. Token-less /
+  air-gapped runs now get matches instead of only "error: rate_limited".
+
+### Roadmap status / what's left
+- **Done:** Phase 0 (all), Phase 1.2/1.3/1.4, Phase 3.5, **Phase 3 (all: sequence leg + 3.1 +
+  3.3)**.
+- **Not started:** Phase 1.1 (confirmation-suppression rebuild — revised roadmap blocks it on
+  Phase 2; note the leg classes 3.1/3.5/sequence now exist, ready to graduate into 1.1's
+  suppressible set); **Phase 2** (leg live-verification — largely *operational*: needs live
+  Ollama/Docker + a true-positive fixture, not hermetic); Phase 4 (cloud coordinator seam);
+  Phase 5 (repo hygiene + Burp panel + the target 404→500 catch-all re-baseline).
+- **New modules this session (updated):** `recall_benchmark.py`, `host_dep_dedup.py`,
+  `attribution.py`, `validators/sequence_validator.py`, `secret_disclosure.py`,
+  `advisory_snapshot.py`, plus `orchestrator.review_captured_exchanges`.
+- **New modules this session:** `recall_benchmark.py`, `host_dep_dedup.py`, `attribution.py`,
+  plus `orchestrator.review_captured_exchanges`. New tests: `test_smoke_phase0_capture_review`,
+  `test_recall_benchmark`, `test_host_dep_dedup`, `test_attribution` (+ additions to
+  `test_role_crawl`, `test_api_surface_discovery`, `test_coordinator`, `test_server`,
+  `test_blind_negatives`).
+
+## What shipped this session (11) — four new confirmation legs + graph-loop wiring
+
+Closing the "confirmation as broad as detection" gap for six of the classes that had a
+detector but no confirmation leg. All committed; suite 1049 OK; verified live vs VulnCorp.
+
+- **Two OOB/differential injection legs** (`835ac52`): `command_injection_validator.py`
+  (shell payload → OOB collaborator callback, blind-safe) and `ssti_validator.py`
+  (nonce-wrapped arithmetic `89*97` → evaluated product in the response; proves template
+  evaluation, not RCE). New shared `validators/injection_targets.py` (enumerate + mutate one
+  param, factored out of the ssrf leg). Both gate-routed (added to `test_safety_gate.py`'s
+  allowlist + route-through check).
+- **Two GET-family legs + the missing category** (`3ecda46`): `path_traversal_validator.py`
+  (canonical `/etc/passwd`/`win.ini` contents) and `open_redirect_validator.py` (off-origin
+  sentinel in `Location`). **`path_traversal` was not even a category** before — added to
+  `categories.py` (+ synonyms), `report_generator.py` remediation, `test_chaining.py`
+  KNOWN_UNCOVERED. This was the one *detection* hole.
+- **Wired all four into the graph loop + analyze shape-preconditions** (`f627872`): they ran
+  only via `analyze()`'s per-finding `for_finding` before, so `investigate_engagement`
+  (the discovery loop) never reached them. Now shape-routed like xxe/ssrf in
+  `shape_precondition_legs` + `shape_precondition_findings` + the `_confirm` dispatcher.
+  **`path_traversal` now also targets the last PATH SEGMENT** (`/uploads/<id>` →
+  `/uploads/..\..\windows\win.ini`), not just query/body params — `FILEISH_PATH_SEGMENTS`
+  is the single source of truth, imported by the orchestrator.
+
+### Full max-coverage run this session (VERIFIED) — the new empirical truth
+
+1.07h run vs VulnCorp (Docker up, sqlmap-in-container, fresh cache/state DBs, all features):
+**162 raw → 17 confirmed (51 dupes collapsed) / 92 unconfirmed / 2 chains.** Runner +
+outputs in `testing/vulncorp-helpdesk/maxrun/` (`report_full.md`, `maxcov_results_full.json`).
+
+**Confirmed breadth 3 → 5 classes.** Baseline (session 8) was JWT alg:none + cross-identity
+IDOR + SQLi. This run adds:
+- **XXE** — `/api/tickets/import`, confirmed live (was the top *pending* item since session 9;
+  now measured).
+- **Path traversal** — `/uploads/1`, win.ini via the path-segment leg. A class the harness
+  **could not detect or confirm at all** before this session.
+
+**command_injection / ssti / open_redirect: wired, ran clean, 0 confirmed.** 18+ analyze
+attempts, **zero false positives**; PASS-2 discovery reached 12 nodes (incl. `/uploads/{id}`,
+`/api/tickets/search`, `/api/tickets/{id}/attachments`) but **none were cmd-inj/SSTI/redirect
+endpoints** — VulnCorp's V23/V24/V30 live on surface the current discovery doesn't reach.
+This is a **discovery/coverage gap, not a leg defect** (path_traversal confirmed via the same
+shape-routing path; `/uploads/{id}` was a PASS-2 node too).
+
+- **Efficiency note (not correctness):** the confirmation leg re-runs once per agent finding
+  on the same exchange (xxe fired 10×, path_traversal 6× on one endpoint each). The report
+  collapses these; a future optimisation is to memoise per (validator, endpoint) within a run.
 
 ## What shipped this session (10) — doc-vs-code reconciliation
 
@@ -80,40 +202,45 @@ tracked files; `config.local.yaml` stays git-ignored).
   verdict logic (compilation alone doesn't exercise it). Live target testing of the executors
   is the usual next step.
 
-## Latest measured run (session 8, VERIFIED) — still the current empirical truth
+## Latest measured run (session 11, VERIFIED) — supersedes session 8
 
-50-min max-coverage run vs VulnCorp: **151 raw → 13 confirmed / 104 unconfirmed / 1 chain**
-(33 dupes collapsed). **Confirmed breadth 1 class → 3**: JWT alg:none (7 endpoints, conf 0.90),
-cross-identity IDOR (`reports/1` incl. cross-org, `tickets/1`, `tickets/1/comments`), SQLi
-`/api/login` (sqlmap). Runner + outputs in `testing/vulncorp-helpdesk/maxrun/` (`report_full.md`
-etc., untracked). Tuning lesson: for a tractable run turn `autonomous_discovery` **and**
-`critique` off in the analyze pass (they fan out unboundedly — one exchange → 50+ model calls).
+See "Full max-coverage run this session" above: **162 raw → 17 confirmed / 92 unconfirmed /
+2 chains**, **5 confirmed classes** (adds XXE + path_traversal over the session-8 3-class
+baseline). The session-8 run (151 raw → 13 confirmed / 3 classes) is the prior datapoint.
+Tuning lesson still holds: `autonomous_discovery` + `critique` off for the analyze pass.
 
 ## Known gaps (the honest column)
 
-- **XXE/SSRF now WIRED into `analyze()` (#2) but not yet re-measured live.** The
-  `/api/tickets/import` XXE should now confirm proactively on a real run (it didn't before);
-  that empirical proof is the top Next item. Smoke-tested only so far.
-- **High-value bugs with no confirmation leg** still sit in the unconfirmed pile:
-  `admin/debug` leaks the **JWT signing secret to anonymous** (conf 1.00, hand-verified),
-  mass-assignment on `account/{profile,settings}`/`register`, CSRF on `change-password`. These
-  need a disclosure/mass-assignment confirmation leg (none exists) — same coupling, one class wider.
+- **command_injection / ssti / open_redirect confirm nothing on VulnCorp yet** — the legs are
+  built, wired, and false-positive-clean, but VulnCorp's V23/V24/V30 endpoints aren't in the
+  captured analyze set nor surfaced by PASS-2 discovery. This is a **discovery** gap: the graph
+  loop's active discovery needs to reach those endpoints (agent-role features / non-API routes)
+  before the legs can bite. Next lever is discovery breadth, not another leg.
+- **Still no confirmation leg for several classes with a detector** (the remaining half of the
+  original gap analysis): V22 second-order SQLi, V9 JWT `kid` key-confusion (jwt_forge does
+  alg:none + reused-sig only), V26 deserialization RCE (validator is passive-only), V15
+  verb-tamper, and the stateful auth family V3/V4/V5/V6/V7 (reset-token entropy, rate-limit,
+  username enum, session fixation, weak password policy — all need a multi-request "sequence +
+  diff" leg pattern; only race_condition bursts today). V33 file-upload, V32 CSRF also open.
+- **High-value unconfirmed bugs** still need a disclosure/mass-assignment leg: `admin/debug`
+  leaks the JWT signing secret to anonymous (conf 1.00, hand-verified), mass-assignment on
+  `account/{profile,settings}`/`register`.
 
 ## Next (ranked)
 
-1. **Re-run max-coverage to measure #2** — does the `/api/tickets/import` XXE now confirm via
-   the analyze() shape leg? Also confirms the #1 cross-org coverage. Use a FRESH cache DB; turn
-   `autonomous_discovery`+`critique` off for the analyze pass (session-8 tuning lesson).
-2. **#7 follow-through:** compilation is confirmed and the jar is built. Confirm the JUnit5
-   `*LogicTest`s ran green (if the build was `shadowJar`-only they didn't), then live-test the
-   8 new executors against a target — compile-clean ≠ behaviour-correct.
-3. **Push `WorkingSunday` + open the PR into `main`** — local is 32 commits ahead of the stale
-   `origin/WorkingSunday` and 88 ahead of `origin/main`. (Commit the session-10 config/doc
-   working-tree changes first; remember `config.yaml` is now safe to `git add`, `config.local.yaml`
-   is git-ignored.)
-4. **Update the report artifact** (`a56d56f5-…`) — still shows the first run's 228/32; fold in
-   the session-8 measured result (13 confirmed / 3 classes) + the coupling framing.
-5. **Live-verify browser_xss CDP** (#5) against a real `browserless/chrome` container.
+1. **Discovery breadth so cmd-inj/SSTI/open-redirect can bite** — the legs are wired and clean;
+   they just never reach V23/V24/V30. Extend `api_surface_discovery`/`role_crawl` (esp. the
+   agent-role integration/webhook features) so those endpoints enter the worklist, then re-run.
+2. **Build the remaining legs** (the other half of the gap analysis): the stateful auth family
+   (shared "sequence + diff" pattern → V3/V4/V5/V6/V7), V9 kid key-confusion (extend
+   jwt_forge), V26 active deserialization (the pickle-cookie RCE VulnCorp plants), V22
+   second-order SQLi, V15 verb-tamper, V32 CSRF, V33 file-upload.
+3. **Memoise confirmation per (validator, endpoint) within a run** — xxe fired 10× / path_trav
+   6× on one endpoint each; the report dedups but the wall-clock cost is real.
+4. **Push `WorkingSunday` + open the PR into `main`.**
+5. **Update the report artifact** (`a56d56f5-…`) — fold in the session-11 result (17 confirmed /
+   5 classes; path_traversal + XXE newly confirmed).
+6. **Live-verify browser_xss CDP** (#5) against a real `browserless/chrome` container.
 6. **Add a disclosure/mass-assignment confirmation leg** — the `admin/debug` JWT-secret-leak
    (highest severity) is unconfirmed only for lack of one.
 7. **Burp panel:** compile + wire the Cross-Identity + Discovery tabs (needs a JDK).
