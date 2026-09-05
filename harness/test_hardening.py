@@ -120,6 +120,7 @@ def test_known_vuln_lookup_dedups_same_advisory_for_same_host():
     o.gha_client = FakeGHA()
     o.kev_enabled = False
     o._reported_advisories = set()
+    o._reported_banner_components = set()  # host-level passive-banner dedup (Phase 1.2)
 
     comp = ComponentCandidate(ecosystem="pypi", name="Werkzeug", version="1.0", source="response headers")
     report = AgentReport(agent="supply_chain", model="test", components=[comp])

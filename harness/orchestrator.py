@@ -30,6 +30,7 @@ from urllib.parse import urlparse, urlsplit
 
 import httpx
 import global_throttle
+import host_dep_dedup
 
 from ollama_client import OllamaClient, OllamaError
 from models import (
@@ -1391,10 +1392,8 @@ class Orchestrator:
                     # the same disclosed CVE gets reported again on every
                     # exchange for the rest of the session.
                     # Check if component is observed purely via passive header
-                    is_passive_banner = any(
-                        s in (comp.source or "").lower()
-                        for s in ("server", "x-powered-by", "header", "via", "response headers")
-                    )
+                    # (host_dep_dedup owns this classification -- Phase 1.2).
+                    is_passive_banner = host_dep_dedup.is_passive_banner(comp.source)
 
                     # Deduplicate passive banner advisories per (host, component_name):
                     # Flag at most 1 representative advisory match per component on that host,
@@ -1415,9 +1414,9 @@ class Orchestrator:
                     severity = {"low": "low", "moderate": "medium",
                                 "high": "high", "critical": "critical"}.get(m.severity, "medium")
                     # Passive header banners without active reachability or served manifest
-                    # must not ship at actionable severity (medium/high) unless KEV-escalated.
-                    if is_passive_banner and severity in ("medium", "high"):
-                        severity = "low"
+                    # must not ship at actionable severity (medium/high) unless KEV-escalated
+                    # below (host_dep_dedup owns this cap -- Phase 1.2).
+                    severity = host_dep_dedup.cap_passive_banner_severity(severity, is_passive_banner)
                     summary = (f"{comp.name} ({comp.ecosystem}) has a disclosed advisory: "
                                f"{m.ghsa_id}" + (f" / {m.cve_id}" if m.cve_id else ""))
                     kev_note = ""
