@@ -88,6 +88,30 @@ DEFAULT_ACTIONS = (
 
 DEFAULT_PREFIXES = ("/api/", "/api/v1/", "/", "/admin/", "/internal/")
 
+# Generically-sensitive artifacts that live at FIXED conventional paths, not as
+# REST resource nouns -- a flat noun sweep never names them. Relative (no leading
+# slash); probed at the origin root. Kept high-signal (things that should never
+# be web-served), not an exhaustive fuzz list.
+DEFAULT_SENSITIVE_FILES = (
+    ".env .env.local .env.production .env.dev config.json config.yaml config.yml "
+    "settings.py application.properties appsettings.json web.config .htaccess .htpasswd "
+    ".git/config .git/HEAD .gitignore .svn/entries "
+    "backup.sql dump.sql database.sql db.sqlite db.sqlite3 backup.zip backup.tar.gz "
+    "backup/ backups/ backup/database.sql "
+    "id_rsa .ssh/id_rsa .aws/credentials credentials.json secrets.json .npmrc .pypirc "
+    "package.json composer.json composer.lock requirements.txt Dockerfile docker-compose.yml "
+    ".DS_Store phpinfo.php info.php server-status .well-known/security.txt "
+    "error.log access.log debug.log app.log"
+).split()
+
+# Backup/editor-swap suffixes, and the common source/config basenames worth
+# trying them on even before any file is discovered.
+_BACKUP_SUFFIXES = (".bak", "~", ".old", ".orig", ".save", ".swp")
+_COMMON_BACKUP_BASES = (
+    "index.php config.php database.php wp-config.php settings.php config.js app.js "
+    ".env web.config config.json"
+).split()
+
 
 def _first_segment_prefix(path: str) -> str:
     """The leading '/<segment>/' of a path with >=2 segments, else '/'.
@@ -155,13 +179,15 @@ class SurfaceDiscovery:
     def __init__(self, base_url: str, *, headers: dict | None = None,
                  allowed_hosts: list[str] | None = None,
                  nouns=None, collections=None, prefixes=None, seed_paths=None,
-                 actions=None, timeout: float = 8.0, max_probes: int = 6000):
+                 actions=None, sensitive_files=None, timeout: float = 8.0, max_probes: int = 6000):
         self.base_url = base_url.rstrip("/")
         self.headers = headers or {}
         self.allowed_hosts = allowed_hosts or []
         self.nouns = list(nouns) if nouns is not None else list(DEFAULT_NOUNS)
         self.collections = list(collections) if collections is not None else list(DEFAULT_COLLECTIONS)
         self.actions = list(actions) if actions is not None else list(DEFAULT_ACTIONS)
+        self.sensitive_files = (list(sensitive_files) if sensitive_files is not None
+                                else list(DEFAULT_SENSITIVE_FILES))
         self.prefixes = list(prefixes) if prefixes is not None else list(DEFAULT_PREFIXES)
         # Paths the caller already knows exist (e.g. the crawler's HTML/JS-mined
         # links). Used to DERIVE namespaces the app actually exposes -- see
@@ -259,6 +285,12 @@ class SurfaceDiscovery:
         #     mining so a POST-only action route gets its real verbs learned.
         await self._mine_actions()
 
+        # 4c. Phase 0.2(c): a sensitive-artifact wordlist (dotfiles/configs/backups/
+        #     VCS/key-material) at fixed conventional paths, distinct from the REST
+        #     nouns, plus generated backup-suffix (.bak/~/.old) variants. A hit here
+        #     enters role_crawl's probe set and gets Phase-0.1 content review.
+        await self._probe_sensitive_files()
+
         # 5. Allow mining (LAST, over the FULL route set incl. sub-resources): a
         #    route that rejects GET answers 405 with an `Allow` header -> learn its
         #    real verbs so POST-only routes aren't mislabelled GET-only.
@@ -304,6 +336,28 @@ class SurfaceDiscovery:
                     return
                 for suffix in ("", "/1"):
                     await self._check(pre + n + suffix, "derived")
+
+    async def _probe_sensitive_files(self) -> None:
+        """Phase 0.2(c): probe generically-sensitive artifacts at their fixed
+        conventional paths (a wordlist distinct from the REST nouns), then
+        generate backup-suffix variants (.bak/~/.old/...) of common source files
+        and of any discovered file-like route (a route whose last segment has an
+        extension). The existence oracle is unchanged: only non-404s are kept."""
+        for f in self.sensitive_files:
+            if not self._budget_left():
+                return
+            await self._check("/" + f.lstrip("/"), "sensitive_file")
+
+        file_like = set(_COMMON_BACKUP_BASES)
+        for p in list(self._seen):
+            seg = p.rsplit("/", 1)[-1]
+            if "." in seg and not seg.startswith("."):   # looks like <name>.<ext>
+                file_like.add(p.lstrip("/"))
+        for base in sorted(file_like):
+            for suf in _BACKUP_SUFFIXES:
+                if not self._budget_left():
+                    return
+                await self._check("/" + base.lstrip("/") + suf, "sensitive_file")
 
     async def _mine_response_ids(self) -> None:
         seeds = [p for p, r in list(self._seen.items()) if 200 <= r.status < 300]

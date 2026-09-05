@@ -208,6 +208,57 @@ class ActionSuffixTests(unittest.TestCase):
         self.assertEqual(res.paths(), ["/api/health"])
 
 
+class SensitiveFileTests(unittest.TestCase):
+    """Phase 0.2(c): a sensitive-artifact wordlist distinct from REST nouns, plus
+    generated backup-suffix variants."""
+
+    def _responder(self, known):
+        def r(method, path):
+            return known.get(path, (500, _NF, ""))
+        return r
+
+    def test_env_file_discovered(self):
+        known = {"/.env": (200, "SECRET_KEY=abc\nDB_PASSWORD=hunter2", "")}
+        disc = _FakeDiscovery(self._responder(known),
+                              prefixes=["/api/"], collections=[], nouns=["health"],
+                              actions=[], sensitive_files=[".env", "config.json"])
+        res = _run(disc)
+        self.assertIn("/.env", res.paths())
+        self.assertEqual(
+            next(r.source for r in res.routes if r.path == "/.env"), "sensitive_file")
+
+    def test_backup_suffix_generated_for_common_base(self):
+        # config.php.bak is reached by suffixing a common base -- no need to have
+        # discovered config.php first.
+        known = {"/config.php.bak": (200, "<?php $db_pass='x';", "")}
+        disc = _FakeDiscovery(self._responder(known),
+                              prefixes=["/api/"], collections=[], nouns=["health"],
+                              actions=[], sensitive_files=[])
+        res = _run(disc)
+        self.assertIn("/config.php.bak", res.paths())
+
+    def test_backup_suffix_generated_for_discovered_file(self):
+        # A discovered file-like route gets .bak/~/.old variants tried.
+        known = {
+            "/app.js": (200, "// bundle", ""),
+            "/app.js.old": (200, "// bundle with a leaked key", ""),
+        }
+        disc = _FakeDiscovery(self._responder(known),
+                              prefixes=["/"], collections=[], nouns=["app.js"],
+                              actions=[], sensitive_files=[])
+        res = _run(disc)
+        self.assertIn("/app.js", res.paths())
+        self.assertIn("/app.js.old", res.paths())
+
+    def test_absent_sensitive_files_not_reported(self):
+        # Negative control: everything 404s -> nothing invented.
+        disc = _FakeDiscovery(self._responder({}),
+                              prefixes=["/api/"], collections=[], nouns=["health"],
+                              actions=[], sensitive_files=[".env", ".git/config"])
+        res = _run(disc)
+        self.assertEqual(res.paths(), [])
+
+
 class SpecTests(unittest.TestCase):
     def test_spec_paths_parsed(self):
         body = '{"openapi":"3.0.0","paths":{"/api/a":{},"/api/b/{id}":{},"bad":{}}}'
