@@ -124,12 +124,15 @@ CONFIRMABLE_CLASS_MARKERS = frozenset({
 })
 
 # The subset of confirmable classes whose leg is LIVE-VERIFIED -- proven to
-# actually confirm real instances against a live target (session-11 max-coverage
-# run): cross_identity (IDOR/access control), sqlmap (SQLi), jwt_forge (JWT
-# alg:none), xxe, path_traversal. Everything else confirmable has a leg that is
-# only smoke/hermetic-verified (browser_xss, ssrf, command_injection, ssti,
-# open_redirect, sequence) and is therefore treated as UNPROVEN, not REFUTED,
-# until Phase 2 live-verification promotes it. THIS SET is what Phase 2 refreshes.
+# actually confirm real instances against a live target. Sources:
+#   - session-11 max-coverage run vs VulnCorp: cross_identity (IDOR/access
+#     control), sqlmap (SQLi), jwt_forge (JWT alg:none), xxe, path_traversal.
+#   - Phase 2 (this session), test_leg_live_verification against a real local
+#     vulnerable fixture: ssti (Jinja render), open_redirect (blind 302).
+# Everything else confirmable still has a leg that is only smoke/hermetic-verified
+# (browser_xss, ssrf, command_injection, sequence) and is treated as UNPROVEN, not
+# REFUTED, until live-verified. THIS SET is what Phase 2 refreshes as legs graduate.
+# See LEG_VERIFICATION.md for the full live-verified-vs-smoke-only split.
 LIVE_VERIFIED_MARKERS = frozenset({
     "idor", "insecure_direct_object", "insecure direct object",
     "broken_access_control", "broken access control", "bola", "bfla",
@@ -139,6 +142,9 @@ LIVE_VERIFIED_MARKERS = frozenset({
     "path_traversal", "path traversal", "directory traversal", "directory_traversal",
     "lfi", "local file inclusion", "file inclusion",
     "jwt", "jwt_forge", "algorithm confusion", "algorithm_confusion", "weak_token",
+    # Phase 2 live-verified (test_leg_live_verification):
+    "ssti", "template_injection", "template injection",
+    "open_redirect", "open redirect", "unvalidated redirect", "unvalidated_redirect",
 })
 
 

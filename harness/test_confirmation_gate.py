@@ -98,10 +98,12 @@ class TestConfirmationGate(unittest.TestCase):
 
 class TestLegAwareThreeState(unittest.TestCase):
     def test_leg_tier(self):
-        for live in ("idor", "SQL_INJECTION", "xxe", "jwt algorithm confusion", "path_traversal"):
+        # live: session-11 legs + Phase-2 live-verified ssti / open_redirect.
+        for live in ("idor", "SQL_INJECTION", "xxe", "jwt algorithm confusion",
+                     "path_traversal", "ssti", "open_redirect"):
             self.assertEqual(leg_tier(live), "live", live)
-        for prov in ("reflected xss", "ssrf", "command injection", "ssti",
-                     "open_redirect", "mass_assignment"):
+        # provisional: leg exists but only smoke/hermetic-verified.
+        for prov in ("reflected xss", "ssrf", "command injection", "mass_assignment"):
             self.assertEqual(leg_tier(prov), "provisional", prov)
         for none in ("business_logic", "information_disclosure", "csrf", None, ""):
             self.assertEqual(leg_tier(none), "none", none)
@@ -130,11 +132,14 @@ class TestLegAwareThreeState(unittest.TestCase):
         self.assertEqual(f.severity, "low")  # medium cap never RAISES severity
 
     def test_phase2_override_promotes_a_provisional_leg_to_refuted(self):
-        # The Phase-2 seam: once ssti's leg is live-verified, passing it in the
-        # live set flips its suppression from UNPROVEN(medium) to REFUTED(low).
+        # The Phase-2 seam: ssrf is still provisional (UNPROVEN -> medium); once
+        # its leg is live-verified, passing it in the live set flips its
+        # suppression to REFUTED (low).
         from confirmation_gate import LIVE_VERIFIED_MARKERS
-        promoted = LIVE_VERIFIED_MARKERS | {"ssti"}
-        f = _apply(_finding("ssti", severity="high"), live_verified_markers=promoted)
+        base = _apply(_finding("ssrf", severity="high"))
+        self.assertEqual(base.severity, "medium")  # provisional today
+        promoted = LIVE_VERIFIED_MARKERS | {"ssrf"}
+        f = _apply(_finding("ssrf", severity="high"), live_verified_markers=promoted)
         self.assertEqual(f.severity, "low")
         self.assertEqual(f.review_verdict, "unconfirmed_hypothesis")
 
