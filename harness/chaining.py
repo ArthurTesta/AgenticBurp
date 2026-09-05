@@ -415,13 +415,29 @@ def detect(host_findings: list[dict]) -> list[Finding]:
         a, b = a_matches[0], b_matches[0]
         if a["url"] == b["url"] and rule.tag_a == rule.tag_b:
             continue
+        # Phase 3.5(c): a chain composed from an unconfirmed, non-observed input
+        # (basis assumed/recalled) inherits that input's uncertainty -- possibly a
+        # mislabel -- so tag it speculative rather than presenting it as a clean
+        # rule match. Confirmed-or-observed inputs keep the standard confidence.
+        import attribution
+        speculative = [f for f in (a, b) if attribution.chain_input_speculative(f)]
+        is_speculative = bool(speculative)
+        spec_note = ""
+        if is_speculative:
+            which = ", ".join(sorted({f.get("vulnerability_class", "?") for f in speculative}))
+            spec_note = (f" SPECULATIVE INPUT: this chain rests on an unconfirmed, non-observed "
+                         f"finding ({which}, basis assumed/recalled); its premise may itself be a "
+                         f"mislabel -- verify the input before trusting the chain.")
         results.append(Finding(
             vulnerability_class=f"potential-attack-chain:{rule.signature}",
-            confidence=0.5,  # rule match on category labels, not a confirmed chain -- always needs a human look
+            # rule match on category labels, not a confirmed chain -- always needs
+            # a human look, and less so when an input is itself speculative.
+            confidence=0.35 if is_speculative else 0.5,
             severity=rule.severity,
             owasp_category=None,
-            summary=f"Potential attack chain: {rule.signature.replace('+', ' -> ')}",
-            evidence=rule.narrative_template.format(a_url=a["url"], b_url=b["url"]),
+            summary=f"Potential attack chain: {rule.signature.replace('+', ' -> ')}"
+                    + (" [speculative inputs]" if is_speculative else ""),
+            evidence=rule.narrative_template.format(a_url=a["url"], b_url=b["url"]) + spec_note,
             suggested_test="Test these together explicitly, in the order implied by the chain -- "
                             "individually-valid findings don't automatically compose, this is a "
                             "hypothesis to verify, not a confirmed exploit path.",
