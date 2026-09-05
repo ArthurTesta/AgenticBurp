@@ -449,7 +449,23 @@ class Orchestrator:
         gha_cfg = config.get("github_advisories", {})
         self.gha_enabled = gha_cfg.get("enabled", True)
         self.gha_max_lookups = gha_cfg.get("max_lookups_per_exchange", 6)
-        self.gha_client = GitHubAdvisoryClient(token=gha_cfg.get("token"))
+        # Offline advisory snapshot (Phase 3.3): a file-backed fallback so a
+        # token-less / air-gapped run still gets known-vuln matches instead of
+        # only "error: rate_limited". snapshot_path loads it; offline makes it the
+        # sole source. Absent/unreadable snapshot degrades to the live lookup.
+        _snapshot = None
+        _snap_path = gha_cfg.get("snapshot_path")
+        if _snap_path:
+            try:
+                from advisory_snapshot import AdvisorySnapshot
+                _snapshot = AdvisorySnapshot.from_file(_snap_path)
+                log.info("Loaded offline advisory snapshot from %s (%d advisories)",
+                         _snap_path, len(_snapshot))
+            except Exception as e:
+                log.warning("Could not load advisory snapshot %s: %s", _snap_path, e)
+        self.gha_client = GitHubAdvisoryClient(
+            token=gha_cfg.get("token"), snapshot=_snapshot,
+            offline=bool(gha_cfg.get("offline", False)))
 
         # Initialize registry checks
         registry_cfg = config.get("package_registry_checks", {})

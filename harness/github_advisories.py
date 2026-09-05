@@ -88,9 +88,16 @@ class GitHubAdvisoryClient:
     explicitly rather than silently treated as "no known advisory".
     """
 
-    def __init__(self, token: str | None = None, timeout_seconds: float = 15.0):
+    def __init__(self, token: str | None = None, timeout_seconds: float = 15.0,
+                 snapshot=None, offline: bool = False):
         self.token = token or os.environ.get("GITHUB_TOKEN")
         self.timeout_seconds = timeout_seconds
+        # Optional offline advisory snapshot (Phase 3.3): duck-typed, needs a
+        # .lookup(package, ecosystem, version) -> list[AdvisoryMatch] and a truthy
+        # __bool__. Used as a fallback when the live lookup errors, or as the sole
+        # source in offline mode.
+        self.snapshot = snapshot
+        self.offline = offline
 
     def _headers(self) -> dict[str, str]:
         headers = {"Accept": "application/vnd.github+json"}
@@ -98,10 +105,33 @@ class GitHubAdvisoryClient:
             headers["Authorization"] = f"Bearer {self.token}"
         return headers
 
+    def _snapshot_result(self, component: ComponentCandidate, source: str) -> LookupResult:
+        """A LookupResult drawn from the offline snapshot (no network)."""
+        if not self.snapshot:
+            return LookupResult(component=component, status="no_known_advisory", detail=source)
+        ecosystem = _ECOSYSTEM_MAP.get(component.ecosystem.lower().strip(), _FALLBACK_ECOSYSTEM)
+        matches = self.snapshot.lookup(component.name, ecosystem, component.version or "")
+        if matches:
+            return LookupResult(component=component, status="matched", matches=matches, detail=source)
+        return LookupResult(component=component, status="no_known_advisory", detail=source)
+
     async def lookup(self, component: ComponentCandidate) -> LookupResult:
         if not component.name:
             return LookupResult(component=component, status="skipped_no_name")
+        # Offline mode: never touch the network -- the snapshot is the source.
+        if self.offline:
+            return self._snapshot_result(component, source="offline snapshot (offline mode)")
+        result = await self._lookup_network(component)
+        # Fallback: a live lookup that ERRORED (rate-limited / network) still
+        # yields known-vuln matches if the snapshot has them (Phase 3.3).
+        if result.status == "error" and self.snapshot:
+            snap = self._snapshot_result(
+                component, source=f"offline snapshot fallback (live lookup: {result.detail})")
+            if snap.status == "matched":
+                return snap
+        return result
 
+    async def _lookup_network(self, component: ComponentCandidate) -> LookupResult:
         ecosystem = _ECOSYSTEM_MAP.get(component.ecosystem.lower().strip(), _FALLBACK_ECOSYSTEM)
         params = {"ecosystem": ecosystem, "affects": component.name, "per_page": "10"}
 
