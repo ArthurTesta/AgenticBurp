@@ -121,12 +121,40 @@ def make_app(file_base: str | None = None) -> Flask:
     #     readable back via GET; control binds only an allowlist. state resets. --
     def _fresh():
         return {"id": 1, "name": "alice", "role": "user"}
-    state = {"profile": _fresh(), "profile_safe": _fresh()}  # independent per endpoint
+
+    # nested-response + non-canonical authority field: the write binds all body
+    # fields, but the response NESTS the object under wrapper keys and the
+    # escalation field (`is_premium`) is NOT in the canonical priv-field list. The
+    # original leg (top-level lookup, fixed field set) misses both; the generalised
+    # leg (recursive detection + authority-named schema-derived candidates) catches it.
+    def _fresh_tier():
+        return {"id": 1, "name": "bob", "is_premium": False, "plan": "free"}
+    state = {"profile": _fresh(), "profile_safe": _fresh(),
+             "tier": _fresh_tier(), "tier_safe": _fresh_tier()}
 
     @app.post("/account/reset")
     def account_reset():
         state["profile"], state["profile_safe"] = _fresh(), _fresh()
+        state["tier"], state["tier_safe"] = _fresh_tier(), _fresh_tier()
         return jsonify(state["profile"])
+
+    @app.route("/account/tier", methods=["GET", "PATCH", "POST", "PUT"])
+    def account_tier():
+        if request.method != "GET":
+            body = request.get_json(silent=True) or {}
+            if isinstance(body, dict):
+                state["tier"].update(body)  # VULNERABLE: binds every body field
+        return jsonify({"ok": True, "user": {"account": dict(state["tier"])}})  # NESTED
+
+    @app.route("/account/tier-safe", methods=["GET", "PATCH", "POST", "PUT"])
+    def account_tier_safe():
+        if request.method != "GET":
+            body = request.get_json(silent=True) or {}
+            if isinstance(body, dict):
+                for k in ("name",):  # allowlist -- is_premium/plan ignored
+                    if k in body:
+                        state["tier_safe"][k] = body[k]
+        return jsonify({"ok": True, "user": {"account": dict(state["tier_safe"])}})
 
     @app.route("/account/profile", methods=["GET", "PATCH", "POST", "PUT"])
     def account_profile():

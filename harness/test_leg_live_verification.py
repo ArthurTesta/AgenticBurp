@@ -158,6 +158,24 @@ class LiveLegVerificationTest(unittest.TestCase):
         res = self._run_ex(v, self._profile_exchange("/account/profile-safe"), "mass_assignment")
         self.assertNotEqual(res.status, "confirmed")
 
+    def test_sequence_confirms_nested_response_and_noncanonical_field(self):
+        # The generalised leg must catch a mass-assign the ORIGINAL leg missed:
+        # the escalation field (is_premium) is outside the canonical set AND the
+        # response nests the object under wrapper keys. Requires both the
+        # authority-named schema-derived candidate AND the recursive detection.
+        self._reset_profiles()
+        v = SequenceValidator(allowed_hosts=["127.0.0.1"])
+        res = self._run_ex(v, self._profile_exchange("/account/tier"), "mass_assignment")
+        self.assertEqual(res.status, "confirmed",
+                         f"sequence leg missed a nested/non-canonical mass-assign: {res.summary}")
+        self.assertTrue(res.confirmed)
+
+    def test_sequence_silent_on_nested_allowlisted_control(self):
+        self._reset_profiles()
+        v = SequenceValidator(allowed_hosts=["127.0.0.1"])
+        res = self._run_ex(v, self._profile_exchange("/account/tier-safe"), "mass_assignment")
+        self.assertNotEqual(res.status, "confirmed")
+
     # --- Command injection (OOB shell fetch; needs curl on the target) --------
     @unittest.skipIf(shutil.which("curl") is None, "curl not available to exercise the shell payload")
     def test_command_injection_confirms_via_shell(self):
