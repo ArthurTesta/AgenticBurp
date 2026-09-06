@@ -227,7 +227,13 @@ async def crawl_roles(
             # sweep structurally misses them. Union the routes; split the probe
             # budget across the sweeps so the total stays within discovery_max_probes.
             sweep_roles = _distinct_discovery_roles(roles)
-            per_budget = max(500, discovery_max_probes // max(1, len(sweep_roles)))
+            # Each sweep gets the FULL budget, not a split share: the wordlist needs
+            # the whole budget to complete, and discovery probes are cheap HTTP GETs
+            # (the iterative agent, not discovery, dominates wall time). Splitting it
+            # (budget // n) truncated the wordlist and REGRESSED coverage below the
+            # single-sweep baseline (session-13 re-run: 21 -> 17 endpoints). Full
+            # budget per sweep can only ADD role-gated routes, never subtract.
+            per_budget = discovery_max_probes
             total_routes, total_probes = 0, 0
             for sr in sweep_roles:
                 try:
