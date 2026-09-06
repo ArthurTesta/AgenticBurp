@@ -104,8 +104,41 @@ and explicit second-order-SQLi chain composition (V22). Each is blocked on a
 safety/precision CHOICE, not effort; the doc gives the oracle, the decision, and a
 recommended safe implementation for each.
 
-**Pending:** the fresh max-coverage RE-RUN with all the above (in progress at
-handover) to measure the recall delta vs the 9-confirmed / 6-class baseline.
+### Post-build-out RE-RUN (VERIFIED) — the honest delta
+
+Two clean 2.1-2.2 h re-runs after the build-out (a first one exposed + a fix
+`d806570` for a coverage regression I introduced, then a clean one). Clean-run
+result vs the session-13 baseline:
+
+- **Confirmed CLASSES unchanged at 6** (SQLi, IDOR, JWT-forge, JWT signing-key
+  disclosure, XXE, path-traversal). **No new class confirmed on VulnCorp.**
+- **Deduped confirmed 22 → 28** (more endpoints within the known classes:
+  jwt-forge now also on `/api/admin/logs`, IDOR on `/comments`, etc.).
+- **Path-matched recall 8/13 → 7/13.** The one drop is SQLi on `/api/tickets/search`,
+  which is **PASS-1 LLM variance** (qwen3:8b didn't label that endpoint sqli in
+  EITHER re-run; nothing in the build-out touches SQLi). Within run-to-run noise.
+- **Frontier still 0** (cmd-inj/ssti/open-redirect/ssrf). The multi-role discovery
+  sweep reached 22 endpoints (=baseline+1) but did NOT surface the agent-role
+  feature endpoints -- they are not guessable GET routes, so vocabulary + role
+  sweeping alone doesn't crack them. This is the real remaining bottleneck.
+- **The 5 new legs (deserialization/session-fixation/weak-password/username-enum/
+  stored-XSS) + the generalised mass-assign + jwt-kid: 0 new confirmations on
+  VulnCorp** -- their sinks (a pickle cookie, an HTML-rendering stored-XSS page, a
+  persist-across-reread mass-assign, a kid-key endpoint) are not in VulnCorp's
+  reachable/captured surface. **All are live-verified on the disposable fixture**
+  (`test_leg_live_verification`), so the CAPABILITY is real and will bite on a
+  target that exposes those shapes; VulnCorp just doesn't, where discovery reaches.
+- **No crashes** across both 37-exchange + PASS-2 re-runs (attribution fix holds).
+  browser_xss still 0 (non-HTML sinks) -> not promoted.
+
+**Honest bottom line:** the build-out added verified confirmation CAPABILITY and
+fixed a live pipeline crash, but did not move VulnCorp's confirmed-class breadth,
+because the bottleneck on this target is REACHING the agent-role feature surface
+(discovery), not having the legs. Next lever is discovery of authenticated
+agent-role features (they need feature interaction, not route guessing), plus the
+deferred legs in `LEG_DECISIONS.md`. Run artifacts: `recall_final_recall_full.md`
+(clean) + `baseline_recall_final.md` (session-13) + `v2confounded_*` in
+`testing/vulncorp-helpdesk/maxrun/`.
 
 ## State (as of session 12)
 
