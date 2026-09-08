@@ -7,6 +7,131 @@ file map) is in [`CLAUDE.md`](CLAUDE.md) — read that first, then this.
 
 ---
 
+## ►► SESSION-14 HANDOFF — active work program (READ FIRST) ◄◄
+
+A fresh agent should pick up HERE. The session-13 detail is below for reference, but
+this is the live work. Branch `WorkingSunday`, **HEAD `3f08be2`**, suite **1178 OK**
+(`cd harness && python -m unittest discover -p "test_*.py"`). Everything through
+`3f08be2` is committed and green. Nothing uncommitted.
+
+### The operator's expanded goal (verbatim intent)
+
+Turn the harness from "fire agents and HOPE they cover the right things" into a
+**deterministic, WSTG/PortSwigger-Academy-driven coverage engine with an auditable
+matrix.** The 6 concrete items and 5 integration requirements are ONE program — the
+integration points are the FRAMEWORK the 6 items slot into:
+
+6 items: (1) discovery breadth via a Docker tool (ffuf), (2) the still-missing
+confirmation legs, (3) a disclosure/mass-assignment leg for the high-value bugs,
+(4) memoise confirmation per (validator, endpoint) within a run, (5) update the
+report artifact, (6) live-verify browser_xss over CDP (containerised Chromium).
+
+5 integration requirements: (I1) pre-defined **work programs** for agents from a
+FIXED WSTG/Academy check list — each agent first ASSESSES which checks MAY be
+relevant and runs all of those, skipping known-irrelevant ones (no more hoping).
+(I2) TWO scope views — a **matrix** (identity × endpoint × check; every cell filled
+with what was done → easy completion audit; columns like "User A: search XSS on
+param") and a **tree**; the report must also show WHAT WAS NOT TESTED and why
+(potentially irrelevant). (I3) prefer **deterministic tools** over LLM to avoid
+hallucination. (I4) split every analysis into **3 phases: domain** (TLS, headers,
+cookies…), **endpoint** (method, IDOR, BFLA…), **parameter** (SQLi, XSS…). (I5)
+everything NOT run must be **auditable** by the tester.
+
+### The integrated architecture (agreed direction — build the spine)
+
+A deterministic coverage model; the 6 items become cell-fillers:
+
+- **Check catalog** (new, code-defined, WSTG/Academy-tagged): a fixed list. Each
+  check = {id (e.g. WSTG-INPV-05 sqli, WSTG-ATHZ-04 idor), phase (domain|endpoint|
+  parameter — I4), vulnerability_class (maps to existing categories/legs), a
+  DETERMINISTIC applicability predicate over target/endpoint/param shape ("MAY apply
+  → run; known-irrelevant → skip WITH REASON" — I1/I5), and its confirmation (a
+  deterministic leg/tool where one exists — I3, else agent/manual)}.
+- **Coverage matrix** (new): identity × endpoint × check; each cell records
+  `not_applicable(reason) | pending | ran(result) | confirmed | detected` (I2/I5).
+  This *naturally memoises item #4* (each cell computed once) and is the report
+  substrate (I2).
+- Integrate with EXISTING structures, don't replace: endpoints from
+  SurfaceDiscovery/role_crawl, identities from roles, confirmation from the existing
+  ~25 validators/legs, categories.canonicalize for class mapping. `engagement.py`
+  has `EngagementState.endpoints` (SurfaceEndpoint with .findings/.access/
+  .reachable_roles) — the matrix is a new layer OVER this.
+
+### Recommended build order (each: fixture + negative control + test, suite green, commit)
+
+1. **ffuf harness integration** — the image is DONE (see below); write
+   `harness/ffuf_runner.py` (build cmd via `tool_runner.run`, parse output) + wire
+   into `SurfaceDiscovery` as a fast-path (fall back to the Python sweep when Docker/
+   image absent) + unit tests (mock the container run).
+2. **Coverage spine** — the check catalog + 3-phase matrix + auditable statuses
+   (pure data + predicates, heavily unit-testable; this is the heart of I1–I5).
+3. **Missing + disclosure/mass-assign legs** (#2/#3) as deterministic cell-fillers —
+   the deferred set in `LEG_DECISIONS.md` is now AUTHORISED by the operator; use the
+   safe recommended oracle in that doc for each (verb-tamper, CSRF, file-upload,
+   rate-limit, reset-token, 2nd-order-SQLi). Plus a dedicated disclosure leg (the
+   `/api/admin/debug` secret leak is already confirmed via `secret_disclosure`;
+   generalise it to non-JWT secrets).
+4. **Memoise (#4)** — mostly free once the matrix exists (cell = compute once). If
+   building before the matrix: cache ValidationResult per (validator.name, method,
+   url, body-hash) on the Orchestrator for the run.
+5. **browser_xss CDP (#6)** — live-verify the containerised-Chromium-over-CDP path
+   (`validators.browser_xss.cdp_endpoint`) against a real `browserless/chrome`
+   container; promote reflected browser_xss to live if it bites.
+6. **Report → artifact (#5)** — render the matrix + tree (with "not tested + reason")
+   and update the published artifact (find its URL via Artifact action:list; the
+   session-11 report artifact id fragment is `a56d56f5`).
+
+### KEY DECISION already made — Docker tools, NOT a Kali MCP
+
+Use per-tool (or one "toolbox") **Docker images invoked with CODE-BUILT args via
+`tool_runner`**, not a Kali-Linux MCP. Rationale: a Kali MCP has the LLM compose
+offensive commands = the exact hallucination risk I3 forbids, AND bypasses the
+`safety_gate`/scope model. Code-built container invocations are deterministic,
+scope-enforced (`tool_runner.localhost_url`), version-pinned, and each run is one
+auditable `(image, args, target)` tuple (I5). This is why ffuf follows the sqlmap
+pattern.
+
+### #1 ffuf — DONE so far (committed `3f08be2`), VERIFIED
+
+- Image **`harness/ffuf:2.1.0` is built** on this machine (multi-stage,
+  `tools/ffuf.Dockerfile`) with the wordlist baked at `/wordlist.txt`.
+- `tools/gen_ffuf_wordlist.py` → `tools/ffuf-wordlist.txt` (**12,950** full-path
+  candidates from the harness's own vocabulary — deterministic, auditable).
+- **Live-verified command** (found 18 VulnCorp endpoints in ~90 s):
+  `docker run --rm --add-host host.docker.internal:host-gateway harness/ffuf:2.1.0
+  -u http://host.docker.internal:5002/FUZZ -w /wordlist.txt -mc all -fc 404 -ac -t 40 -s`
+  (ffuf `-s` prints just the FUZZ value; pass identity via `-H "Authorization: …"`).
+- **HONEST caveat:** the wordlist is harness-vocab-derived, so ffuf currently adds
+  SPEED, not NEW terms (18 vs the Python sweep's 22 endpoints). To actually reach the
+  FRONTIER endpoints (cmd-inj/ssti/redirect/ssrf agent-role features), bake a LARGER
+  real content-discovery list (SecLists raft-*-directories / api wordlists) into the
+  image — that is the point of moving to ffuf (speed makes a 10–100× list viable).
+- **Windows gotcha (interactive shells only):** Git Bash mangles `/wordlist.txt` →
+  `C:/Program Files/Git/wordlist.txt`; use `MSYS_NO_PATHCONV=1` and `//wordlist.txt`
+  when testing by hand. `tool_runner.run` builds an argv LIST for subprocess (no
+  shell), so the runner is NOT affected — `/wordlist.txt` passes through literally.
+
+### Environment right now
+
+Ollama `qwen3:8b` + Docker up; images `harness/sqlmap:1.10.9` AND **`harness/ffuf:2.1.0`**
+present. VulnCorp is **running** on :5002 (restarted clean this session; will re-dirty
+if a mutating run hits it — restart per hazard #5 before the next measured run). The
+run harness lives in `testing/vulncorp-helpdesk/maxrun/` (`run_maxcov_recall.py`,
+`vulncorp_ground_truth.py`, `score_recall.py`; baseline outputs `baseline_recall_final.*`).
+
+### DO NOT re-derive from scratch
+
+The session-13 build-out (11 commits `0e237f7`→`4b3547a`) already ADDED + live-verified:
+deserialization (`deserialization_oob`), auth-family (`auth_sequence`: session-fixation/
+weak-password/username-enum), stored/second-order XSS (`stored_xss`), the generalised
+sequence/mass-assign leg, JWT-kid, and multi-role discovery. It also FIXED the attribution/
+`Finding` crash. The measured takeaway (below): those legs are FIXTURE-verified but don't
+bite on VulnCorp because their sinks aren't in the reachable surface — the bottleneck is
+DISCOVERY reaching the agent-role feature surface, which is exactly why #1 (ffuf + a bigger
+wordlist) and I1 (WSTG work-programs) matter most.
+
+---
+
 ## State (as of session 13)
 
 - **Branch:** `WorkingSunday`. **HEAD:** `233eab9` (session-12 handover). Session 13 has
