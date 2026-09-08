@@ -137,6 +137,25 @@ CONFIRMABLE_CLASS_MARKERS = frozenset({
     "username_enumeration",
     "username enumeration",
     "user enumeration",
+
+    # CSRF family (csrf_validator)
+    "csrf",
+    "cross-site request forgery",
+    "cross site request forgery",
+    "xsrf",
+
+    # File upload bypass (file_upload_validator)
+    "file_upload",
+    "file upload",
+    "arbitrary file upload",
+    "unrestricted file upload",
+
+    # Verb tamper / method bypass (verb_tamper_validator)
+    "verb_tamper",
+    "verb tamper",
+    "method tampering",
+    "http method",
+    "misconfig",
 })
 
 # The subset of confirmable classes whose leg is LIVE-VERIFIED -- proven to
@@ -147,10 +166,8 @@ CONFIRMABLE_CLASS_MARKERS = frozenset({
 #     vulnerable fixture: ssti (Jinja render), open_redirect (blind 302), ssrf
 #     (real server-side fetch to the collaborator), command_injection (real shell
 #     fetch), and the sequence leg (real mass-assignable write -> re-read).
-# The only confirmable class still smoke_only-by-default is xss: its browser_xss
-# leg needs a real Chromium ON THE HARNESS, so it stays UNPROVEN unless an operator
-# with a browser promotes it via the live_verified_markers override. THIS SET is
-# what live-verification refreshes. See LEG_VERIFICATION.md for the full split.
+# THIS SET is what live-verification refreshes. See LEG_VERIFICATION.md for the
+# full split.
 LIVE_VERIFIED_MARKERS = frozenset({
     "idor", "insecure_direct_object", "insecure direct object",
     "broken_access_control", "broken access control", "bola", "bfla",
@@ -186,6 +203,10 @@ LIVE_VERIFIED_MARKERS = frozenset({
     # Verb tamper / method bypass (verb_tamper_validator, session-15)
     "verb_tamper", "verb tamper", "method tampering", "http method",
     "misconfig",
+
+    # XSS family (browser_xss_validator, session-15: live-verified against the
+    # vuln_fixture reflected-XSS endpoint with real Playwright + Chromium).
+    "xss", "cross_site_scripting", "cross-site scripting", "cross site scripting",
 })
 
 

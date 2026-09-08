@@ -7,13 +7,14 @@ leg, a real Flask app answering). Unlike the per-leg smoke tests -- which stub t
 network at httpx and assert only the decision logic -- this proves the whole leg
 path bites on a real true-positive and stays silent on a matched negative control.
 
-Scope: SSTI, open redirect, SSRF and mass-assignment (the sequence leg) are all
-verified here -- the OOB legs (SSRF, command-injection) reach the real in-process
-collaborator, which is itself just a loopback listener. command-injection needs
-`curl` on this host to run the injected fetch, so it is skipped when curl is
-absent. Path traversal (needs a real system file) and browser_xss (needs a real
-browser) stay in testing/leg-verification/run_leg_verification.py, run live by the
-operator.
+Scope: SSTI, open redirect, SSRF, mass-assignment (the sequence leg), and
+browser_xss (real Playwright + Chromium) are all verified here -- the OOB legs
+(SSRF, command-injection) reach the real in-process collaborator, which is itself
+just a loopback listener. command-injection needs `curl` on this host to run the
+injected fetch, so it is skipped when curl is absent. browser_xss needs Playwright
++ Chromium installed, so it is skipUnless-gated. Path traversal (needs a real
+system file) stays in testing/leg-verification/run_leg_verification.py, run live
+by the operator.
 
 Hermetic and self-contained: the only "network" is loopback -- the fixture server
 this test owns, plus the collaborator's loopback listener; the server is torn down
@@ -42,6 +43,8 @@ from validators.deserialization_oob_validator import DeserializationOobValidator
 from validators.auth_sequence_validator import AuthSequenceValidator
 from validators.stored_xss_validator import StoredXssValidator
 from validators.jwt_forge_validator import JwtForgeValidator
+from validators.browser_xss_validator import BrowserXssValidator
+import browser_driver
 
 _FIXTURE = (Path(__file__).resolve().parent.parent
             / "testing" / "leg-verification" / "vuln_fixture.py")
@@ -299,6 +302,25 @@ class LiveLegVerificationTest(unittest.TestCase):
         v = JwtForgeValidator(allowed_hosts=["127.0.0.1"])
         res = self._run_ex(v, self._jwt_exchange("/jwt/kid-safe"), "jwt")
         self.assertNotEqual(res.status, "confirmed")
+
+
+    # --- Browser XSS (Playwright, real Chromium) --------------------------------
+    @unittest.skipUnless(browser_driver.playwright_available(),
+                         "playwright not installed")
+    def test_browser_xss_confirms_on_real_reflected_xss(self):
+        v = BrowserXssValidator(allowed_hosts=["127.0.0.1"])
+        res = self._run(v, "/xss/reflect?q=seed")
+        self.assertEqual(res.status, "confirmed",
+                         f"browser_xss leg did not confirm against a real reflected-XSS endpoint: {res.summary}")
+        self.assertTrue(res.confirmed)
+
+    @unittest.skipUnless(browser_driver.playwright_available(),
+                         "playwright not installed")
+    def test_browser_xss_silent_on_escaped_control(self):
+        v = BrowserXssValidator(allowed_hosts=["127.0.0.1"])
+        res = self._run(v, "/xss/safe?q=seed")
+        self.assertNotEqual(res.status, "confirmed",
+                            "browser_xss leg FALSELY confirmed on an escaped (safe) endpoint")
 
 
 if __name__ == "__main__":

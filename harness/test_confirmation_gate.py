@@ -99,16 +99,16 @@ class TestConfirmationGate(unittest.TestCase):
 class TestLegAwareThreeState(unittest.TestCase):
     def test_leg_tier(self):
         # live: session-11 legs + Phase-2 live-verified ssti/open_redirect/ssrf/
-        # command_injection/mass_assignment (real-fixture verification).
+        # command_injection/mass_assignment + session-15 browser_xss/csrf/verb_tamper.
         for live in ("idor", "SQL_INJECTION", "xxe", "jwt algorithm confusion",
                      "path_traversal", "ssti", "open_redirect", "ssrf",
-                     "command injection", "mass_assignment"):
+                     "command injection", "mass_assignment", "reflected xss",
+                     "cross-site scripting", "csrf", "verb_tamper", "file_upload"):
             self.assertEqual(leg_tier(live), "live", live)
-        # provisional: xss's browser_xss leg needs Chromium on the harness, so it
-        # stays smoke_only-by-default.
-        for prov in ("reflected xss", "cross-site scripting"):
+        # provisional: confirmable class whose leg is not yet live-verified.
+        for prov in ("privilege escalation",):
             self.assertEqual(leg_tier(prov), "provisional", prov)
-        for none in ("business_logic", "information_disclosure", "csrf", None, ""):
+        for none in ("business_logic", "information_disclosure", None, ""):
             self.assertEqual(leg_tier(none), "none", none)
 
     def test_refuted_live_class_demoted_to_low(self):
@@ -122,7 +122,7 @@ class TestLegAwareThreeState(unittest.TestCase):
     def test_unproven_provisional_class_capped_at_medium_not_low(self):
         # A provisional-leg class (leg not live-verified) is kept visible at
         # medium, not buried to low -- recall over a not-yet-trusted silence.
-        f = _apply(_finding("reflected xss", severity="high", confidence=0.9))
+        f = _apply(_finding("privilege escalation", severity="high", confidence=0.9))
         self.assertEqual(f.severity, "medium")
         self.assertEqual(f.original_severity, "high")
         self.assertLessEqual(f.confidence, 0.5)
@@ -131,18 +131,24 @@ class TestLegAwareThreeState(unittest.TestCase):
         self.assertTrue(f.summary.startswith("[Unconfirmed] "))
 
     def test_provisional_low_severity_unchanged(self):
-        f = _apply(_finding("reflected xss", severity="low", confidence=0.3))
+        f = _apply(_finding("privilege escalation", severity="low", confidence=0.3))
         self.assertEqual(f.severity, "low")  # medium cap never RAISES severity
 
+    def test_xss_now_refuted_as_live_verified(self):
+        # browser_xss was live-verified in session-15 against vuln_fixture, so
+        # unconfirmed XSS findings are now REFUTED (low), not UNPROVEN (medium).
+        f = _apply(_finding("reflected xss", severity="high"))
+        self.assertEqual(f.severity, "low")
+        self.assertEqual(f.review_verdict, "unconfirmed_hypothesis")
+
     def test_override_promotes_a_provisional_leg_to_refuted(self):
-        # xss is still provisional (browser_xss needs a browser) -> UNPROVEN
-        # (medium); an operator with Chromium passes it in the live set to flip
-        # its suppression to REFUTED (low). This is also the Phase-2 promotion seam.
+        # privilege_escalation is still provisional -> UNPROVEN (medium); an
+        # operator passes it in the live set to promote to REFUTED (low).
         from confirmation_gate import LIVE_VERIFIED_MARKERS
-        base = _apply(_finding("reflected xss", severity="high"))
+        base = _apply(_finding("privilege escalation", severity="high"))
         self.assertEqual(base.severity, "medium")  # provisional today
-        promoted = LIVE_VERIFIED_MARKERS | {"xss"}
-        f = _apply(_finding("reflected xss", severity="high"), live_verified_markers=promoted)
+        promoted = LIVE_VERIFIED_MARKERS | {"privilege escalation"}
+        f = _apply(_finding("privilege escalation", severity="high"), live_verified_markers=promoted)
         self.assertEqual(f.severity, "low")
         self.assertEqual(f.review_verdict, "unconfirmed_hypothesis")
 

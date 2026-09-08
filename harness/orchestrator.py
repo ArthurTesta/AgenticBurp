@@ -948,6 +948,28 @@ class Orchestrator:
         _auth = AuthSequenceValidator(allowed_hosts=self.allowed_hosts)
         _sxss = StoredXssValidator(allowed_hosts=self.allowed_hosts)
 
+        # Memoisation cache: avoid re-running the same validator on the same
+        # endpoint during one investigate_engagement() call.  Keyed by
+        # (validator_name, method, url, body_hash).
+        import hashlib as _hashlib
+        from validators.base import ValidationResult as _VR
+        _confirmation_cache: dict[tuple[str, str, str, str], _VR] = {}
+
+        async def _cached_validate(validator, finding_obj, exchange):
+            """Wrapper around validator.validate() that caches results per
+            (validator, method, url, body_hash).  A cache hit returns the
+            previous ValidationResult without any HTTP/container work."""
+            method = (exchange.method or "GET").upper()
+            url = exchange.url or ""
+            body = (exchange.request_body or "")
+            body_hash = _hashlib.md5(body.encode("utf-8", errors="replace")).hexdigest()
+            key = (validator.name, method, url, body_hash)
+            if key in _confirmation_cache:
+                return _confirmation_cache[key]
+            result = await validator.validate(finding_obj, exchange)
+            _confirmation_cache[key] = result
+            return result
+
         def _apply(finding, res, leg, floor):
             if res is not None and res.status == "confirmed" and res.confirmed:
                 finding["confirmed"] = True
@@ -980,7 +1002,7 @@ class Orchestrator:
                     except httpx.HTTPError:
                         return
                 try:
-                    _apply(finding, await _xval.validate(_as_finding(finding, "idor"), exchange), "cross-identity", 0.9)
+                    _apply(finding, await _cached_validate(_xval, _as_finding(finding, "idor"), exchange), "cross-identity", 0.9)
                 except Exception:
                     return
             elif "xss" in low or "cross-site scripting" in low or "cross_site" in low:
@@ -988,60 +1010,60 @@ class Orchestrator:
                 # XSS and (crucially for a JSON API) declines what never reaches an HTML
                 # sink. Skips gracefully if no browser engine is installed.
                 try:
-                    _apply(finding, await _bxss.validate(_as_finding(finding, "xss"), exchange), "browser-xss", 0.95)
+                    _apply(finding, await _cached_validate(_bxss, _as_finding(finding, "xss"), exchange), "browser-xss", 0.95)
                     # reflected browser_xss handles GET reflections; a write-shaped
                     # exchange may instead be a STORED-XSS plant point -- try that leg too.
                     if not finding.get("confirmed") and (exchange.method or "GET").upper() in ("POST", "PUT", "PATCH"):
-                        _apply(finding, await _sxss.validate(_as_finding(finding, "xss"), exchange), "stored-xss", 0.9)
+                        _apply(finding, await _cached_validate(_sxss, _as_finding(finding, "xss"), exchange), "stored-xss", 0.9)
                 except Exception:
                     return
             elif "jwt" in low or "algorithm confusion" in low or "algorithm_confusion" in low or "weak_token" in low:
                 try:
-                    _apply(finding, await _jwt.validate(_as_finding(finding, "jwt"), exchange), "jwt-forge", 0.9)
+                    _apply(finding, await _cached_validate(_jwt, _as_finding(finding, "jwt"), exchange), "jwt-forge", 0.9)
                 except Exception:
                     return
             elif "ssrf" in low or "server-side request" in low or "server_side_request" in low:
                 try:
-                    _apply(finding, await _ssrf.validate(_as_finding(finding, "ssrf"), exchange), "ssrf", 0.95)
+                    _apply(finding, await _cached_validate(_ssrf, _as_finding(finding, "ssrf"), exchange), "ssrf", 0.95)
                 except Exception:
                     return
             elif "xxe" in low or "xml external" in low or "xml_external" in low:
                 try:
-                    _apply(finding, await _xxe.validate(_as_finding(finding, "xxe"), exchange), "xxe", 0.95)
+                    _apply(finding, await _cached_validate(_xxe, _as_finding(finding, "xxe"), exchange), "xxe", 0.95)
                 except Exception:
                     return
             elif "command" in low or low in ("rce", "remote code execution", "code injection", "shell injection"):
                 try:
-                    _apply(finding, await _cmdi.validate(_as_finding(finding, "command_injection"), exchange),
+                    _apply(finding, await _cached_validate(_cmdi, _as_finding(finding, "command_injection"), exchange),
                            "command-injection", 0.95)
                 except Exception:
                     return
             elif "ssti" in low or "template injection" in low:
                 try:
-                    _apply(finding, await _ssti.validate(_as_finding(finding, "ssti"), exchange), "ssti", 0.95)
+                    _apply(finding, await _cached_validate(_ssti, _as_finding(finding, "ssti"), exchange), "ssti", 0.95)
                 except Exception:
                     return
             elif "traversal" in low or "lfi" in low or "file inclusion" in low:
                 try:
-                    _apply(finding, await _path.validate(_as_finding(finding, "path_traversal"), exchange),
+                    _apply(finding, await _cached_validate(_path, _as_finding(finding, "path_traversal"), exchange),
                            "path-traversal", 0.95)
                 except Exception:
                     return
             elif "redirect" in low:
                 try:
-                    _apply(finding, await _redir.validate(_as_finding(finding, "open_redirect"), exchange),
+                    _apply(finding, await _cached_validate(_redir, _as_finding(finding, "open_redirect"), exchange),
                            "open-redirect", 0.9)
                 except Exception:
                     return
             elif "mass" in low or "assignment" in low or "privilege" in low or low in ("api_security", "api security"):
                 try:
-                    _apply(finding, await _seq.validate(_as_finding(finding, "mass_assignment"), exchange),
+                    _apply(finding, await _cached_validate(_seq, _as_finding(finding, "mass_assignment"), exchange),
                            "sequence", 0.9)
                 except Exception:
                     return
             elif "deserial" in low or "pickle" in low or "object injection" in low:
                 try:
-                    _apply(finding, await _deser.validate(_as_finding(finding, "deserialization"), exchange),
+                    _apply(finding, await _cached_validate(_deser, _as_finding(finding, "deserialization"), exchange),
                            "deserialization", 0.95)
                 except Exception:
                     return
@@ -1049,7 +1071,7 @@ class Orchestrator:
                   or "weak_password" in low or "enumeration" in low or "broken authentication" in low
                   or "broken_authentication" in low):
                 try:
-                    _apply(finding, await _auth.validate(_as_finding(finding, low or "broken_authentication"), exchange),
+                    _apply(finding, await _cached_validate(_auth, _as_finding(finding, low or "broken_authentication"), exchange),
                            "auth-sequence", 0.85)
                 except Exception:
                     return
