@@ -96,33 +96,45 @@ validation, pruned to confirmed-only after), so an XML-accepting endpoint no age
 
 ### Deterministic confirmation legs
 
+The graph loop's `_confirm` dispatcher routes findings to these legs; all are live-verified
+against the vuln_fixture (except `privilege_escalation`, which is provisional). The
+`_cached_validate` wrapper memoises results per `(validator, method, url, body_hash)` within
+a run. `validators/registry.py` is the source of truth.
+
 | Leg | Class | Mechanism |
 |---|---|---|
-| `cross_identity` | IDOR / object-level access control | replay as other identities + anon |
+| `cross_identity` | IDOR / access control | replay as other identities + anon |
 | `sqlmap` (container) | SQLi | sqlmap in Docker via `tool_runner` |
-| `browser_xss` | XSS | headless chromium; declines non-HTML-sink (precision) |
-| `jwt_forge` | JWT alg:none / reused-sig | forge + replay + garbage-sig control |
-| `xxe` | XXE | external-entity → in-process OOB `collaborator` |
+| `browser_xss` | XSS | Playwright headless Chromium; declines non-HTML-sink |
+| `jwt_forge` | JWT alg:none / kid | forge + replay + garbage-sig control |
+| `xxe` | XXE | external-entity → OOB `collaborator` |
 | `ssrf` | SSRF | URL-param redirect → OOB `collaborator` |
+| `ssti` | template injection | nonce-wrapped arithmetic differential |
+| `command_injection` | RCE / shell | shell → OOB `collaborator` callback |
+| `path_traversal` | LFI / traversal | canonical system file read |
+| `open_redirect` | redirect | off-origin sentinel in Location |
+| `sequence` | mass-assignment | write-then-re-read differential |
+| `deserialization_oob` | deserialization | benign pickle OOB beacon |
+| `auth_sequence` | session-fix/weak-pw/enum | multi-request flows |
+| `stored_xss` | stored XSS | plant-then-independent-render |
+| `csrf` | CSRF | token-strip replay + SameSite check |
+| `verb_tamper` | method bypass | safe read-only alternates + override headers |
+| `file_upload` | upload bypass | benign .html upload + retrieve |
+| `secret_disclosure` | key leaks | HMAC-verified JWT key in response |
 
 Enable in a run: `active_enabled: true`; sqlmap needs `container_image: harness/sqlmap:1.10.9`
-+ Docker; xxe/ssrf need `allow_mutating_replay: true` (their replay is a non-GET send —
-`xxe_validator.py:84`, `ssrf_validator.py:109`). Mutating sends go through the safety gate
-(`GatedAsyncClient`). See the current run script (named in `CURRENT_STATE.md`).
++ Docker; xxe/ssrf/csrf/file_upload need `allow_mutating_replay: true` (mutating sends go
+through the safety gate `GatedAsyncClient`). See the current run script (named in
+`CURRENT_STATE.md`).
 
-**Those six are the curated set — the registry is wider.** The table is what the **graph
-loop**'s `_confirm` dispatcher (`orchestrator.py:814`) proves (access-control→`cross_identity`,
-xss→`browser_xss`, `jwt_forge`, `ssrf`, `xxe`) plus `sqlmap`. The **captured-exchange path
-(`analyze()`)** instead runs the *full* `ValidatorRegistry` via `for_finding()`
-(`orchestrator.py:1450`): the same six **plus ~13 more class-scoped validators** — `cors`,
-`csp`/clickjacking, `api_security`/mass-assignment, `crypto`/tls, `http_request_smuggling`,
-`header_injection`/crlf, `race_condition`, `oauth`/oidc, `recon`, `websocket`/cswsh,
-`subdomain_takeover`, `web_cache_poisoning`, and passive-only `deserialization`. Each declares
-`finding_classes` + an `active` flag (`validators/base.py`); **all are `active` except
-`deserialization`**, so under the safe default `active_enabled: false` only `deserialization`
-runs — the rest arm only once a live run turns active mode on. `validators/registry.py` is the
-source of truth for what's wired; the graph `_confirm` set is deliberately narrower and better
-verified (see `COMPETITIVE_LANDSCAPE.md` §0 on which legs are live-verified vs smoke-only).
+**The registry is wider than the graph `_confirm` set.** The **captured-exchange path
+(`analyze()`)** runs the *full* `ValidatorRegistry` via `for_finding()`: the legs above
+**plus** `cors`, `csp`/clickjacking, `api_security`, `crypto`/tls,
+`http_request_smuggling`, `header_injection`/crlf, `race_condition`, `oauth`/oidc, `recon`,
+`websocket`/cswsh, `subdomain_takeover`, `web_cache_poisoning`, and passive-only
+`deserialization`. Each declares `finding_classes` + an `active` flag (`validators/base.py`);
+**all are `active` except `deserialization`**, so under the safe default `active_enabled:
+false` only `deserialization` runs — the rest arm only once a live run turns active mode on.
 
 ## Key file map (`harness/`)
 
@@ -131,7 +143,8 @@ verified (see `COMPETITIVE_LANDSCAPE.md` §0 on which legs are live-verified vs 
 | Engagement loop | `orchestrator.py`, `engagement_builder.py`, `engagement.py`, `worklist_investigator.py`, `chain_linker.py`, `chaining.py`, `task_graph.py` |
 | Discovery / crawl | `api_surface_discovery.py`, `role_crawl.py`, `scope_discovery.py`, `crawler.py`, `js_endpoint_extractor.py` |
 | Agents / LLM | `iterative_agent.py`, `agent_manager.py`, `ollama_client.py`, `planner.py`, `analysis_pipeline.py` |
-| Confirmation | `validators/` (~20 validators — `registry.py` is the source of truth: the 6 legs `cross_identity`/`sqlmap`/`browser_xss`/`jwt_forge`/`xxe`/`ssrf` **plus** `cors`/`csp`/`crypto`/`recon`/`oauth`/`header_injection`/`http_request_smuggling`/`web_cache_poisoning`/`subdomain_takeover`/`websocket`/`race_condition`/`api_security`/`deserialization`), `collaborator.py`, `active_verification.py`, `tool_runner.py` |
+| Confirmation | `validators/` (18 graph-loop legs + ~8 registry-only — `registry.py` is the source of truth), `collaborator.py`, `active_verification.py`, `tool_runner.py` |
+| Coverage | `coverage_model.py` (WSTG check catalog + coverage matrix), `ffuf_runner.py` |
 | Safety / infra | `safety_gate.py`, `safety_proxy_addon.py`, `security.py`, `cache.py`, `store.py`, `config.yaml` (+ git-ignored `config.local.yaml`), `server.py` |
 | Reporting | `report_generator.py`, `categories.py`, `knowledge.py` |
 | Burp side | `burp-extension/` (Java; can't compile here) |

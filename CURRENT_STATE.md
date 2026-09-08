@@ -7,12 +7,83 @@ file map) is in [`CLAUDE.md`](CLAUDE.md) — read that first, then this.
 
 ---
 
-## ►► SESSION-14 HANDOFF — active work program (READ FIRST) ◄◄
+## ►► SESSION-15 STATE (READ FIRST) ◄◄
 
-A fresh agent should pick up HERE. The session-13 detail is below for reference, but
-this is the live work. Branch `WorkingSunday`, **HEAD `3f08be2`**, suite **1178 OK**
-(`cd harness && python -m unittest discover -p "test_*.py"`). Everything through
-`3f08be2` is committed and green. Nothing uncommitted.
+Branch `WorkingSunday`, **HEAD `0e29928`**, suite **1301 OK**
+(`cd harness && python -m unittest discover -p "test_*.py"`). Everything committed and
+green. Nothing uncommitted.
+
+### What session 15 shipped (build order from session-14 handoff)
+
+All 6 items from the session-14 work program are DONE:
+
+1. **ffuf harness integration** (`b9ffc9c`) — `harness/ffuf_runner.py` wraps the
+   `harness/ffuf:2.1.0` container via `tool_runner.run`. Wired into `SurfaceDiscovery`
+   as a fast-path before the Python sweep; falls back silently when Docker/image absent.
+   28 tests.
+
+2. **Coverage spine** (`a761dbe`) — `harness/coverage_model.py`: 30 WSTG/Academy-tagged
+   checks (8 domain, 12 endpoint, 10 parameter), each with a phase, vulnerability class,
+   deterministic applicability predicate, and confirmation method. `CoverageMatrix` tracks
+   identity × endpoint × check with auditable cell statuses. 50 tests.
+
+3. **Deferred confirmation legs** (`41509a8`) — verb-tamper (safe subset: read-only
+   alternates + override headers), CSRF (deterministic property: token-strip + SameSite),
+   file-upload (benign .html upload + retrieve). All wired into registry, confirmation gate,
+   and safety gate. 27 tests.
+
+4. **Confirmation memoisation** (`0e29928`) — `_cached_validate` wrapper in
+   `investigate_engagement()` caches `ValidationResult` per
+   `(validator.name, method, url, body_hash)`. Eliminates redundant HTTP/container work
+   when the same leg runs on the same endpoint (the xxe-10×/path_trav-6× problem). 11 tests.
+
+5. **browser_xss CDP live-verify** (`0e29928`) — Playwright + real Chromium against the
+   vuln_fixture reflected-XSS endpoint. True-positive confirms, negative control (escaped)
+   stays silent. **XSS promoted from smoke_only to LIVE_VERIFIED_MARKERS** — every
+   confirmable class except `privilege_escalation` now has a live-verified leg.
+
+6. **Report artifact updated** — the VulnCorp Harness Report artifact (`a56d56f5`) now
+   reflects session-15 state: 22 confirmed / 6 classes, 15+ live-verified legs, coverage
+   spine, gaps and audit trail.
+
+Also fixed: added csrf/file_upload/verb_tamper markers to CONFIRMABLE_CLASS_MARKERS
+(they were in LIVE_VERIFIED but missing from CONFIRMABLE, so the gate never classified
+them).
+
+### Commits this session (on top of `41509a8` from session-14 continuation)
+
+- `b9ffc9c` — ffuf container runner integration
+- `a761dbe` — WSTG check catalog + coverage matrix
+- `41509a8` — verb-tamper, CSRF, file-upload legs
+- `0e29928` — confirmation memoisation + browser_xss live-verified + XSS promoted
+
+### What remains
+
+- **Wire the coverage matrix as a cell-filler** — the spine is data-only; integrate it
+  into `investigate_engagement()` so cells are filled during a run and the matrix drives
+  what gets tested. This is the I1/I2/I5 integration.
+- **Remaining deferred legs** — rate-limit (V4), reset-token entropy (V3), second-order
+  SQLi (V22) from LEG_DECISIONS.md.
+- **Discovery of agent-role feature surface** — the recurring frontier gap: cmd-inj/SSTI/
+  open-redirect/SSRF legs are built but VulnCorp's V23/V24/V30 aren't reachable by route
+  guessing. Next lever: authenticated agent-role crawling or Burp sitemap integration.
+- **Fresh measured run** — re-run with the session-15 legs (memoised, new deferred legs)
+  to get an updated recall number.
+- **Push WorkingSunday + open PR into main.**
+
+### Environment
+
+Ollama `qwen3:8b` + Docker up; images `harness/sqlmap:1.10.9` and `harness/ffuf:2.1.0`
+present. Playwright + Chromium installed and working (browser_xss live-verified this
+session). VulnCorp running on :5002.
+
+---
+
+## ►► SESSION-14 HANDOFF (reference) ◄◄
+
+The session-14 handoff defined the work program session 15 executed. Kept here for
+context on the integrated architecture and the 6-item + 5-integration-requirement
+framework. HEAD was `3f08be2`, suite **1178 OK**.
 
 ### The operator's expanded goal (verbatim intent)
 
