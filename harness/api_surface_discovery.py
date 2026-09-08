@@ -188,7 +188,8 @@ class SurfaceDiscovery:
     def __init__(self, base_url: str, *, headers: dict | None = None,
                  allowed_hosts: list[str] | None = None,
                  nouns=None, collections=None, prefixes=None, seed_paths=None,
-                 actions=None, sensitive_files=None, timeout: float = 8.0, max_probes: int = 6000):
+                 actions=None, sensitive_files=None, timeout: float = 8.0, max_probes: int = 6000,
+                 use_ffuf: bool = True, ffuf_image: str = "harness/ffuf:2.1.0"):
         self.base_url = base_url.rstrip("/")
         self.headers = headers or {}
         self.allowed_hosts = allowed_hosts or []
@@ -205,6 +206,8 @@ class SurfaceDiscovery:
         self.seed_paths = [s for s in (seed_paths or []) if isinstance(s, str) and s.startswith("/")]
         self.timeout = timeout
         self.max_probes = max_probes
+        self.use_ffuf = use_ffuf
+        self.ffuf_image = ffuf_image
         self._seen: dict[str, Route] = {}
         self._probes = 0
         # Soft-404 signature (Phase 5): (status, normalized-body-hash) that a
@@ -304,6 +307,15 @@ class SurfaceDiscovery:
             result.errors.append(f"soft-404 calibrated: status {self._soft404[0]} treated as "
                                  f"not-found by body shape")
 
+        # 0b. ffuf fast-path: when Docker + the ffuf image are available, run
+        #     the container-based content discovery first. Its routes seed _seen
+        #     so the Python sweep below skips paths ffuf already found (the
+        #     _check dedup in _seen handles this). Falls back silently when
+        #     Docker/image is absent.
+        ffuf_count = 0
+        if self.use_ffuf:
+            ffuf_count = await self._ffuf_fast_path(result)
+
         # 1. spec probe -- if the app hands us its contract, use it verbatim.
         for sp in SPEC_PATHS:
             r = await self._raw("GET", sp)
@@ -374,6 +386,29 @@ class SurfaceDiscovery:
         result.routes = list(self._seen.values())
         result.probes_sent = self._probes
         return result
+
+    async def _ffuf_fast_path(self, result: SurfaceResult) -> int:
+        """Run ffuf in a container and seed its discovered routes into _seen.
+        Returns the number of routes found. Fails silently (returns 0) when
+        Docker or the image is absent."""
+        import ffuf_runner
+        ok, reason = ffuf_runner.ffuf_available(self.ffuf_image)
+        if not ok:
+            result.errors.append(f"ffuf skipped: {reason}")
+            return 0
+        ffuf_result = await ffuf_runner.ffuf_discover(
+            self.base_url, image=self.ffuf_image, headers=self.headers or None)
+        if ffuf_result.error:
+            result.errors.append(f"ffuf error: {ffuf_result.error}")
+            return 0
+        count = 0
+        for route in ffuf_result.routes:
+            if route.path not in self._seen:
+                self._seen[route.path] = route
+                count += 1
+        if count:
+            result.errors.append(f"ffuf seeded {count} routes")
+        return count
 
     async def _derive_prefixes(self, max_new: int = 8) -> None:
         """Phase 0.2(a): sweep the namespaces the app actually exposes, not only

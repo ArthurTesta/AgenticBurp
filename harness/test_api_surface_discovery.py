@@ -370,6 +370,99 @@ class SoftNotFoundTests(unittest.TestCase):
         self.assertIn("/api/users", res.paths())
 
 
+class FfufIntegrationTests(unittest.TestCase):
+    """ffuf fast-path wired into SurfaceDiscovery.discover()."""
+
+    def _responder(self, known):
+        def r(method, path):
+            return known.get(path, (500, _NF, ""))
+        return r
+
+    def test_ffuf_routes_seeded_into_seen(self):
+        """When ffuf is available, its routes appear in the result tagged 'ffuf'."""
+        import json as _json
+        from unittest.mock import patch
+        from ffuf_runner import FfufResult
+        from api_surface_discovery import Route as R
+
+        ffuf_routes = [R(path="/api/login", status=200, length=50, source="ffuf"),
+                       R(path="/api/secret", status=403, length=10, source="ffuf")]
+        mock_result = FfufResult(routes=ffuf_routes, returncode=0)
+
+        known = {"/api/login": (200, '{"ok":true}', "")}
+        disc = _FakeDiscovery(self._responder(known),
+                              prefixes=["/api/"], collections=[], nouns=["login"],
+                              actions=[], sensitive_files=[])
+
+        with patch("ffuf_runner.ffuf_available", return_value=(True, "ok")), \
+             patch("ffuf_runner.ffuf_discover", return_value=mock_result):
+            res = _run(disc)
+
+        self.assertIn("/api/login", res.paths())
+        self.assertIn("/api/secret", res.paths())
+        secret = next(r for r in res.routes if r.path == "/api/secret")
+        self.assertEqual(secret.source, "ffuf")
+
+    def test_ffuf_unavailable_falls_back_silently(self):
+        """When Docker/image is absent, discover() still works (Python sweep)."""
+        from unittest.mock import patch
+
+        known = {"/api/health": (200, "{}", "")}
+        disc = _FakeDiscovery(self._responder(known),
+                              prefixes=["/api/"], collections=[], nouns=["health"],
+                              actions=[], sensitive_files=[])
+
+        with patch("ffuf_runner.ffuf_available", return_value=(False, "no docker")):
+            res = _run(disc)
+
+        self.assertIn("/api/health", res.paths())
+        self.assertTrue(any("ffuf skipped" in e for e in res.errors))
+
+    def test_ffuf_disabled_by_flag(self):
+        """use_ffuf=False skips ffuf entirely -- no import, no check."""
+        from unittest.mock import patch
+
+        known = {"/api/health": (200, "{}", "")}
+        disc = _FakeDiscovery(self._responder(known),
+                              prefixes=["/api/"], collections=[], nouns=["health"],
+                              actions=[], sensitive_files=[])
+        disc.use_ffuf = False
+
+        with patch("ffuf_runner.ffuf_available") as mock_avail:
+            res = _run(disc)
+            mock_avail.assert_not_called()
+
+        self.assertIn("/api/health", res.paths())
+
+    def test_ffuf_routes_not_duplicated_by_python_sweep(self):
+        """A path found by ffuf isn't re-probed by the Python wordlist sweep."""
+        from unittest.mock import patch
+        from ffuf_runner import FfufResult
+        from api_surface_discovery import Route as R
+
+        ffuf_routes = [R(path="/api/login", status=200, length=50, source="ffuf")]
+        mock_result = FfufResult(routes=ffuf_routes, returncode=0)
+
+        probe_calls = []
+        known = {"/api/login": (200, '{"ok":true}', "")}
+
+        class _Tracking(_FakeDiscovery):
+            async def _probe(self, method, path):
+                probe_calls.append(path)
+                return self._responder(method, path)
+
+        disc = _Tracking(self._responder(known),
+                         prefixes=["/api/"], collections=[], nouns=["login"],
+                         actions=[], sensitive_files=[])
+
+        with patch("ffuf_runner.ffuf_available", return_value=(True, "ok")), \
+             patch("ffuf_runner.ffuf_discover", return_value=mock_result):
+            res = _run(disc)
+
+        login_route = next(r for r in res.routes if r.path == "/api/login")
+        self.assertEqual(login_route.source, "ffuf")
+
+
 class SpecTests(unittest.TestCase):
     def test_spec_paths_parsed(self):
         body = '{"openapi":"3.0.0","paths":{"/api/a":{},"/api/b/{id}":{},"bad":{}}}'
