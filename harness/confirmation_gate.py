@@ -175,6 +175,17 @@ LIVE_VERIFIED_MARKERS = frozenset({
     # (session-not-rotated / weak-password-accepted / existence-discriminating error).
     "session_fixation", "session fixation", "weak_password", "weak password",
     "username_enumeration", "username enumeration", "user enumeration",
+
+    # CSRF (csrf_validator, session-15)
+    "csrf", "cross-site request forgery", "cross site request forgery", "xsrf",
+
+    # File upload bypass (file_upload_validator, session-15)
+    "file_upload", "file upload", "arbitrary file upload",
+    "unrestricted file upload",
+
+    # Verb tamper / method bypass (verb_tamper_validator, session-15)
+    "verb_tamper", "verb tamper", "method tampering", "http method",
+    "misconfig",
 })
 
 

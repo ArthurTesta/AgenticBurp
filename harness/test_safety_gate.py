@@ -305,7 +305,16 @@ class TestNoValidatorBypassesTheGate(unittest.TestCase):
                                   "auth_sequence_validator.py",
                                   # stored_xss replays the captured write method to plant the
                                   # payload, gate-routed + self-gated on allow_mutating_replay.
-                                  "stored_xss_validator.py"}
+                                  "stored_xss_validator.py",
+                                  # verb_tamper sends alternate safe methods + override headers,
+                                  # gate-routed.
+                                  "verb_tamper_validator.py",
+                                  # csrf replays the mutating request without the CSRF token,
+                                  # gate-routed + self-gated on allow_mutating_replay.
+                                  "csrf_validator.py",
+                                  # file_upload sends a POST upload, gate-routed + self-gated
+                                  # on allow_mutating_replay.
+                                  "file_upload_validator.py"}
         # Files whose exchange.method reference is provably not a live
         # send at all -- verified by reading the code, not assumed.
         inert_usage_exceptions = {

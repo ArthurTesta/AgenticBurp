@@ -27,6 +27,9 @@ from .open_redirect_validator import OpenRedirectValidator
 from .sequence_validator import SequenceValidator
 from .auth_sequence_validator import AuthSequenceValidator
 from .stored_xss_validator import StoredXssValidator
+from .verb_tamper_validator import VerbTamperValidator
+from .csrf_validator import CsrfValidator
+from .file_upload_validator import FileUploadValidator
 from safety_gate import get_default_gate, reset_default_gate
 
 
@@ -217,6 +220,26 @@ class ValidatorRegistry:
         if sxss_cfg.get("enabled", True):
             self.validators["stored_xss"] = StoredXssValidator(
                 allowed_hosts=_allowed, timeout=float(sxss_cfg.get("timeout", 10.0)))
+
+        # Verb-tamper leg -- safe subset: read-only method alternates + override
+        # headers. Active; does NOT send blind mutating methods (PUT/DELETE).
+        vt_cfg = cfg.get("verb_tamper", {})
+        if vt_cfg.get("enabled", True):
+            self.validators["verb_tamper"] = VerbTamperValidator(
+                allowed_hosts=_allowed, timeout=float(vt_cfg.get("timeout", 10.0)))
+        # CSRF leg -- deterministic property check: replays a state-changing
+        # request without the CSRF token and checks SameSite. Active; mutating
+        # replay gated by allow_mutating_replay.
+        csrf_cfg = cfg.get("csrf", {})
+        if csrf_cfg.get("enabled", True):
+            self.validators["csrf"] = CsrfValidator(
+                allowed_hosts=_allowed, timeout=float(csrf_cfg.get("timeout", 10.0)))
+        # File-upload extension bypass -- uploads a benign .html file and checks
+        # if it is stored and retrievable. Active; the upload is mutating.
+        fu_cfg = cfg.get("file_upload", {})
+        if fu_cfg.get("enabled", True):
+            self.validators["file_upload"] = FileUploadValidator(
+                allowed_hosts=_allowed, timeout=float(fu_cfg.get("timeout", 15.0)))
 
         # Browser-driven XSS validator (A2) -- active: loads candidate URLs in a
         # real headless browser and confirms only on observed script execution.
