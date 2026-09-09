@@ -492,5 +492,83 @@ class SettingsValidatorToggleEndpointTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 400)
 
 
+class InvestigateJobEndpointTests(unittest.TestCase):
+    """R18: the flagship graph investigation is reachable via a tracked, cancellable
+    job API (previously server.py never invoked investigate_engagement at all)."""
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self._original_db_path = store._DB_PATH
+        store._DB_PATH = Path(self._tmpdir.name) / "test_harness_state.db"
+        import importlib
+        import server as server_module
+        importlib.reload(server_module)
+        self.server = server_module
+        from fastapi.testclient import TestClient
+        self.client = TestClient(server_module.app)
+
+    def tearDown(self):
+        store._DB_PATH = self._original_db_path
+        self._tmpdir.cleanup()
+
+    def _poll(self, url, want, tries=60, delay=0.05):
+        import time
+        last = None
+        for _ in range(tries):
+            last = self.client.get(url).json()
+            if last.get("status") in want:
+                return last
+            time.sleep(delay)
+        return last
+
+    def test_start_poll_and_complete(self):
+        from unittest.mock import patch, AsyncMock
+        result = {"summary": {"host": "shop.test", "endpoint_count": 3}, "coverage": {"confirmed": 1}}
+        with patch.object(self.server.orchestrator, "investigate_engagement",
+                          new=AsyncMock(return_value=result)):
+            start = self.client.post("/engagement/shop.test/investigate",
+                                     json={"base_url": "http://localhost:5002", "roles": []})
+            self.assertEqual(start.status_code, 200)
+            job_id = start.json()["job_id"]
+            self.assertTrue(job_id)
+            done = self._poll(f"/engagement/shop.test/investigate/{job_id}", {"done", "error"})
+        self.assertEqual(done["status"], "done", done)
+        self.assertEqual(done["result"]["summary"]["endpoint_count"], 3)
+
+    def test_cancel_running_job(self):
+        from unittest.mock import patch
+        import asyncio
+
+        async def _slow(*a, **k):
+            await asyncio.sleep(30)
+            return {}
+
+        with patch.object(self.server.orchestrator, "investigate_engagement", new=_slow):
+            start = self.client.post("/engagement/shop.test/investigate",
+                                     json={"base_url": "http://localhost:5002"})
+            job_id = start.json()["job_id"]
+            cancel = self.client.post(f"/engagement/shop.test/investigate/{job_id}/cancel")
+            self.assertEqual(cancel.status_code, 200)
+            final = self._poll(f"/engagement/shop.test/investigate/{job_id}", {"cancelled"})
+        self.assertEqual(final["status"], "cancelled", final)
+
+    def test_status_unknown_job_404(self):
+        resp = self.client.get("/engagement/shop.test/investigate/nope")
+        self.assertEqual(resp.status_code, 404)
+
+    def test_empty_base_url_rejected(self):
+        resp = self.client.post("/engagement/shop.test/investigate", json={"base_url": ""})
+        self.assertEqual(resp.status_code, 400)
+
+    def test_list_jobs_for_host(self):
+        from unittest.mock import patch, AsyncMock
+        with patch.object(self.server.orchestrator, "investigate_engagement",
+                          new=AsyncMock(return_value={"summary": {}})):
+            self.client.post("/engagement/shop.test/investigate", json={"base_url": "http://localhost:5002"})
+            listing = self.client.get("/engagement/shop.test/investigate")
+        self.assertEqual(listing.status_code, 200)
+        self.assertGreaterEqual(len(listing.json()["jobs"]), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

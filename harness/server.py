@@ -833,6 +833,113 @@ async def engagement_advance(host: str, req: AdvanceRequest, authorization: str 
             "ready_tasks": st.pending(), "blocked_tasks": st.blocked(), "summary": st.summary()}
 
 
+# --- Flagship graph investigation as a tracked, cancellable job (R18) ----------
+# Before this, server.py exposed run/advance/crawl but NEVER invoked
+# investigate_engagement, so the Burp UI could not reach the flagship path at all.
+# This runs it as a background asyncio job with status/result/cancel. NOTE: a
+# persisted mid-run RESUME cursor (SHOULD-tier) is not implemented -- investigate_
+# engagement is not internally checkpointed; that needs the execution ledger
+# (roadmap Phase 2) and is an explicit follow-up. Jobs live in-process.
+import uuid as _uuid
+import time as _time
+
+_INVESTIGATE_JOBS: dict[str, dict] = {}
+
+
+def _job_public(job: dict) -> dict:
+    """The JSON-safe view of a job (never leaks the asyncio Task)."""
+    return {k: job.get(k) for k in ("job_id", "host", "base_url", "status",
+                                    "started_at", "finished_at", "error")}
+
+
+class InvestigateRequest(_BaseModel):
+    base_url: str
+    roles: list[dict] = []
+    max_nodes: int = 8
+    step_budget: int = 16
+    max_chain_rounds: int = 2
+
+
+@app.post("/engagement/{host}/investigate")
+async def engagement_investigate(host: str, req: InvestigateRequest,
+                                 authorization: str | None = Header(default=None)):
+    """Start the flagship graph-driven investigation as a background JOB and return
+    a job_id to poll. The job is cancellable. This is the single API entry to
+    investigate_engagement (R18)."""
+    _require_auth(authorization)
+    if not req.base_url:
+        raise HTTPException(status_code=400, detail="base_url is required")
+    import role_crawl
+    roles = [role_crawl.RoleSession(role=str(r.get("role", "user")),
+                                    headers=r.get("headers") or {}, name=r.get("name"))
+             for r in (req.roles or [])] or [role_crawl.RoleSession(role="anonymous", headers={})]
+    job_id = _uuid.uuid4().hex[:12]
+    job: dict = {"job_id": job_id, "host": host, "base_url": req.base_url,
+                 "status": "running", "task": None, "result": None, "error": None,
+                 "started_at": _time.time(), "finished_at": None}
+
+    async def _run():
+        try:
+            job["result"] = await orchestrator.investigate_engagement(
+                req.base_url, roles,
+                max_nodes=max(1, min(req.max_nodes, 100)),
+                step_budget=max(1, min(req.step_budget, 64)),
+                max_chain_rounds=max(0, min(req.max_chain_rounds, 10)))
+            job["status"] = "done"
+        except asyncio.CancelledError:
+            job["status"] = "cancelled"
+            raise
+        except Exception as e:  # a failed job must report, never crash the server
+            job["status"] = "error"
+            job["error"] = f"{type(e).__name__}: {e}"
+            log.warning("investigate job %s failed: %s", job_id, e)
+        finally:
+            job["finished_at"] = _time.time()
+
+    job["task"] = asyncio.create_task(_run())
+    _INVESTIGATE_JOBS[job_id] = job
+    return _job_public(job)
+
+
+@app.get("/engagement/{host}/investigate")
+async def engagement_investigate_list(host: str, authorization: str | None = Header(default=None)):
+    """List investigation jobs for a host (newest-first status only)."""
+    _require_auth(authorization)
+    jobs = [j for j in _INVESTIGATE_JOBS.values() if j["host"] == host]
+    jobs.sort(key=lambda j: j.get("started_at") or 0, reverse=True)
+    return {"host": host, "jobs": [_job_public(j) for j in jobs]}
+
+
+@app.get("/engagement/{host}/investigate/{job_id}")
+async def engagement_investigate_status(host: str, job_id: str,
+                                        authorization: str | None = Header(default=None)):
+    """Poll a job; the full investigate_engagement result is included once done."""
+    _require_auth(authorization)
+    job = _INVESTIGATE_JOBS.get(job_id)
+    if not job or job["host"] != host:
+        raise HTTPException(status_code=404, detail="unknown job")
+    out = _job_public(job)
+    if job["status"] == "done":
+        out["result"] = job["result"]
+    return out
+
+
+@app.post("/engagement/{host}/investigate/{job_id}/cancel")
+async def engagement_investigate_cancel(host: str, job_id: str,
+                                        authorization: str | None = Header(default=None)):
+    """Request cancellation of a running job (asyncio task cancellation)."""
+    _require_auth(authorization)
+    job = _INVESTIGATE_JOBS.get(job_id)
+    if not job or job["host"] != host:
+        raise HTTPException(status_code=404, detail="unknown job")
+    task = job.get("task")
+    if task is not None and not task.done():
+        task.cancel()
+        if job["status"] == "running":
+            job["status"] = "cancelling"
+    return _job_public(job)
+
+
 @app.get("/activity")
 async def activity(since: int = 0, limit: int = 100, authorization: str | None = Header(default=None)):
     """Live agent-activity feed (V1). Poll with the last seq you saw
