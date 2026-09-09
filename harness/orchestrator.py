@@ -608,6 +608,15 @@ class Orchestrator:
         # allow_mutating_replay inside the client. Scope-gated + throttled.
         self.engagement_feature_crawl = bool(
             (config.get("engagement", {}) or {}).get("feature_crawl", False))
+        # Coverage matrix as a DRIVER (I1): actively fire every applicable
+        # deterministic leg per (identity x endpoint x check) cell, regardless of
+        # whether an agent labelled it -- so the matrix proves "every applicable
+        # check was attempted", not merely inferred, and detection no longer hinges
+        # on LLM label variance. DEFAULT OFF (sends the extra leg traffic); bounded
+        # by coverage_leg_budget. Legs are still gated by active_enabled + scope.
+        _eng_cfg = config.get("engagement", {}) or {}
+        self.engagement_coverage_drive = bool(_eng_cfg.get("coverage_drive_legs", False))
+        self.coverage_leg_budget = int(_eng_cfg.get("coverage_leg_budget", 80))
 
         log.info(f"Orchestrator initialized with {len(self.agent_manager.get_enabled_agents())} agents")
 
@@ -1236,8 +1245,43 @@ class Orchestrator:
             investigated_paths = {o.get("path") for o in outcomes if o.get("path")}
             investigated_keys = {k for k in state.endpoints
                                  if k.split(" ", 1)[-1] in investigated_paths}
-            coverage = coverage_tracker.build_coverage(state, roles,
-                                                       investigated_keys=investigated_keys)
+            if self.engagement_coverage_drive:
+                # I1 matrix-driver: build a confirmation->validator map (reusing the
+                # instances above + a few cheap extra legs) and actively fire each
+                # applicable leg-backed cell, recording the real leg status.
+                from validators.verb_tamper_validator import VerbTamperValidator
+                from validators.csrf_validator import CsrfValidator
+                from validators.file_upload_validator import FileUploadValidator
+                _val_by_conf = {
+                    "cross_identity": _xval, "jwt_forge": _jwt, "browser_xss": _bxss,
+                    "stored_xss": _sxss, "ssrf": _ssrf, "xxe": _xxe,
+                    "command_injection": _cmdi, "ssti": _ssti, "path_traversal": _path,
+                    "open_redirect": _redir, "sequence": _seq, "deserialization_oob": _deser,
+                    "auth_sequence": _auth, "rate_limit": _rate, "reset_token": _reset,
+                    "dom_xss": _domxss, "toctou": _toctou,
+                    "verb_tamper": VerbTamperValidator(allowed_hosts=self.allowed_hosts),
+                    "csrf": CsrfValidator(allowed_hosts=self.allowed_hosts),
+                    "file_upload": FileUploadValidator(allowed_hosts=self.allowed_hosts),
+                }
+                _role_headers = {r.role: dict(r.headers or {}) for r in roles}
+
+                async def _run_leg(identity, method, path, check):
+                    validator = _val_by_conf.get(check.confirmation)
+                    if validator is None:
+                        return None  # e.g. sqlmap/race_condition -- not driven here
+                    node = {"method": method, "path": path}
+                    ex = worklist_investigator._seed_exchange(
+                        base_url, node, _role_headers.get(identity, {}), "1")
+                    return await _cached_validate(
+                        validator, _as_finding({"vulnerability_class": check.vulnerability_class},
+                                               check.vulnerability_class), ex)
+
+                coverage = await coverage_tracker.build_coverage_driven(
+                    state, roles, _run_leg, budget=self.coverage_leg_budget,
+                    driveable=set(_val_by_conf.keys()), investigated_keys=investigated_keys)
+            else:
+                coverage = coverage_tracker.build_coverage(state, roles,
+                                                           investigated_keys=investigated_keys)
         except Exception as e:  # coverage is a report layer -- never sink the run
             log.warning("investigate_engagement: coverage build failed: %s", e)
 

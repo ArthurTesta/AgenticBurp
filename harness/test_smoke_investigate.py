@@ -135,8 +135,10 @@ class InvestigateProactiveJwtSmokeTest(unittest.TestCase):
         cache._cache = cls._orig_cache
         shutil.rmtree(cls._tmp, ignore_errors=True)
 
-    def _run(self, vulnerable: bool):
+    def _run(self, vulnerable: bool, drive: bool = False):
         orch = Orchestrator(_test_config())
+        if drive:
+            orch.engagement_coverage_drive = True  # I1 matrix-driver on
         # No agent probe should be needed (the node derives no specialty), but stub
         # it so a stray derivation can't reach for a real model.
         orch.run_active_probe = AsyncMock(return_value={
@@ -177,6 +179,17 @@ class InvestigateProactiveJwtSmokeTest(unittest.TestCase):
         self.assertGreaterEqual(jwt_check.get("confirmed", 0), 1)
         # every not-tested cell carries a reason (the audit guarantee)
         self.assertTrue(all(nt.get("reason") for nt in cov.get("not_tested", [])))
+
+    def test_coverage_driver_fires_legs_end_to_end(self):
+        # I1: with the matrix-driver on, investigate_engagement actively fires the
+        # applicable deterministic legs (regardless of any agent label) and records
+        # them -- coverage.legs_driven proves the drive path ran end-to-end, and the
+        # JWT check still lands CONFIRMED.
+        result = self._run(vulnerable=True, drive=True)
+        cov = result.get("coverage") or {}
+        self.assertGreaterEqual(cov.get("legs_driven", 0), 1,
+                                "coverage driver did not fire any legs end-to-end")
+        self.assertGreaterEqual(cov.get("by_check", {}).get("WSTG-CRYP-04", {}).get("confirmed", 0), 1)
 
     def test_negative_control_secure_server_yields_no_confirmation(self):
         # A server that actually verifies signatures must NOT be confirmed -- proving

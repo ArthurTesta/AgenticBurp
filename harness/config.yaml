@@ -182,6 +182,15 @@ engagement:
   # validators.allow_mutating_replay, so with mutating replay off this reduces to
   # an authenticated read-only walk. Scope-gated to server.allowed_hosts + throttled.
   feature_crawl: false
+  # Coverage matrix as a DRIVER (I1): after the worklist pass, actively fire every
+  # applicable deterministic confirmation leg per (identity x endpoint x check)
+  # cell -- regardless of whether an agent labelled that class -- and record the
+  # real outcome, so the matrix proves "every applicable check was attempted" and
+  # detection no longer depends on LLM label variance. DEFAULT OFF: it sends the
+  # extra leg traffic. Bounded by coverage_leg_budget. Legs stay gated by
+  # validators.active_enabled + scope; mutating legs also by allow_mutating_replay.
+  coverage_drive_legs: false
+  coverage_leg_budget: 80
 
 retry_budget:
   max_retries: 2              # extra re-dispatches after the first pass (0 = one pass)

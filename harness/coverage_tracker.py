@@ -173,6 +173,56 @@ class CoverageTracker:
                 n += 1
         return n
 
+    def pending_leg_cells(self, driveable: set[str] | None = None) -> list:
+        """(identity, endpoint_key, Check) for every applicable+PENDING cell whose
+        check has a deterministic leg (optionally restricted to the `driveable`
+        confirmation names the caller can actually run). These are the cells the
+        matrix-DRIVER fires regardless of any agent label -- the I1 guarantee."""
+        out = []
+        for (ident, ep_key, check_id), cell in self.matrix.cells().items():
+            if cell.status != CellStatus.PENDING:
+                continue
+            check = CHECKS_BY_ID.get(check_id)
+            if not check or check.confirmation not in _LEG_CONFIRMATIONS:
+                continue
+            if driveable is not None and check.confirmation not in driveable:
+                continue
+            out.append((ident, ep_key, check))
+        return out
+
+    async def drive_coverage_legs(self, run_leg, *, driveable: set[str] | None = None,
+                                  budget: int = 80) -> int:
+        """Actively FIRE each applicable+pending leg-backed cell via the injected
+        async `run_leg(identity, method, path, check) -> result` (result exposing
+        .status / .summary, or None to skip), recording the REAL outcome. This is
+        what turns the matrix from an after-the-fact record into I1's work-program:
+        every applicable deterministic check is attempted deterministically,
+        independent of whether the LLM labelled it. Returns cells driven. Bounded
+        by `budget` so a large surface can't fan out unboundedly."""
+        _STATUS = {"confirmed": CellStatus.CONFIRMED, "not_confirmed": CellStatus.NOT_DETECTED,
+                   "skipped": CellStatus.SKIPPED, "error": CellStatus.ERROR}
+        n = 0
+        for (ident, ep_key, check) in self.pending_leg_cells(driveable):
+            if n >= budget:
+                break
+            method, _, path = ep_key.partition(" ")
+            try:
+                res = await run_leg(ident, method, path, check)
+            except Exception as e:  # a leg blowing up must not sink coverage
+                log.debug("drive_coverage_legs: %s on %s failed: %s", check.confirmation, ep_key, e)
+                continue
+            if res is None:
+                continue
+            n += 1
+            status = _STATUS.get(getattr(res, "status", ""), CellStatus.NOT_DETECTED)
+            self.matrix.record(
+                ident, ep_key, check.id, status=status,
+                reason=(getattr(res, "summary", "") or f"{check.confirmation} leg driven off the matrix")[:180],
+                confidence=getattr(res, "confidence", None),
+                validator=getattr(res, "validator", None) or check.confirmation,
+                evidence=(getattr(res, "evidence", "") or "")[:200])
+        return n
+
     def finalize_pending_reasons(self) -> int:
         """Give remaining applicable-pending cells an explicit reason so the
         'not tested + why' audit is complete: a leg-backed check that never
@@ -228,3 +278,24 @@ def build_coverage(state, roles, investigated_keys: set[str] | None = None) -> d
         tracker.mark_leg_attempts(set(investigated_keys), identities)
     tracker.finalize_pending_reasons()
     return tracker.report()
+
+
+async def build_coverage_driven(state, roles, run_leg, *, driveable: set[str] | None = None,
+                                budget: int = 80, investigated_keys: set[str] | None = None) -> dict:
+    """Like build_coverage, but ACTIVELY DRIVES the deterministic legs (I1): after
+    recording the findings the run already produced, it fires every applicable
+    leg-backed cell via `run_leg` (regardless of any agent label) and records the
+    real outcome, THEN reasons over what is still pending. Async because the
+    driving sends live traffic through the injected `run_leg` seam."""
+    tracker = CoverageTracker()
+    endpoints = endpoint_view(state)
+    identities = sorted({getattr(r, "role", str(r)) for r in (roles or [])}) or ["anonymous"]
+    tracker.build(endpoints, identities)
+    tracker.record_findings_from_state(endpoints, identities)
+    driven = await tracker.drive_coverage_legs(run_leg, driveable=driveable, budget=budget)
+    if investigated_keys:
+        tracker.mark_leg_attempts(set(investigated_keys), identities)
+    tracker.finalize_pending_reasons()
+    report = tracker.report()
+    report["legs_driven"] = driven
+    return report

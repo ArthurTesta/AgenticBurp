@@ -108,5 +108,86 @@ class BuildTests(unittest.TestCase):
             self.assertIn(k, report)
 
 
+class DriveLegsTests(unittest.TestCase):
+    """The I1 matrix-DRIVER: fire every applicable leg-backed cell regardless of
+    an agent label, recording the real leg outcome."""
+
+    def _tracker(self):
+        import asyncio
+        from coverage_tracker import CoverageTracker, endpoint_view
+        st = _state_with([
+            ("GET", "/api/tickets/{id}", {"reachable_roles": ["user"]}),   # idor -> cross_identity
+            ("POST", "/api/search", {"reachable_roles": ["user"]}),         # body-bearing -> sqli/xss/...
+        ])
+        t = CoverageTracker()
+        eps = endpoint_view(st)
+        t.build(eps, ["user"])
+        return t, asyncio
+
+    def test_pending_leg_cells_are_applicable_and_leg_backed(self):
+        t, _ = self._tracker()
+        cells = t.pending_leg_cells()
+        # every returned cell must be PENDING + have a deterministic-leg check
+        from coverage_model import CHECKS_BY_ID
+        from coverage_tracker import _LEG_CONFIRMATIONS
+        self.assertTrue(cells)
+        for ident, ep_key, check in cells:
+            self.assertIn(check.confirmation, _LEG_CONFIRMATIONS)
+        # the object-scoped endpoint's IDOR/cross_identity cell is in there
+        self.assertTrue(any(c.id == "WSTG-ATHZ-04" for _, _, c in cells))
+
+    def test_driver_records_confirmed_and_not_detected(self):
+        t, asyncio = self._tracker()
+
+        class _Res:
+            def __init__(self, status): self.status = status; self.summary = "x"; self.confidence = 0.9; self.evidence = "e"; self.validator = "v"
+
+        async def run_leg(identity, method, path, check):
+            # confirm the IDOR cell, everything else not_confirmed
+            if check.id == "WSTG-ATHZ-04":
+                return _Res("confirmed")
+            return _Res("not_confirmed")
+
+        driven = asyncio.run(t.drive_coverage_legs(run_leg, budget=100))
+        self.assertGreater(driven, 0)
+        from coverage_model import CellStatus
+        idor_cell = t.matrix.get("user", "GET /api/tickets/{id}", "WSTG-ATHZ-04")
+        self.assertEqual(idor_cell.status, CellStatus.CONFIRMED)
+        # a driven-but-not-confirmed leg cell is NOT_DETECTED (attempted), not pending
+        sqli_cell = t.matrix.get("user", "POST /api/search", "WSTG-INPV-05")
+        self.assertEqual(sqli_cell.status, CellStatus.NOT_DETECTED)
+
+    def test_driver_respects_budget(self):
+        t, asyncio = self._tracker()
+        calls = {"n": 0}
+
+        class _Res:
+            status = "not_confirmed"; summary = ""; confidence = None; evidence = ""; validator = "v"
+
+        async def run_leg(identity, method, path, check):
+            calls["n"] += 1
+            return _Res()
+
+        asyncio.run(t.drive_coverage_legs(run_leg, budget=2))
+        self.assertEqual(calls["n"], 2)
+
+    def test_build_coverage_driven_reports_legs_driven(self):
+        import asyncio
+        from coverage_tracker import build_coverage_driven
+
+        class _Res:
+            status = "not_confirmed"; summary = ""; confidence = None; evidence = ""; validator = "v"
+
+        async def run_leg(identity, method, path, check):
+            return _Res()
+
+        st = _state_with([("GET", "/api/tickets/{id}", {"reachable_roles": ["user"]})])
+        report = asyncio.run(build_coverage_driven(
+            st, [type("R", (), {"role": "user"})()], run_leg, budget=50))
+        self.assertIn("legs_driven", report)
+        self.assertGreaterEqual(report["legs_driven"], 1)
+        self.assertTrue(all(nt.get("reason") for nt in report["not_tested"]))
+
+
 if __name__ == "__main__":
     unittest.main()
