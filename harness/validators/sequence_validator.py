@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import json
 import re
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, parse_qsl, urlencode
 
 import httpx
 
@@ -113,13 +113,38 @@ class SequenceValidator(Validator):
             return None
         return obj if isinstance(obj, dict) else None
 
+    def _form_object(self, body: str):
+        """Parse a urlencoded form body into a flat {name: value} dict, or None if
+        it doesn't look like one (no '=' pairs)."""
+        body = body or ""
+        if "=" not in body or (body.lstrip().startswith(("{", "["))):
+            return None
+        pairs = parse_qsl(body, keep_blank_values=True)
+        return dict(pairs) if pairs else None
+
+    def _parse_body(self, exchange: HttpExchange):
+        """(kind, dict) for the request body: 'json' for a JSON object, 'form' for
+        urlencoded. None when neither -- mass-assignment needs settable fields."""
+        body = exchange.request_body or ""
+        if _looks_like_json(body, _content_type_of(exchange)):
+            obj = self._json_object(body)
+            if obj is not None:
+                return "json", obj
+        form = self._form_object(body)
+        if form is not None:
+            return "form", form
+        return None, None
+
+    def _encode(self, kind: str, fields: dict) -> str:
+        return json.dumps(fields) if kind == "json" else urlencode(fields)
+
     def applies(self, finding: Finding, exchange: HttpExchange) -> bool:
         if not super().applies(finding, exchange):
             return False
         if (exchange.method or "").upper() not in ("POST", "PUT", "PATCH"):
             return False
-        return (_looks_like_json(exchange.request_body or "", _content_type_of(exchange))
-                and self._json_object(exchange.request_body or "") is not None)
+        kind, _ = self._parse_body(exchange)
+        return kind is not None
 
     def _skip(self, why: str) -> ValidationResult:
         return ValidationResult(self.name, "skipped", "mass_assignment", summary=why)
@@ -161,15 +186,16 @@ class SequenceValidator(Validator):
         if self.allowed_hosts and host not in self.allowed_hosts:
             return self._skip(f"host {host!r} out of scope")
         method = (exchange.method or "").upper()
-        base_body = self._json_object(exchange.request_body or "")
+        kind, base_body = self._parse_body(exchange)
         if base_body is None:
-            return self._skip("request body is not a JSON object")
+            return self._skip("request body is not a JSON object or urlencoded form")
         # Fields not already privileged in the ORIGINAL request body.
         candidates = {f: v for f, v in _PRIV_FIELDS.items() if not _is_priv(base_body.get(f), v)}
 
         headers = {k: v for k, v in (exchange.request_headers or {}).items()
                    if k.lower() not in ("content-length", "host")}
-        headers.setdefault("Content-Type", "application/json")
+        headers.setdefault("Content-Type",
+                           "application/json" if kind == "json" else "application/x-www-form-urlencoded")
         try:
             async with GatedAsyncClient(get_default_gate(), self.name, timeout=self.timeout,
                                         follow_redirects=False, verify=False) as client:
@@ -188,11 +214,12 @@ class SequenceValidator(Validator):
                 if not cands:
                     return self._skip("no non-privileged candidate field to flip "
                                       "(request/resource already carry the privileged fields)")
-                # 2. mutate (A): inject all candidate privileged fields in ONE write.
+                # 2. mutate (A): inject all candidate privileged fields in ONE write,
+                #    encoded in the SAME format as the captured request (json or form).
                 try:
                     await global_throttle.acquire()
                     await client.request(method, exchange.url, headers=headers,
-                                         content=json.dumps({**base_body, **cands}))
+                                         content=self._encode(kind, {**base_body, **cands}))
                 except SafetyGateBlocked as e:
                     return self._skip(f"mutating replay not authorized: {e.decision.reason}")
                 # 3. verify read (B): independent GET -- did any field persist (at any depth)?

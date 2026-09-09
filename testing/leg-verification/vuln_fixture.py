@@ -165,7 +165,11 @@ def make_app(file_base: str | None = None) -> Flask:
     @app.route("/account/profile", methods=["GET", "PATCH", "POST", "PUT"])
     def account_profile():
         if request.method != "GET":
-            body = request.get_json(silent=True) or {}
+            # accept BOTH JSON and urlencoded form bodies (a realistic app does),
+            # so the sequence leg's form-encoded path is exercised too (V14 fix).
+            body = request.get_json(silent=True)
+            if not isinstance(body, dict):
+                body = request.form.to_dict() if request.form else {}
             if isinstance(body, dict):
                 state["profile"].update(body)  # VULNERABLE: no settable-field allowlist
         return jsonify(state["profile"])

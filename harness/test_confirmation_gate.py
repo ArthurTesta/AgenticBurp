@@ -103,10 +103,14 @@ class TestLegAwareThreeState(unittest.TestCase):
         for live in ("idor", "SQL_INJECTION", "xxe", "jwt algorithm confusion",
                      "path_traversal", "ssti", "open_redirect", "ssrf",
                      "command injection", "mass_assignment", "reflected xss",
-                     "cross-site scripting", "csrf", "verb_tamper", "file_upload"):
+                     "cross-site scripting", "csrf", "verb_tamper", "file_upload",
+                     # session-16: privilege_escalation promoted (sequence leg
+                     # live-verifies the write->re-read priv-esc mechanism).
+                     "privilege escalation"):
             self.assertEqual(leg_tier(live), "live", live)
-        # provisional: confirmable class whose leg is not yet live-verified.
-        for prov in ("privilege escalation",):
+        # provisional: confirmable class whose leg is not yet live-verified
+        # (session-16: rate_limit + reset_token legs built but not live-run yet).
+        for prov in ("rate_limit", "reset_token"):
             self.assertEqual(leg_tier(prov), "provisional", prov)
         for none in ("business_logic", "information_disclosure", None, ""):
             self.assertEqual(leg_tier(none), "none", none)
@@ -122,7 +126,7 @@ class TestLegAwareThreeState(unittest.TestCase):
     def test_unproven_provisional_class_capped_at_medium_not_low(self):
         # A provisional-leg class (leg not live-verified) is kept visible at
         # medium, not buried to low -- recall over a not-yet-trusted silence.
-        f = _apply(_finding("privilege escalation", severity="high", confidence=0.9))
+        f = _apply(_finding("rate_limit", severity="high", confidence=0.9))
         self.assertEqual(f.severity, "medium")
         self.assertEqual(f.original_severity, "high")
         self.assertLessEqual(f.confidence, 0.5)
@@ -131,7 +135,7 @@ class TestLegAwareThreeState(unittest.TestCase):
         self.assertTrue(f.summary.startswith("[Unconfirmed] "))
 
     def test_provisional_low_severity_unchanged(self):
-        f = _apply(_finding("privilege escalation", severity="low", confidence=0.3))
+        f = _apply(_finding("rate_limit", severity="low", confidence=0.3))
         self.assertEqual(f.severity, "low")  # medium cap never RAISES severity
 
     def test_xss_now_refuted_as_live_verified(self):
@@ -142,13 +146,13 @@ class TestLegAwareThreeState(unittest.TestCase):
         self.assertEqual(f.review_verdict, "unconfirmed_hypothesis")
 
     def test_override_promotes_a_provisional_leg_to_refuted(self):
-        # privilege_escalation is still provisional -> UNPROVEN (medium); an
-        # operator passes it in the live set to promote to REFUTED (low).
+        # rate_limit is still provisional -> UNPROVEN (medium); an operator passes
+        # it in the live set to promote to REFUTED (low).
         from confirmation_gate import LIVE_VERIFIED_MARKERS
-        base = _apply(_finding("privilege escalation", severity="high"))
+        base = _apply(_finding("rate_limit", severity="high"))
         self.assertEqual(base.severity, "medium")  # provisional today
-        promoted = LIVE_VERIFIED_MARKERS | {"privilege escalation"}
-        f = _apply(_finding("privilege escalation", severity="high"), live_verified_markers=promoted)
+        promoted = LIVE_VERIFIED_MARKERS | {"rate_limit"}
+        f = _apply(_finding("rate_limit", severity="high"), live_verified_markers=promoted)
         self.assertEqual(f.severity, "low")
         self.assertEqual(f.review_verdict, "unconfirmed_hypothesis")
 

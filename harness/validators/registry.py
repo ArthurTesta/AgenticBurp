@@ -228,7 +228,8 @@ class ValidatorRegistry:
         vt_cfg = cfg.get("verb_tamper", {})
         if vt_cfg.get("enabled", True):
             self.validators["verb_tamper"] = VerbTamperValidator(
-                allowed_hosts=_allowed, timeout=float(vt_cfg.get("timeout", 10.0)))
+                allowed_hosts=_allowed, timeout=float(vt_cfg.get("timeout", 10.0)),
+                try_mutating_methods=bool(vt_cfg.get("try_mutating_methods", False)))
         # CSRF leg -- deterministic property check: replays a state-changing
         # request without the CSRF token and checks SameSite. Active; mutating
         # replay gated by allow_mutating_replay.

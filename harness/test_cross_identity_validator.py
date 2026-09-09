@@ -141,6 +141,64 @@ class CrossIdentityValidatorTest(unittest.TestCase):
         self.assertTrue(v.applies(_finding("Broken Access Control"), _exchange()))
         self.assertFalse(v.applies(_finding("sql_injection"), _exchange()))
 
+    # --- V13: function-level authorization (BFLA) on an admin-namespaced route ---
+
+    def test_confirms_bfla_nonadmin_reaches_admin_function(self):
+        # /api/admin/users has NO object id -> the BOLA path skips it; the BFLA
+        # branch confirms because a non-admin identity reaches an admin-namespaced
+        # function while anon is denied.
+        identity_headers.set_identity("localhost", "carol", {"Authorization": "Bearer carol"}, role="user")
+
+        def responder(headers):
+            if headers.get("Authorization") == "Bearer carol":
+                return (200, "ADMIN USER LIST: alice, bob, carol, dave ...")
+            return (401, "Unauthorized")  # anon denied
+
+        v = _StubbedValidator(responder, allowed_hosts=["localhost"])
+        ex = _exchange(url="http://localhost/api/admin/users", body="")
+        r = asyncio.run(v.validate(_finding("broken_access_control"), ex))
+        self.assertEqual(r.status, "confirmed")
+        self.assertTrue(r.confirmed)
+        self.assertIn("function-level", r.summary.lower())
+
+    def test_bfla_not_confirmed_when_control_holds(self):
+        identity_headers.set_identity("localhost", "carol", {"Authorization": "Bearer carol"}, role="user")
+
+        def responder(headers):
+            return (403, "Forbidden")  # everyone denied, incl. carol + anon
+
+        v = _StubbedValidator(responder, allowed_hosts=["localhost"])
+        ex = _exchange(url="http://localhost/api/admin/users", body="")
+        r = asyncio.run(v.validate(_finding("broken_access_control"), ex))
+        self.assertEqual(r.status, "not_confirmed")
+        self.assertFalse(r.confirmed)
+
+    def test_bfla_skips_when_only_admin_identity(self):
+        # an admin reaching an admin function is expected -> can't prove a bypass.
+        identity_headers.set_identity("localhost", "root", {"Authorization": "Bearer root"}, role="admin")
+
+        def responder(headers):
+            if headers.get("Authorization") == "Bearer root":
+                return (200, "ADMIN USER LIST: alice, bob ...")
+            return (401, "Unauthorized")
+
+        v = _StubbedValidator(responder, allowed_hosts=["localhost"])
+        ex = _exchange(url="http://localhost/api/admin/users", body="")
+        r = asyncio.run(v.validate(_finding("broken_access_control"), ex))
+        self.assertEqual(r.status, "skipped")
+
+    def test_bfla_anon_reachable_is_missing_auth_not_bfla(self):
+        identity_headers.set_identity("localhost", "carol", {"Authorization": "Bearer carol"}, role="user")
+
+        def responder(headers):
+            return (200, "ADMIN USER LIST served to everyone including anon ...")
+
+        v = _StubbedValidator(responder, allowed_hosts=["localhost"])
+        ex = _exchange(url="http://localhost/api/admin/panel", body="")
+        r = asyncio.run(v.validate(_finding("broken_access_control"), ex))
+        self.assertEqual(r.status, "skipped")
+        self.assertIn("anon", r.summary.lower())
+
 
 if __name__ == "__main__":
     unittest.main()

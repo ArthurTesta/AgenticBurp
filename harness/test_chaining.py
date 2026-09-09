@@ -191,6 +191,9 @@ class TestChainRuleCoverageIsDocumented(unittest.TestCase):
         "cors", "crypto", "csp", "file_upload", "http_request_smuggling",
         "info_disclosure", "jwt", "misconfig", "nosql", "path_traversal",
         "race_condition", "recon", "session_timeout", "ssti", "supply_chain",
+        # session-16: reset_token is a standalone auth-hardening finding, not an
+        # escalation primitive that composes into a chain -> intentionally no rule.
+        "reset_token",
     })
 
     def test_categories_with_no_chain_rule_are_the_known_documented_set(self):

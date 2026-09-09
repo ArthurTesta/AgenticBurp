@@ -421,6 +421,29 @@ validators:
   open_redirect:
     enabled: true
     timeout: 10.0
+  # Verb-tamper leg: safe subset (read-only alternates + override headers) always
+  # on. try_mutating_methods additionally sends PUT/PATCH/DELETE for the common
+  # GET-protected/mutating-open shape -- OFF by default, and even when on every
+  # mutating send is still gated by allow_mutating_replay (triple-gated).
+  verb_tamper:
+    enabled: true
+    timeout: 10.0
+    try_mutating_methods: false
+  # Rate-limit / lockout leg (V4): replays the captured auth request min_attempts
+  # times via authorize_burst and confirms "no rate limiting" only if all reach
+  # the server un-throttled. Needs validators.max_burst_size >= min_attempts to
+  # fire meaningfully (else it skips as inconclusive). min_attempts <= hard cap 20.
+  rate_limit:
+    enabled: true
+    timeout: 10.0
+    min_attempts: 12
+  # Reset-token entropy leg (V3): samples reset tokens observable in responses and
+  # confirms only unambiguous predictability (constant/sequential/timestamp/below
+  # 64-bit floor/derived). Trigger is a mutating POST (needs allow_mutating_replay).
+  reset_token:
+    enabled: true
+    timeout: 10.0
+    samples: 5
 
 # Autonomous scope-discovery MVP (harness/scope_discovery.py). Off by
 # default -- the harness has never, until this option exists, decided on

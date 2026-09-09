@@ -92,6 +92,26 @@ _RESERVED_SLUGS = frozenset({
 })
 
 
+# An ADMIN/privilege-namespaced FUNCTION path: the namespace itself declares the
+# intended boundary (admin-only), so reaching it as a non-admin identity while
+# anonymous is denied is a broken FUNCTION-level authorization (BFLA) -- distinct
+# from BOLA (object swap), which needs an object id. Kept narrow (only unambiguous
+# admin namespaces) to avoid the /account, /profile, /reports false positives.
+_ADMIN_NAMESPACE = re.compile(
+    r"/(admin|administrator|manage|management|internal|console|backoffice|"
+    r"back-office|sysadmin|superuser|moderation|moderator)(/|$)", re.IGNORECASE)
+# A role label that is itself privileged -- an admin reaching an admin function is
+# expected, not a bypass, so such identities are excluded from the BFLA test.
+_PRIVILEGED_ROLE = re.compile(
+    r"admin|administrator|superuser|root|manager|supervisor|staff|operator|"
+    r"moderator|sysadmin", re.IGNORECASE)
+
+
+def is_admin_namespaced(url: str) -> bool:
+    """True iff the path lives under an unambiguously admin/privilege namespace."""
+    return bool(_ADMIN_NAMESPACE.search(urlparse(url).path or ""))
+
+
 def _looks_like_object_slug(prev: str, seg: str) -> bool:
     """A non-numeric slug counts as an object identifier only when it directly
     follows a known collection noun and is not itself a self-reference/verb/
@@ -154,6 +174,59 @@ class CrossIdentityValidator(Validator):
     def _skip(self, fc: str, why: str) -> ValidationResult:
         return ValidationResult(validator=self.name, status="skipped", finding_class=fc, summary=why)
 
+    @staticmethod
+    def _reached(probe: "identity_compare.Probe") -> bool:
+        """A substantive success: 2xx with a non-trivial body (not an empty/error
+        stub). Used by the function-level test to tell 'served the admin function'
+        from 'denied'."""
+        return 200 <= (probe.status or 0) < 300 and len((probe.body or "").strip()) > 20
+
+    async def _confirm_bfla(self, fc: str, exchange: HttpExchange, idents: list,
+                            anon: "identity_compare.Probe") -> ValidationResult:
+        """Function-level authorization (BFLA) confirmation for an admin-namespaced
+        endpoint: a NON-privileged identity reaching it (substantive 2xx) while the
+        anonymous baseline is denied is a real bypass. An admin-role identity is
+        excluded (an admin reaching an admin function is expected). Confirms only
+        that unambiguous case; if every non-admin identity is denied, the control
+        held (not_confirmed)."""
+        if self._reached(anon):
+            return self._skip(fc, "the admin-namespaced endpoint is reachable ANONYMOUSLY -- that is a "
+                                  "missing-authentication issue (auth_bypass), not a function-level "
+                                  "authorization bypass; not this leg's confirmation")
+        considered = 0
+        rejects = 0
+        for ident in idents[:self.max_identities]:
+            if _PRIVILEGED_ROLE.search(ident.get("role", "") or ""):
+                continue  # an admin reaching an admin function is expected, not a bypass
+            try:
+                attempt = await self._probe(exchange.url, ident["headers"])
+            except Exception:
+                continue
+            considered += 1
+            if self._reached(attempt):
+                return ValidationResult(
+                    validator=self.name, status="confirmed", finding_class=fc,
+                    confidence=0.85, confirmed=True,
+                    summary=f"Broken function-level authorization: non-privileged identity "
+                            f"{ident['name']!r} (role {ident.get('role','?')!r}) reached the "
+                            f"admin-namespaced function {exchange.url} while anonymous was denied.",
+                    evidence=f"Anonymous -> HTTP {anon.status} (denied); {ident['name']!r} -> "
+                             f"HTTP {attempt.status} with a substantive body. The path's admin "
+                             f"namespace declares an admin-only boundary a non-admin role crossed.")
+            rejects += 1
+        if considered == 0:
+            return self._skip(fc, "only privileged-role identities are configured -- cannot test a "
+                                  "function-level bypass (an admin reaching an admin function is expected). "
+                                  "Supply a lower-privilege identity's session to test BFLA")
+        if rejects == considered:
+            return ValidationResult(
+                validator=self.name, status="not_confirmed", finding_class=fc, confidence=0.8, confirmed=False,
+                summary="Function-level authorization holds: every non-privileged identity was denied "
+                        "this admin-namespaced function (and anonymous too).",
+                evidence=f"{considered} non-privileged identity/identities tested against {exchange.url}; "
+                         f"all denied.")
+        return self._skip(fc, "function-level comparison inconclusive")
+
     async def validate(self, finding: Finding, exchange: HttpExchange) -> ValidationResult:
         fc = finding.vulnerability_class
         if (exchange.method or "GET").upper() != "GET":
@@ -161,11 +234,15 @@ class CrossIdentityValidator(Validator):
         host = urlparse(exchange.url).hostname or ""
         if self.allowed_hosts and host not in self.allowed_hosts:
             return self._skip(fc, f"host {host!r} is outside server.allowed_hosts scope")
-        if not has_object_identifier(exchange.url):
+        object_scoped = has_object_identifier(exchange.url)
+        function_level = not object_scoped and is_admin_namespaced(exchange.url)
+        if not object_scoped and not function_level:
             return self._skip(fc, "no object identifier in the path/query -- a token-relative "
                                   "endpoint (e.g. /users/me, /profile, /dashboard) returns each "
-                                  "identity's OWN data and is not an IDOR candidate; cross-identity "
-                                  "needs a specific object reference to swap")
+                                  "identity's OWN data and is not an IDOR candidate; and the path is "
+                                  "not admin-namespaced, so it is not a function-level (BFLA) "
+                                  "candidate either; cross-identity needs an object reference to swap "
+                                  "or an admin-namespaced function to reach")
         idents = identity_headers.identities_for_host(host)
         if not idents:
             return self._skip(fc, "no identities configured for this host -- supply another identity's "
@@ -177,6 +254,13 @@ class CrossIdentityValidator(Validator):
         except Exception as e:  # network/scope error -- degrade, never crash the pipeline
             return ValidationResult(validator=self.name, status="error", finding_class=fc,
                                     summary=f"anonymous baseline probe failed: {e}")
+
+        # Function-level authorization (BFLA): an admin-namespaced function reached
+        # by a NON-privileged identity while anonymous is denied. The namespace
+        # declares the intended admin-only boundary; a non-admin role crossing it
+        # is a real bypass. Distinct from the BOLA object-swap path below.
+        if function_level:
+            return await self._confirm_bfla(fc, exchange, idents, anon)
 
         considered = 0
         rejects = 0

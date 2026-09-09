@@ -61,6 +61,37 @@ class VerbTamperTests(unittest.TestCase):
         self.assertEqual(r.status, "confirmed")
         self.assertTrue(r.confirmed)
 
+    def test_mutating_methods_off_by_default(self):
+        self.assertFalse(self.v.try_mutating_methods)
+
+    @patch("validators.verb_tamper_validator.GatedAsyncClient")
+    @patch("global_throttle.acquire", new_callable=AsyncMock)
+    def test_mutating_bypass_confirmed_when_opted_in(self, _throttle, mock_client_cls):
+        # V15: GET/POST denied but a mutating method (PUT/PATCH/DELETE) is open --
+        # only tried under the explicit try_mutating_methods opt-in.
+        from safety_gate import reset_default_gate, get_default_gate
+        reset_default_gate()
+        get_default_gate({"active_enabled": True, "allow_mutating_replay": True})
+        v = VerbTamperValidator(allowed_hosts=["target.test"], try_mutating_methods=True)
+        ex = _exchange(url="http://target.test/api/item/1", method="GET", status=403)
+        # safe methods all deny (403), the first mutating method (PUT) succeeds
+        def _req(method, url, **kw):
+            r = MagicMock()
+            if method in ("HEAD", "OPTIONS", "GET", "POST"):
+                r.status_code = 403; r.text = "denied"
+            else:  # PUT/PATCH/DELETE
+                r.status_code = 200; r.text = "updated ok, substantial body here"
+            return r
+        mock_client = AsyncMock()
+        mock_client.request = AsyncMock(side_effect=_req)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock()
+        mock_client_cls.return_value = mock_client
+        r = asyncio.run(v.validate(_finding(), ex))
+        reset_default_gate()
+        self.assertEqual(r.status, "confirmed")
+        self.assertIn("mutating", r.summary.lower())
+
     @patch("validators.verb_tamper_validator.GatedAsyncClient")
     @patch("global_throttle.acquire", new_callable=AsyncMock)
     def test_not_confirmed_all_denied(self, _throttle, mock_client_cls):

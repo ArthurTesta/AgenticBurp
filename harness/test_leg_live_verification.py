@@ -183,6 +183,31 @@ class LiveLegVerificationTest(unittest.TestCase):
         res = self._run_ex(v, self._profile_exchange("/account/tier-safe"), "mass_assignment")
         self.assertNotEqual(res.status, "confirmed")
 
+    def test_sequence_confirms_privilege_escalation_class(self):
+        # V18: the sequence leg's mechanism (inject role=admin/is_admin, re-read
+        # shows it persisted) IS privilege escalation. Prove it confirms when the
+        # finding is labelled privilege_escalation, so promoting that class to
+        # LIVE_VERIFIED is honest (same live-verified write->re-read differential).
+        self._reset_profiles()
+        v = SequenceValidator(allowed_hosts=["127.0.0.1"])
+        res = self._run_ex(v, self._profile_exchange("/account/profile"), "privilege_escalation")
+        self.assertEqual(res.status, "confirmed",
+                         f"sequence leg did not confirm a privilege_escalation-classed write: {res.summary}")
+        self.assertTrue(res.confirmed)
+
+    def test_sequence_confirms_form_encoded_mass_assign(self):
+        # V14 no-bite fix: a form-encoded (not JSON) mass-assignable write must
+        # also be caught -- VulnCorp's profile updates are form-encoded.
+        self._reset_profiles()
+        v = SequenceValidator(allowed_hosts=["127.0.0.1"])
+        ex = HttpExchange(url=f"{self._base}/account/profile", method="PATCH",
+                          request_headers={"Content-Type": "application/x-www-form-urlencoded"},
+                          request_body="name=alice")
+        res = self._run_ex(v, ex, "mass_assignment")
+        self.assertEqual(res.status, "confirmed",
+                         f"sequence leg did not confirm a form-encoded mass-assign: {res.summary}")
+        self.assertTrue(res.confirmed)
+
     # --- Command injection (OOB shell fetch; needs curl on the target) --------
     @unittest.skipIf(shutil.which("curl") is None, "curl not available to exercise the shell payload")
     def test_command_injection_confirms_via_shell(self):

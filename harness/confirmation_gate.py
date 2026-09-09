@@ -202,6 +202,10 @@ LIVE_VERIFIED_MARKERS = frozenset({
     "command_injection", "command injection", "rce", "remote code execution",
     "remote_code_execution", "shell injection", "shell_injection",
     "mass_assignment", "mass assignment",
+    # Session-16: the sequence leg's write->re-read differential IS privilege
+    # escalation (inject role=admin/is_admin, re-read shows it persisted) --
+    # live-verified against the fixture (test_sequence_confirms_privilege_escalation_class).
+    "privilege escalation", "privilege_escalation",
     # Session-13: active deserialization OOB pickle beacon, live-verified against a
     # real pickle.loads sink in test_leg_live_verification.
     "deserialization", "insecure deserialization", "insecure_deserialization", "pickle",
