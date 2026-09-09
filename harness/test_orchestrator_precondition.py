@@ -12,6 +12,8 @@ from role_crawl import RoleSession
 from orchestrator import (
     shape_precondition_legs,
     shape_precondition_findings,
+    confirmation_cache_key,
+    coverage_confirmation_finding,
     _carries_jwt,
     _jwt_identity,
     _accepts_xml,
@@ -29,6 +31,78 @@ def _ex(url="http://t/api/tickets/1", method="GET", headers=None, body=""):
     return HttpExchange(url=url, method=method, request_headers=headers or {},
                         request_body=body, response_status=None,
                         response_headers={}, response_body="")
+
+
+class ConfirmationCacheKeyTests(unittest.TestCase):
+    """R03: the within-run confirmation memoisation key must include IDENTITY and
+    finding subtype, so the same URL/body probed as different principals (or for
+    different subclasses) does not collide and replay one identity's result into
+    another's cell."""
+
+    def test_identical_inputs_same_key(self):
+        a = _ex(headers={"Authorization": "Bearer alice"})
+        b = _ex(headers={"Authorization": "Bearer alice"})
+        self.assertEqual(confirmation_cache_key("cross_identity", a, "idor"),
+                         confirmation_cache_key("cross_identity", b, "idor"))
+
+    def test_different_authorization_differs(self):
+        alice = _ex(headers={"Authorization": "Bearer alice"})
+        admin = _ex(headers={"Authorization": "Bearer admin"})
+        self.assertNotEqual(confirmation_cache_key("cross_identity", alice, "idor"),
+                            confirmation_cache_key("cross_identity", admin, "idor"))
+
+    def test_different_cookie_differs(self):
+        u = _ex(headers={"Cookie": "session=alice"})
+        v = _ex(headers={"Cookie": "session=bob"})
+        self.assertNotEqual(confirmation_cache_key("cross_identity", u, "idor"),
+                            confirmation_cache_key("cross_identity", v, "idor"))
+
+    def test_anonymous_vs_authenticated_differs(self):
+        anon = _ex(headers={})
+        authed = _ex(headers={"Authorization": "Bearer x"})
+        self.assertNotEqual(confirmation_cache_key("sqlmap", anon, "sqli"),
+                            confirmation_cache_key("sqlmap", authed, "sqli"))
+
+    def test_different_finding_class_differs(self):
+        ex = _ex(headers={"Authorization": "Bearer alice"}, method="POST",
+                 body='{"x":1}')
+        self.assertNotEqual(confirmation_cache_key("auth_sequence", ex, "session_fixation"),
+                            confirmation_cache_key("auth_sequence", ex, "weak_password"))
+
+
+class CoverageConfirmationFindingTests(unittest.TestCase):
+    """R06: a CONFIRMED coverage-driven leg must map to an ingestible finding dict
+    so it enters the same state/report pipeline; a non-confirmation maps to None
+    (nothing invented)."""
+
+    class _Res:
+        def __init__(self, confirmed, fc="sqli", conf=0.95, summary="boom", evidence="ev", validator="sqlmap"):
+            self.confirmed = confirmed
+            self.finding_class = fc
+            self.confidence = conf
+            self.summary = summary
+            self.evidence = evidence
+            self.validator = validator
+
+    class _Check:
+        vulnerability_class = "sqli"
+        confirmation = "sqlmap"
+
+    def test_confirmed_result_maps_to_finding(self):
+        f = coverage_confirmation_finding(self._Res(True), self._Check(), "http://t/x", "user")
+        self.assertIsNotNone(f)
+        self.assertTrue(f["confirmed"])
+        self.assertEqual(f["vulnerability_class"], "sqli")
+        self.assertEqual(f["url"], "http://t/x")
+        self.assertEqual(f["identity"], "user")
+        self.assertEqual(f["confirmation_method"], "sqlmap")
+        self.assertEqual(f["evidence"], "ev")
+
+    def test_not_confirmed_result_maps_to_none(self):
+        self.assertIsNone(coverage_confirmation_finding(self._Res(False), self._Check(), "http://t/x", "user"))
+
+    def test_none_result_maps_to_none(self):
+        self.assertIsNone(coverage_confirmation_finding(None, self._Check(), "http://t/x", "user"))
 
 
 class CarriesJwtTests(unittest.TestCase):
@@ -214,6 +288,42 @@ class ShapePreconditionFindingsTests(unittest.TestCase):
 
     def test_benign_object_get_yields_nothing(self):
         self.assertEqual(shape_precondition_findings(_ex(url="http://t/api/tickets/1")), [])
+
+    def test_csrf_shape_on_post_without_token(self):
+        classes = {f.vulnerability_class for f in
+                   shape_precondition_findings(_ex(url="http://t/api/tickets",
+                                                    method="POST", body='{"title":"x"}'))}
+        self.assertIn("csrf", classes)
+
+    def test_no_csrf_shape_on_get(self):
+        classes = {f.vulnerability_class for f in
+                   shape_precondition_findings(_ex(url="http://t/api/tickets"))}
+        self.assertNotIn("csrf", classes)
+
+    def test_no_csrf_shape_when_token_present(self):
+        classes = {f.vulnerability_class for f in
+                   shape_precondition_findings(_ex(url="http://t/api/tickets",
+                                                    method="POST",
+                                                    body='csrf_token=abc&title=x'))}
+        self.assertNotIn("csrf", classes)
+
+    def test_mass_assignment_shape_on_post_with_json_body(self):
+        classes = {f.vulnerability_class for f in
+                   shape_precondition_findings(_ex(url="http://t/api/users/1",
+                                                    method="PUT",
+                                                    body='{"name":"x"}'))}
+        self.assertIn("mass_assignment", classes)
+
+    def test_no_mass_assignment_shape_on_get(self):
+        classes = {f.vulnerability_class for f in
+                   shape_precondition_findings(_ex(url="http://t/api/users/1"))}
+        self.assertNotIn("mass_assignment", classes)
+
+    def test_no_mass_assignment_shape_with_empty_body(self):
+        classes = {f.vulnerability_class for f in
+                   shape_precondition_findings(_ex(url="http://t/api/users/1",
+                                                    method="POST", body=""))}
+        self.assertNotIn("mass_assignment", classes)
 
 
 if __name__ == "__main__":

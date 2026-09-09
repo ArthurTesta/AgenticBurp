@@ -135,7 +135,7 @@ class InvestigateProactiveJwtSmokeTest(unittest.TestCase):
         cache._cache = cls._orig_cache
         shutil.rmtree(cls._tmp, ignore_errors=True)
 
-    def _run(self, vulnerable: bool, drive: bool = False):
+    def _run(self, vulnerable: bool, drive: bool = False, max_nodes: int = 4):
         orch = Orchestrator(_test_config())
         if drive:
             orch.engagement_coverage_drive = True  # I1 matrix-driver on
@@ -146,7 +146,17 @@ class InvestigateProactiveJwtSmokeTest(unittest.TestCase):
         with patch("engagement_builder.build_engagement", side_effect=_canned_engagement), \
              patch("httpx.AsyncClient.get", new_callable=AsyncMock, side_effect=_responder(vulnerable)):
             return asyncio.run(orch.investigate_engagement(
-                BASE_URL, ROLES, max_nodes=4, step_budget=4, max_chain_rounds=0))
+                BASE_URL, ROLES, max_nodes=max_nodes, step_budget=4, max_chain_rounds=0))
+
+    def _worklist_confirmed_jwt(self, result):
+        """Confirmed jwt findings attached to endpoints in state (the finding
+        pipeline), as opposed to the worklist-investigation outcomes."""
+        out = []
+        for ep in result.get("worklist", []):
+            for f in ep.get("findings", []):
+                if f.get("confirmed") and "jwt" in (f.get("vulnerability_class") or "").lower():
+                    out.append(f)
+        return out
 
     def _confirmed_jwt(self, result):
         return [f for o in result.get("outcomes", []) for f in o.get("findings_detail", [])
@@ -190,6 +200,29 @@ class InvestigateProactiveJwtSmokeTest(unittest.TestCase):
         self.assertGreaterEqual(cov.get("legs_driven", 0), 1,
                                 "coverage driver did not fire any legs end-to-end")
         self.assertGreaterEqual(cov.get("by_check", {}).get("WSTG-CRYP-04", {}).get("confirmed", 0), 1)
+
+    def test_coverage_driver_confirmation_reaches_findings_not_just_matrix(self):
+        """R06: a matrix-driven confirmation must enter the finding pipeline, not
+        live only in the coverage matrix. With max_nodes=0 the worklist path never
+        runs, so the ONLY way a confirmed JWT finding reaches state is the coverage
+        driver ingesting it (the R06 fix). Prove it appears in BOTH the matrix and
+        the state findings."""
+        result = self._run(vulnerable=True, drive=True, max_nodes=0)
+        cov = result.get("coverage") or {}
+        self.assertGreaterEqual(cov.get("by_check", {}).get("WSTG-CRYP-04", {}).get("confirmed", 0), 1,
+                                "coverage driver did not confirm the JWT check with the worklist off")
+        # The same confirmation is now a real finding on the endpoint in state.
+        self.assertTrue(
+            self._worklist_confirmed_jwt(result),
+            "R06 REGRESSION: a coverage-driven confirmation filled a matrix cell but "
+            "never entered the finding pipeline -- the confirmed JWT forge is absent "
+            "from state's endpoint findings.")
+
+    def test_coverage_driver_negative_control_no_matrix_only_finding(self):
+        """Negative control for R06: a secure server yields no coverage-driven
+        confirmation, so nothing is injected into the findings either."""
+        result = self._run(vulnerable=False, drive=True, max_nodes=0)
+        self.assertEqual(self._worklist_confirmed_jwt(result), [])
 
     def test_negative_control_secure_server_yields_no_confirmation(self):
         # A server that actually verifies signatures must NOT be confirmed -- proving
