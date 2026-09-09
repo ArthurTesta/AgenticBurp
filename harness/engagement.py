@@ -99,20 +99,52 @@ class SurfaceEndpoint:
             f.get("confidence", 0.0)))
 
     def add_finding(self, f: dict) -> None:
-        """Attach a finding, de-duped by vulnerability_class: a later
-        confirmation or higher-confidence read supersedes an earlier hypothesis
-        rather than piling up duplicates."""
+        """Attach a finding, de-duped by vulnerability_class, MONOTONICALLY (R07).
+
+        A CONFIRMED finding is proof. It is never overwritten or downgraded by a
+        later UNCONFIRMED hypothesis, whatever the hypothesis's model confidence
+        (the reproduced bug: confirmed@0.9 replaced by unconfirmed@0.99). A
+        hypothesis is superseded only by a stronger hypothesis or by a
+        confirmation. Proof/context fields (evidence, summary, url, validator,
+        identity, basis) are PRESERVED rather than dropped to a 4-key slim, and
+        every superseded entry is retained under `_superseded` so the history and
+        the proof that backed a finding are never silently lost."""
         slim = {
             "vulnerability_class": f.get("vulnerability_class", ""),
             "severity": f.get("severity", "info"),
             "confidence": f.get("confidence", 0.0),
             "confirmed": bool(f.get("confirmed", False)),
         }
+        # Carry proof/context when present -- never fabricate empty keys.
+        for k in ("evidence", "summary", "url", "confirmation_method",
+                  "validator", "identity", "basis"):
+            if f.get(k):
+                slim[k] = f[k]
+
+        def _sev(x) -> float:
+            return _SEV_W.get((x or "info").lower(), 0.1)
+
         for existing in self.findings:
-            if existing["vulnerability_class"] == slim["vulnerability_class"]:
-                if slim["confirmed"] or slim["confidence"] >= existing["confidence"]:
-                    existing.update(slim)
+            if existing["vulnerability_class"] != slim["vulnerability_class"]:
+                continue
+            ex_conf = bool(existing.get("confirmed"))
+            new_conf = slim["confirmed"]
+            # A proof is never downgraded by an unconfirmed hypothesis (R07).
+            if ex_conf and not new_conf:
                 return
+            stronger = (
+                (new_conf and not ex_conf)                       # confirmation beats hypothesis
+                or (new_conf == ex_conf and (                    # same tier: stronger sev/conf wins
+                    _sev(slim["severity"]) > _sev(existing.get("severity"))
+                    or slim["confidence"] >= existing.get("confidence", 0.0)))
+            )
+            if stronger:
+                history = existing.get("_superseded", [])
+                prior = {k: v for k, v in existing.items() if k != "_superseded"}
+                existing.clear()
+                existing.update(slim)
+                existing["_superseded"] = history + [prior]
+            return
         self.findings.append(slim)
 
     def fused_score(self) -> tuple[float, list[str]]:

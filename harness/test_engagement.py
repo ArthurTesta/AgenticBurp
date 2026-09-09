@@ -41,6 +41,38 @@ class IngestTests(unittest.TestCase):
         self.assertEqual(len(ep.findings), 1)
         self.assertTrue(ep.findings[0]["confirmed"])
 
+    def test_confirmed_finding_not_downgraded_by_confident_hypothesis(self):
+        """R07 NEGATIVE CONTROL: a confirmed proof must never be replaced by a
+        LATER unconfirmed hypothesis, even one with higher model confidence."""
+        ep = SurfaceEndpoint("GET", "/x")
+        ep.add_finding({"vulnerability_class": "sqli", "severity": "high",
+                        "confidence": 0.9, "confirmed": True,
+                        "evidence": "sqlmap: injectable param q", "confirmation_method": "sqlmap"})
+        ep.add_finding({"vulnerability_class": "sqli", "severity": "high",
+                        "confidence": 0.99, "confirmed": False,
+                        "summary": "model thinks maybe sqli"})
+        self.assertEqual(len(ep.findings), 1)
+        f = ep.findings[0]
+        self.assertTrue(f["confirmed"])              # still a proof
+        self.assertEqual(f["confidence"], 0.9)       # not bumped to 0.99
+        self.assertEqual(f["evidence"], "sqlmap: injectable param q")  # proof retained
+
+    def test_add_finding_preserves_proof_and_history(self):
+        """Proof fields survive de-dup, and a superseded hypothesis is retained."""
+        ep = SurfaceEndpoint("GET", "/x")
+        ep.add_finding({"vulnerability_class": "idor", "severity": "medium",
+                        "confidence": 0.5, "confirmed": False, "summary": "guess"})
+        ep.add_finding({"vulnerability_class": "idor", "severity": "high",
+                        "confidence": 0.95, "confirmed": True,
+                        "evidence": "read ticket #2 as user A", "confirmation_method": "cross_identity"})
+        f = ep.findings[0]
+        self.assertTrue(f["confirmed"])
+        self.assertEqual(f["evidence"], "read ticket #2 as user A")
+        self.assertEqual(f["confirmation_method"], "cross_identity")
+        # the earlier hypothesis is preserved in the audit history, not erased
+        self.assertTrue(f.get("_superseded"))
+        self.assertFalse(f["_superseded"][0]["confirmed"])
+
     def test_ingest_role_crawl_matrix_and_idor(self):
         result = {
             "endpoints": [{"method": "GET", "path": "/api/orders/{id}", "by_role": {"user": 200},
