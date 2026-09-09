@@ -255,5 +255,63 @@ class TestChainDetectionBasics(unittest.TestCase):
         self.assertEqual(chains, [])
 
 
+class TestDiscoveryChainCandidates(unittest.TestCase):
+    def test_post_write_plus_get_read_produces_candidate(self):
+        from chaining import discovery_chain_candidates
+        exchanges = [
+            {"method": "POST", "url": "http://t/api/comments", "request_body": '{"text":"hi"}',
+             "response_status": 200, "response_headers": {}},
+            {"method": "GET", "url": "http://t/api/posts/1", "request_body": "",
+             "response_status": 200, "response_headers": {"Content-Type": "text/html"}},
+        ]
+        pairs = discovery_chain_candidates(exchanges)
+        self.assertTrue(len(pairs) >= 1)
+        self.assertEqual(pairs[0]["write_url"], "http://t/api/comments")
+        self.assertEqual(pairs[0]["read_url"], "http://t/api/posts/1")
+
+    def test_same_url_not_paired(self):
+        from chaining import discovery_chain_candidates
+        exchanges = [
+            {"method": "POST", "url": "http://t/api/x", "request_body": '{"a":1}',
+             "response_status": 200, "response_headers": {}},
+            {"method": "GET", "url": "http://t/api/x", "request_body": "",
+             "response_status": 200, "response_headers": {"Content-Type": "application/json"}},
+        ]
+        pairs = discovery_chain_candidates(exchanges)
+        self.assertEqual(pairs, [])
+
+    def test_get_only_no_candidates(self):
+        from chaining import discovery_chain_candidates
+        exchanges = [
+            {"method": "GET", "url": "http://t/a", "request_body": "",
+             "response_status": 200, "response_headers": {"Content-Type": "text/html"}},
+            {"method": "GET", "url": "http://t/b", "request_body": "",
+             "response_status": 200, "response_headers": {"Content-Type": "text/html"}},
+        ]
+        pairs = discovery_chain_candidates(exchanges)
+        self.assertEqual(pairs, [])
+
+    def test_kind_is_typed_by_read_content_type(self):
+        """R14: the candidate's kind must reflect the read's content-type -- an
+        html read is a stored-XSS candidate, a json read a generic second-order
+        one -- so the consumer can route each to the RIGHT oracle instead of
+        force-routing everything to SQLi (which the previous code did)."""
+        from chaining import discovery_chain_candidates
+        html = discovery_chain_candidates([
+            {"method": "POST", "url": "http://t/api/comments", "request_body": '{"t":"x"}',
+             "response_status": 200, "response_headers": {}},
+            {"method": "GET", "url": "http://t/page", "request_body": "",
+             "response_status": 200, "response_headers": {"Content-Type": "text/html"}},
+        ])
+        self.assertEqual(html[0]["kind"], "stored_xss")
+        js = discovery_chain_candidates([
+            {"method": "POST", "url": "http://t/api/comments", "request_body": '{"t":"x"}',
+             "response_status": 200, "response_headers": {}},
+            {"method": "GET", "url": "http://t/api/search", "request_body": "",
+             "response_status": 200, "response_headers": {"Content-Type": "application/json"}},
+        ])
+        self.assertEqual(js[0]["kind"], "second_order")
+
+
 if __name__ == "__main__":
     unittest.main()

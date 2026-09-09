@@ -60,6 +60,26 @@ def _similar(a: str, b: str) -> float:
     return 0.5 * length_sim + 0.5 * tok_sim
 
 
+def _mask_reflection(text: str, *markers: str) -> str:
+    """Neutralise any REFLECTION of the planted markers themselves (R12).
+
+    A second-order boolean-SQLi test plants two DIFFERENT literal strings (the
+    only difference being '1'='1' vs '1'='2'). If B merely ECHOES the stored
+    value, its two responses differ solely because the echoed text differs -- that
+    is display, not SQL evaluation, and must NOT confirm. Masking every occurrence
+    of each planted marker (and its common HTML-escaped forms) to a constant means
+    only a difference in the RESULT SET (data-driven, SQL-dependent) survives to
+    the similarity comparison."""
+    out = text or ""
+    for m in markers:
+        if not m:
+            continue
+        for variant in (m, m.replace("'", "&#39;"), m.replace("'", "&#x27;"),
+                        m.replace("'", "&#039;"), m.replace("'", "%27")):
+            out = out.replace(variant, "<MARK>")
+    return out
+
+
 async def confirm_second_order_sqli(
     *,
     plant,          # async plant(marker_value) -> None: perform write A storing marker_value
@@ -91,21 +111,38 @@ async def confirm_second_order_sqli(
     await plant(false_val)
     resp_false = await trigger() or ""
 
-    sim = _similar(resp_true, resp_false)
+    # Mask any literal reflection of the planted markers before comparing (R12):
+    # a plain echo of the two different payloads is display, not SQL evaluation,
+    # and must not confirm. Only a data-driven difference in the RESULT SET
+    # survives the mask.
+    masked_true = _mask_reflection(resp_true, true_val, false_val, base)
+    masked_false = _mask_reflection(resp_false, true_val, false_val, base)
+    raw_sim = _similar(resp_true, resp_false)
+    sim = _similar(masked_true, masked_false)
+    reflection_only = raw_sim < similarity_threshold <= sim
     if sim < similarity_threshold:
         return SecondOrderResult(
             confirmed=True,
             reason="second-order SQLi confirmed: the read's response depends on a boolean SQL "
-                   "condition planted via the write",
+                   "condition planted via the write (difference persists after masking the "
+                   "reflected payload -- it is in the result set, not the echo)",
             evidence=(f"Planted TRUE marker ({true_val!r}) then FALSE ({false_val!r}) via the write; "
-                      f"the read's response differed materially between them "
-                      f"(similarity {sim:.2f} < {similarity_threshold}). A stored value that changes "
-                      f"the read's result set by flipping '1'='1' vs '1'='2' is being concatenated "
-                      f"into a SQL query on the read path."))
+                      f"after masking the reflected payload the read's response STILL differed "
+                      f"materially (masked similarity {sim:.2f} < {similarity_threshold}; raw {raw_sim:.2f}). "
+                      f"A stored value that changes the read's result set by flipping '1'='1' vs "
+                      f"'1'='2' is being concatenated into a SQL query on the read path."))
+    if reflection_only:
+        return SecondOrderResult(
+            confirmed=False,
+            reason="no second-order SQLi: the read's responses differed ONLY by the reflected "
+                   "payload text (display/echo), not by any SQL-dependent change in the result set",
+            evidence=(f"Raw responses differed (similarity {raw_sim:.2f}) but became near-identical "
+                      f"once the planted markers were masked (masked similarity {sim:.2f}) -- the "
+                      f"difference is a literal echo of the two payloads, not SQL evaluation."))
     return SecondOrderResult(
         confirmed=False,
         reason="no second-order SQLi: the read's response did not depend on the planted SQL boolean",
-        evidence=f"TRUE vs FALSE plant produced near-identical read responses (similarity {sim:.2f}).")
+        evidence=f"TRUE vs FALSE plant produced near-identical read responses (masked similarity {sim:.2f}).")
 
 
 async def auto_confirm_candidates(candidates, *, confirm_sqli, confirm_idor,

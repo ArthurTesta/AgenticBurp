@@ -43,6 +43,41 @@ class SecondOrderSqliTests(unittest.TestCase):
         res = asyncio.run(second_order.confirm_second_order_sqli(plant=plant, trigger=trigger))
         self.assertFalse(res.confirmed, res.evidence)
 
+    def test_not_confirmed_on_literal_echo_of_payload(self):
+        """R12 NEGATIVE CONTROL: B merely REFLECTS the stored value. The two
+        responses differ only because the echoed payloads differ ('1'='1' vs
+        '1'='2') -- display, not SQL evaluation. Before the fix this false-confirmed
+        (raw similarity < threshold); masking the reflection must prevent that."""
+        stored = {"v": ""}
+
+        async def plant(val):
+            stored["v"] = val
+
+        async def trigger():
+            v = stored["v"]
+            return f"{v} | {v} | {v}"   # payload dominates a short response
+
+        res = asyncio.run(second_order.confirm_second_order_sqli(plant=plant, trigger=trigger))
+        self.assertFalse(res.confirmed, res.evidence)
+        self.assertIn("reflect", res.reason.lower())
+
+    def test_confirmed_when_result_set_changes_despite_reflection(self):
+        """The payload IS reflected, but the RESULT SET also changes with the
+        boolean -> a genuine second-order SQLi that survives masking."""
+        stored = {"v": ""}
+
+        async def plant(val):
+            stored["v"] = val
+
+        async def trigger():
+            v = stored["v"]
+            if v.endswith("'1'='1"):
+                return f"echo:{v}\nrow1\nrow2\nrow3\nrow4\nrow5"
+            return f"echo:{v}\n0 results"
+
+        res = asyncio.run(second_order.confirm_second_order_sqli(plant=plant, trigger=trigger))
+        self.assertTrue(res.confirmed, res.evidence)
+
     def test_reset_called_between_plants(self):
         calls = {"reset": 0, "plant": 0}
 

@@ -505,3 +505,66 @@ def detect(host_findings: list[dict]) -> list[Finding]:
             basis="derived",
         ))
     return results
+
+
+def discovery_chain_candidates(exchanges: list) -> list[dict]:
+    """Discovery-driven pair composition: any POST that stores user input paired
+    with any GET that renders content = a candidate stored-XSS/second-order pair.
+    This heuristic doesn't require prior findings — it works from the raw exchange
+    surface, catching chains the finding-based `second_order_candidates` misses
+    when the LLM didn't label either side.
+
+    Returns [{kind, write_url, write_method, read_url, read_method}]."""
+    writes: list[dict] = []
+    reads: list[dict] = []
+    for ex in exchanges:
+        if hasattr(ex, "method"):
+            method = (ex.method or "GET").upper()
+            url = ex.url or ""
+            status = getattr(ex, "response_status", 200) or 200
+            ctype = ""
+            for k, v in (getattr(ex, "response_headers", {}) or {}).items():
+                if k.lower() == "content-type":
+                    ctype = v.lower()
+            body = getattr(ex, "request_body", "") or ""
+        elif isinstance(ex, dict):
+            method = (ex.get("method") or "GET").upper()
+            url = ex.get("url", "")
+            status = ex.get("response_status", 200) or 200
+            ctype = ""
+            for k, v in (ex.get("response_headers") or {}).items():
+                if k.lower() == "content-type":
+                    ctype = v.lower()
+            body = ex.get("request_body", "") or ""
+        else:
+            continue
+
+        if method in ("POST", "PUT", "PATCH") and body and 200 <= status < 400:
+            writes.append({"url": url, "method": method})
+        if method == "GET" and 200 <= status < 300:
+            if "html" in ctype or "json" in ctype:
+                # keep the content-type so the read's kind can be classified below
+                reads.append({"url": url, "method": method, "ctype": ctype})
+
+    pairs: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for w in writes:
+        for r in reads:
+            if w["url"] == r["url"]:
+                continue
+            key = (w["url"], r["url"])
+            if key in seen:
+                continue
+            seen.add(key)
+            # html read -> stored-XSS candidate; json read -> generic second-order
+            # (e.g. second-order SQLi). The consumer routes each to the oracle its
+            # TYPE supports and never force-routes everything to SQLi (R14).
+            kind = "stored_xss" if "html" in r.get("ctype", "") else "second_order"
+            pairs.append({
+                "kind": kind,
+                "write_url": w["url"],
+                "write_method": w["method"],
+                "read_url": r["url"],
+                "read_method": r["method"],
+            })
+    return pairs
