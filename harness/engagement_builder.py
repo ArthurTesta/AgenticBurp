@@ -80,6 +80,7 @@ async def feature_crawl_captures(
     max_steps: int = 40,
     max_depth: int = 3,
     max_captured: int = 200,
+    seed_paths: list[str] | None = None,
 ) -> list:
     """Run the stateful feature-workflow crawl (feature_workflow.crawl_features) as
     each DISTINCT-feature role and union the captured exchanges.
@@ -92,8 +93,14 @@ async def feature_crawl_captures(
     response that DIFFERS per identity, or a request carrying a DISTINCT session
     (e.g. a pickle cookie only one role holds -- V26), is always kept. `fetch_fn`
     defaults to the scope-gated, throttled production client (mutating submits are
-    gated by allow_mutating_replay inside it). Returns a list of `HttpExchange`
-    (model objects, ready for review_captured_exchanges)."""
+    gated by allow_mutating_replay inside it).
+
+    `seed_paths` cross-seeds the crawl with routes discovered by API surface
+    discovery, so the feature crawl starts from EVERY known page (not just /)
+    and reaches workflow surfaces that live behind discovered routes.
+
+    Returns a list of `HttpExchange` (model objects, ready for
+    review_captured_exchanges)."""
     import hashlib
     import feature_workflow
     from urllib.parse import urlsplit
@@ -110,6 +117,7 @@ async def feature_crawl_captures(
             res = await feature_workflow.crawl_features(
                 base_url, r.role, r.norm_headers(), fetch_fn=fx,
                 allowed_hosts=allowed_hosts, submit_forms=submit_forms,
+                seed_paths=seed_paths,
                 max_steps=max_steps, max_depth=max_depth, max_captured=max_captured)
         except Exception as e:  # a role's feature crawl must not sink the build
             log.debug("feature_crawl_captures: role %r failed: %s", r.role, e)
@@ -124,6 +132,7 @@ async def feature_crawl_captures(
                 continue
             seen.add(key)
             out.append(ex)
-    log.info("feature_crawl_captures: %s -- %d unique exchange(s) across %d role sweep(s)",
-             base_url, len(out), len(sweep_roles))
+    log.info("feature_crawl_captures: %s -- %d unique exchange(s) across %d role sweep(s), "
+             "%d seed path(s)",
+             base_url, len(out), len(sweep_roles), len(seed_paths or []))
     return out

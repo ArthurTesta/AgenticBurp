@@ -38,7 +38,7 @@ import json
 import re
 import secrets
 from dataclasses import dataclass, field
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin, urlsplit, urlunsplit, urlencode
 
 import httpx
 
@@ -74,13 +74,25 @@ DEFAULT_NOUNS = (
     "refunds reports invoices payments billing credits approve reject "
     "diagnostics debug logs audit config settings backup system health status metrics maintenance "
     "files upload uploads download media avatar "
-    "notifications feed activity orgs organizations teams groups version info stats"
+    "notifications feed activity orgs organizations teams groups version info stats "
+    # workflow actions often reachable only at compound paths
+    "signature invite redeem filtered change-email change-password change-username "
+    "webhook-test export-csv import-csv two-factor enable-2fa disable-2fa "
+    "api-keys api-key rotate-key revoke-token "
+    # server-rendered page nouns (the /web/ prefix surface)
+    "home index about contact help support faq terms privacy "
+    "signup sign-up sign-in forgot-password reset-password "
+    "profile edit preferences notifications-settings "
+    # admin sub-features
+    "overview analytics dashboard panel console tools utilities "
+    "queue jobs workers cron scheduled tasks"
 ).split()
 
 # Path segments that plausibly parent a nested resource (/api/<collection>/<noun>).
 DEFAULT_COLLECTIONS = (
     "account users admin tickets kb integrations reports system auth org orgs "
-    "billing config me files"
+    "billing config me files "
+    "attachments comments notifications settings diagnostics"
 ).split()
 
 # Object-scoped ACTION verbs (state changes / workflow transitions), distinct
@@ -95,7 +107,11 @@ DEFAULT_ACTIONS = (
     "start stop pause resume rotate impersonate"
 ).split()
 
-DEFAULT_PREFIXES = ("/api/", "/api/v1/", "/", "/admin/", "/internal/")
+DEFAULT_PREFIXES = (
+    "/api/", "/api/v1/", "/api/v2/", "/", "/admin/", "/internal/",
+    "/web/", "/app/", "/portal/", "/dashboard/", "/console/",
+    "/v1/", "/v2/",
+)
 
 # Generically-sensitive artifacts that live at FIXED conventional paths, not as
 # REST resource nouns -- a flat noun sweep never names them. Relative (no leading
@@ -154,6 +170,7 @@ class SurfaceResult:
     spec_found: str | None = None
     probes_sent: int = 0
     errors: list[str] = field(default_factory=list)
+    sensitive_file_hits: list[str] = field(default_factory=list)
 
     def paths(self) -> list[str]:
         return sorted({r.path for r in self.routes})
@@ -210,6 +227,11 @@ class SurfaceDiscovery:
         self.ffuf_image = ffuf_image
         self._seen: dict[str, Route] = {}
         self._probes = 0
+        self._phase_limit = max_probes
+        self._attempted: set[tuple[str, str]] = set()
+        self._bodies: dict[str, str] = {}
+        self._mined: set[str] = set()
+        self._sensitive_hits: list[str] = []
         # Soft-404 signature (Phase 5): (status, normalized-body-hash) that a
         # KNOWN-BOGUS path returns, so a catch-all that answers non-404 for
         # everything (404->500, a 200 "not found" page, an SPA index) is
@@ -234,7 +256,7 @@ class SurfaceDiscovery:
         return resp.status_code, (resp.text or ""), resp.headers.get("Allow", "")
 
     def _budget_left(self) -> bool:
-        return self._probes < self.max_probes
+        return self._probes < min(self.max_probes, self._phase_limit)
 
     async def _raw(self, method: str, path: str):
         """Budget-guarded, counted single probe -- every phase goes through this
@@ -285,6 +307,9 @@ class SurfaceDiscovery:
     async def _check(self, path: str, source: str, method: str = "GET") -> Route | None:
         if path in self._seen:
             return self._seen[path]
+        if (method, path) in self._attempted or not self._budget_left():
+            return None
+        self._attempted.add((method, path))
         r = await self._raw(method, path)
         if r is None:
             return None
@@ -294,6 +319,8 @@ class SurfaceDiscovery:
         methods = tuple(m.strip().upper() for m in allow.split(",") if m.strip()) or (method,)
         route = Route(path=path, status=status, methods=methods, length=len(body), source=source)
         self._seen[path] = route
+        if 200 <= status < 300:
+            self._bodies[path] = body
         return route
 
     async def discover(self) -> SurfaceResult:
@@ -330,10 +357,14 @@ class SurfaceDiscovery:
             for n in self.nouns:
                 for suffix in ("", "/1"):
                     await self._check(pre + n + suffix, "wordlist")
-        # 2b. NESTED two-segment: /api[/v1]/<collection>/<noun>. Bare only -- id
+        # 2b. NESTED two-segment: /prefix/<collection>/<noun>. Bare only -- id
         #     depth is reached far more cheaply by response mining + sub-resources
-        #     below than by blindly appending /1 to every combination.
-        for pre in ("/api/", "/api/v1/"):
+        #     below than by blindly appending /1 to every combination. Uses ALL
+        #     prefixes that end with /api*/ or look like API mounts, not just the
+        #     hardcoded two.
+        _nest_prefixes = sorted({p for p in self.prefixes
+                                 if "api" in p.lower() or p in ("/admin/", "/internal/", "/v1/", "/v2/")})
+        for pre in _nest_prefixes:
             for coll in self.collections:
                 for n in self.nouns:
                     await self._check(f"{pre}{coll}/{n}", "nested")
@@ -369,6 +400,16 @@ class SurfaceDiscovery:
         #     enters role_crawl's probe set and gets Phase-0.1 content review.
         await self._probe_sensitive_files()
 
+        # 4d. Deep nesting: three-segment paths under live 2-segment prefixes
+        #     (e.g. /api/admin/diagnostics/ping). Only fans out under namespaces
+        #     that already proved live, so the cost is adaptive.
+        await self._mine_deep_nested()
+
+        # 4e. Query-parameter discovery: probe common param names on discovered
+        #     GET endpoints. A distinct response means the endpoint accepts that
+        #     parameter -- surfaces hidden input vectors the path wordlist misses.
+        await self._probe_query_params()
+
         # 5. Allow mining (LAST, over the FULL route set incl. sub-resources): a
         #    route that rejects GET answers 405 with an `Allow` header -> learn its
         #    real verbs so POST-only routes aren't mislabelled GET-only.
@@ -385,6 +426,7 @@ class SurfaceDiscovery:
 
         result.routes = list(self._seen.values())
         result.probes_sent = self._probes
+        result.sensitive_file_hits = list(self._sensitive_hits)
         return result
 
     async def _ffuf_fast_path(self, result: SurfaceResult) -> int:
@@ -446,11 +488,15 @@ class SurfaceDiscovery:
         conventional paths (a wordlist distinct from the REST nouns), then
         generate backup-suffix variants (.bak/~/.old/...) of common source files
         and of any discovered file-like route (a route whose last segment has an
-        extension). The existence oracle is unchanged: only non-404s are kept."""
+        extension). The existence oracle is unchanged: only non-404s are kept.
+        Hits are tracked in _sensitive_hits for downstream finding emission."""
         for f in self.sensitive_files:
             if not self._budget_left():
                 return
-            await self._check("/" + f.lstrip("/"), "sensitive_file")
+            path = "/" + f.lstrip("/")
+            route = await self._check(path, "sensitive_file")
+            if route is not None and 200 <= route.status < 400:
+                self._sensitive_hits.append(path)
 
         file_like = set(_COMMON_BACKUP_BASES)
         for p in list(self._seen):
@@ -464,13 +510,16 @@ class SurfaceDiscovery:
                 await self._check("/" + base.lstrip("/") + suf, "sensitive_file")
 
     async def _mine_responses(self) -> None:
-        """Mine each 2xx body once for two candidate sources:
+        """Mine each 2xx body once for three candidate sources:
           - Phase 0.2(d): path-like strings and same-host URLs anywhere in the
             body (JSON payloads, HTML, help/error text), via js_endpoint_extractor
             generalized off the JS-crawl -- fed back as candidate routes so an
             internal path the app merely NAMES becomes probed surface.
+          - HTML link/form mining: <a href>, <form action>, <link href> tags
+            in HTML responses -- so the server-rendered navigation graph feeds
+            discovery even when the surface isn't a JSON API.
           - id enumeration: a JSON list/object's `id` fields -> id-scoped siblings.
-        Both work off the SAME fetch, so this is one GET per seed."""
+        All work off the SAME fetch, so this is one GET per seed."""
         import js_endpoint_extractor as jse
         seeds = [p for p, r in list(self._seen.items()) if 200 <= r.status < 300]
         for p in seeds:
@@ -485,6 +534,18 @@ class SurfaceDiscovery:
                 if not self._budget_left():
                     return
                 await self._check(path.replace("{id}", "1"), "body")
+            # HTML link/form mining: extract navigable hrefs and form actions from
+            # HTML responses. The js_endpoint_extractor catches path-like strings
+            # but misses proper HTML anchors that use relative hrefs or query params.
+            if _looks_html_body(body):
+                for href in _extract_html_links(body, self.base_url):
+                    if not self._budget_left():
+                        return
+                    parsed = urlparse(href)
+                    if _host_in_scope(href, self.allowed_hosts) or not parsed.netloc:
+                        path_only = parsed.path or "/"
+                        if path_only.startswith("/"):
+                            await self._check(path_only, "html")
             # id enumeration (JSON only).
             try:
                 data = json.loads(body)
@@ -515,6 +576,55 @@ class SurfaceDiscovery:
                     return
                 await self._check(f"{coll}/{idv}/{n}", "subresource")
 
+    async def _mine_deep_nested(self) -> None:
+        """Three-segment nesting under collections that returned 2xx: if
+        /api/admin/ has live routes, try /api/admin/<coll>/<noun> for each
+        collection+noun pair. Adaptive: only fans out under namespaces that
+        proved live, so a wordlist with 5 dead admin paths wastes nothing."""
+        live_prefixes: set[str] = set()
+        for p in list(self._seen):
+            parts = [s for s in p.split("/") if s]
+            if len(parts) >= 2:
+                live_prefixes.add("/" + "/".join(parts[:2]) + "/")
+        for pre in sorted(live_prefixes):
+            for coll in self.collections:
+                for n in self.nouns:
+                    if not self._budget_left():
+                        return
+                    path = f"{pre}{coll}/{n}"
+                    if path not in self._seen:
+                        await self._check(path, "deep_nested")
+
+    async def _probe_query_params(self) -> None:
+        """Probe common query parameters on discovered GET endpoints. An endpoint
+        that returns a distinct response with ?param=value vs. without means it
+        accepts that parameter -- surfaces hidden input vectors (file=, path=,
+        redirect=, org_id=) that the path-only wordlist never tests."""
+        candidates = [p for p, r in list(self._seen.items())
+                      if 200 <= r.status < 300 and "?" not in p]
+        for p in candidates:
+            if not self._budget_left():
+                return
+            base_r = await self._raw("GET", p)
+            if not base_r or _is_not_found(base_r[0], base_r[1]):
+                continue
+            base_len = len(base_r[1])
+            base_hash = self._norm_body_hash(base_r[1], p)
+            for param in _COMMON_PARAMS:
+                if not self._budget_left():
+                    return
+                qpath = f"{p}?{param}=1"
+                r = await self._raw("GET", qpath)
+                if r is None or _is_not_found(r[0], r[1]):
+                    continue
+                r_hash = self._norm_body_hash(r[1], qpath)
+                if r_hash != base_hash or abs(len(r[1]) - base_len) > 50:
+                    if qpath not in self._seen:
+                        self._seen[qpath] = Route(path=qpath, status=r[0],
+                                                   methods=("GET",), length=len(r[1]),
+                                                   source="param_probe")
+                    break
+
     async def _mine_actions(self) -> None:
         """Phase 0.2(b): probe object-scoped ACTION suffixes (/tickets/1/lock),
         beyond the fixed noun list. Two sources: the built-in workflow-verb
@@ -539,6 +649,55 @@ class SurfaceDiscovery:
                 if not self._budget_left():
                     return
                 await self._check(f"{coll}/{idv}/{act}", "action")
+
+
+def _looks_html_body(body: str) -> bool:
+    b = (body or "")[:2000].lower()
+    return "<html" in b or "<a " in b or "<form" in b or "<!doctype" in b
+
+
+def _extract_html_links(html: str, base_url: str) -> list[str]:
+    """Extract href values from <a>, <form action>, and <link> tags."""
+    from html.parser import HTMLParser
+    from urllib.parse import urljoin
+
+    links: list[str] = []
+
+    class _P(HTMLParser):
+        def handle_starttag(self, tag, attrs):
+            a = dict(attrs)
+            if tag == "a":
+                href = a.get("href", "")
+                if href and not href.startswith(("#", "javascript:", "mailto:", "tel:")):
+                    links.append(urljoin(base_url, href))
+            elif tag == "form":
+                action = a.get("action", "")
+                if action:
+                    links.append(urljoin(base_url, action))
+            elif tag == "link":
+                href = a.get("href", "")
+                if href and not href.startswith(("#", "javascript:")):
+                    links.append(urljoin(base_url, href))
+
+    try:
+        _P().feed(html or "")
+    except Exception:
+        pass
+    return links
+
+
+# Common query parameter names worth probing on discovered GET endpoints.
+# A hit (distinct response vs. no-param) means the endpoint accepts user input
+# through that parameter -- critical for injection testing downstream.
+_COMMON_PARAMS = (
+    "id", "name", "file", "path", "url", "uri", "redirect", "next", "return",
+    "callback", "continue", "goto", "forward", "dest", "destination",
+    "query", "q", "search", "filter", "sort", "order", "page", "limit", "offset",
+    "user_id", "org_id", "account_id", "role", "type", "category", "status",
+    "format", "output", "template", "view", "action", "cmd", "command",
+    "email", "username", "token", "key", "ref", "source", "target",
+    "download", "export", "include", "lang", "locale", "debug", "verbose",
+)
 
 
 def _looks_like_spec(body: str) -> bool:

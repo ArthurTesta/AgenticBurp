@@ -199,5 +199,34 @@ class BuilderIntegrationTests(unittest.TestCase):
         self.assertEqual(paths.count("/me"), 2)
 
 
+class CrossSeedTests(unittest.TestCase):
+    """feature_crawl_captures with seed_paths starts from discovered routes,
+    not just /."""
+
+    def test_seed_paths_reach_deeper_surface(self):
+        import engagement_builder
+        from role_crawl import RoleSession
+
+        async def app_fetch(method, url, headers, body):
+            from urllib.parse import urlsplit
+            path = urlsplit(url).path
+            if path == "/":
+                return _Resp(200, "<html>index</html>")
+            if path == "/web/admin":
+                return _Resp(200, '<html><a href="/web/admin/tools">tools</a></html>')
+            if path == "/web/admin/tools":
+                return _Resp(200, "<html>admin tools</html>")
+            return _Resp(404, "nf")
+
+        roles = [RoleSession(role="admin", headers={"X-Role": "admin"})]
+        caps = asyncio.run(engagement_builder.feature_crawl_captures(
+            "http://t.test", roles, fetch_fn=app_fetch, allowed_hosts=["t.test"],
+            submit_forms=False, seed_paths=["/", "/web/admin"]))
+        from urllib.parse import urlsplit
+        paths = [urlsplit(e.url).path for e in caps]
+        self.assertIn("/web/admin", paths)
+        self.assertIn("/web/admin/tools", paths)
+
+
 if __name__ == "__main__":
     unittest.main()

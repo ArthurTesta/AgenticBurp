@@ -128,19 +128,30 @@ class AuthSequenceValidator(Validator):
             h.update(extra)
         return h
 
-    def _which_check(self, vc: str, exchange: HttpExchange) -> str:
+    def _which_checks(self, vc: str, exchange: HttpExchange) -> list[str]:
+        """Return the ordered list of sub-checks to run. For a specific class
+        (e.g. "username_enumeration"), returns just that one. For generic
+        "broken_authentication", returns ALL applicable checks so we don't miss
+        a confirmable finding just because the LLM used a vague label."""
         low = (vc or "").lower()
         if "fixation" in low:
-            return "fixation"
+            return ["fixation"]
         if "weak" in low or "password polic" in low:
-            return "weak"
+            return ["weak"]
         if "enum" in low:
-            return "enum"
-        # generic "broken authentication": pick by endpoint intent.
+            return ["enum"]
+        # Generic "broken authentication" — run all applicable checks.
         path = urlsplit(exchange.url).path.lower()
-        if "regist" in path or "signup" in path or "sign-up" in path:
-            return "weak"
-        return "fixation"  # login-shaped default
+        fields, _ = _parse_body(exchange)
+        checks = []
+        is_register = "regist" in path or "signup" in path or "sign-up" in path
+        if is_register:
+            checks.append("weak")
+        else:
+            checks.append("fixation")
+            if _find_key(fields, _USER_KEYS):
+                checks.append("enum")
+        return checks
 
     async def validate(self, finding: Finding, exchange: HttpExchange) -> ValidationResult:
         host = urlsplit(exchange.url).hostname or ""
@@ -148,17 +159,24 @@ class AuthSequenceValidator(Validator):
             return self._skip(f"host {host!r} out of scope")
         if not get_default_gate().config.allow_mutating_replay:
             return self._skip("auth-mechanism probes send POSTs; need validators.allow_mutating_replay")
-        check = self._which_check(finding.vulnerability_class, exchange)
+        checks = self._which_checks(finding.vulnerability_class, exchange)
+        last_result = None
         try:
-            if check == "fixation":
-                return await self._check_session_fixation(exchange)
-            if check == "weak":
-                return await self._check_weak_password(exchange)
-            return await self._check_username_enum(exchange)
+            for check in checks:
+                if check == "fixation":
+                    result = await self._check_session_fixation(exchange)
+                elif check == "weak":
+                    result = await self._check_weak_password(exchange)
+                else:
+                    result = await self._check_username_enum(exchange)
+                if result.confirmed:
+                    return result
+                last_result = result
         except SafetyGateBlocked:
             return self._skip("mutating auth replay not authorized (validators.allow_mutating_replay)")
         except httpx.HTTPError as e:
             return self._skip(f"request failed: {e.__class__.__name__}")
+        return last_result or self._not("no auth-mechanism issue confirmed", "broken_authentication")
 
     async def _send(self, client, method, url, headers, body):
         await global_throttle.acquire()
@@ -270,10 +288,18 @@ class AuthSequenceValidator(Validator):
             r_invalid = await self._send(client, method, exchange.url, self._headers(exchange), _probe_body(invalid_user))
             istatus, ibody = r_invalid.status_code, (r_invalid.text or "")
 
-        # Mask the echoed usernames so a body that merely reflects the input isn't
-        # mistaken for an existence oracle.
         def _mask(b, u):
-            return re.sub(re.escape(u), "<U>", b, flags=re.I)
+            """Mask echoed username AND strip dynamic tokens so a body that
+            merely reflects the input or contains per-request nonces isn't
+            mistaken for (or confused with) an existence oracle."""
+            b = re.sub(re.escape(u), "<U>", b, flags=re.I)
+            b = re.sub(r"[0-9a-f]{32,}", "<TOKEN>", b)
+            b = re.sub(r"\d{10,13}", "<TS>", b)
+            b = re.sub(r'"csrf[^"]*"\s*:\s*"[^"]*"', '"csrf":"<CSRF>"', b, flags=re.I)
+            b = re.sub(r'name="[^"]*(?:csrf|token|nonce)[^"]*"\s+value="[^"]*"',
+                        'name="<CSRF>" value="<V>"', b, flags=re.I)
+            return b
+
         vmask, imask = _mask(vbody, valid_user), _mask(ibody, invalid_user)
         if vstatus != istatus:
             return ValidationResult(
@@ -286,5 +312,6 @@ class AuthSequenceValidator(Validator):
                 self.name, "confirmed", fc, confidence=0.75, confirmed=True,
                 summary="Username enumeration confirmed: valid vs invalid account give different responses.",
                 evidence=f"Same wrong password and identical status ({vstatus}); after masking the echoed "
-                         f"username the bodies still differ, so the response leaks which usernames exist.")
+                         f"username and stripping dynamic tokens, the bodies still differ, leaking "
+                         f"which usernames exist.")
         return self._not("valid and invalid usernames produced indistinguishable responses (no enumeration)", fc)

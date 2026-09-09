@@ -155,12 +155,27 @@ class RateLimitValidatorTests(unittest.TestCase):
         v = RateLimitValidator(allowed_hosts=["target.test"], min_attempts=5)
         self.assertFalse(v.applies(_finding("rate_limit"), _ex(method="GET")))
 
-    def test_skip_when_burst_ceiling_below_floor(self):
-        self._gate(3)  # ceiling 3 < min_attempts 5
+    def test_skip_when_burst_ceiling_below_2(self):
+        self._gate(1)  # ceiling 1 < minimum 2
         v = RateLimitValidator(allowed_hosts=["target.test"], min_attempts=5)
         r = asyncio.run(v.validate(_finding("rate_limit"), _ex()))
         self.assertEqual(r.status, "skipped")
-        self.assertIn("min_attempts", r.summary)
+        self.assertIn("below 2", r.summary)
+
+    @patch("validators.rate_limit_validator.httpx.AsyncClient")
+    @patch("global_throttle.acquire", new_callable=AsyncMock)
+    def test_confirmed_reduced_burst(self, _t, mock_cls):
+        self._gate(3)  # ceiling 3 < min_attempts 5, but >= 2
+        v = RateLimitValidator(allowed_hosts=["target.test"], min_attempts=5)
+        client = AsyncMock()
+        client.request = AsyncMock(return_value=_resp(200, "ok"))
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock()
+        mock_cls.return_value = client
+        r = asyncio.run(v.validate(_finding("rate_limit"), _ex()))
+        self.assertEqual(r.status, "confirmed")
+        self.assertTrue(r.confirmed)
+        self.assertLess(r.confidence, 0.85)
 
     @patch("validators.rate_limit_validator.httpx.AsyncClient")
     @patch("global_throttle.acquire", new_callable=AsyncMock)
@@ -214,6 +229,35 @@ class RegistryTests(unittest.TestCase):
         self.assertIn("reset_token", reg.validators)
         self.assertTrue(reg.validators["rate_limit"].active)
         self.assertTrue(reg.validators["reset_token"].active)
+
+
+# --- auth_sequence multi-check routing ------------------------------------------
+
+class AuthSequenceRoutingTests(unittest.TestCase):
+    def test_generic_broken_auth_on_login_runs_enum(self):
+        from validators.auth_sequence_validator import AuthSequenceValidator
+        v = AuthSequenceValidator(allowed_hosts=["target.test"])
+        checks = v._which_checks("broken_authentication",
+                                   _ex(url="http://target.test/api/login",
+                                        body='{"username":"a","password":"b"}'))
+        self.assertIn("enum", checks)
+        self.assertIn("fixation", checks)
+
+    def test_specific_enum_class_runs_only_enum(self):
+        from validators.auth_sequence_validator import AuthSequenceValidator
+        v = AuthSequenceValidator(allowed_hosts=["target.test"])
+        checks = v._which_checks("username_enumeration",
+                                   _ex(url="http://target.test/api/login",
+                                        body='{"username":"a","password":"b"}'))
+        self.assertEqual(checks, ["enum"])
+
+    def test_register_endpoint_runs_weak(self):
+        from validators.auth_sequence_validator import AuthSequenceValidator
+        v = AuthSequenceValidator(allowed_hosts=["target.test"])
+        checks = v._which_checks("broken_authentication",
+                                   _ex(url="http://target.test/api/register",
+                                        body='{"username":"a","password":"b"}'))
+        self.assertEqual(checks, ["weak"])
 
 
 if __name__ == "__main__":

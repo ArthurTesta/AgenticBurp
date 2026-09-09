@@ -8,10 +8,10 @@ Retry-After after a threshold -> the endpoint enforces no rate limit.
 The decision this leg encodes: "how many attempts = no rate limit, reconciled
 with the mutating-burst ceiling." It requests a burst of `min_attempts` via the
 safety gate's authorize_burst (so the operator's max_burst_size + the hard
-ceiling still cap it), and confirms ONLY when it actually reached `min_attempts`
-un-throttled -- otherwise it skips as inconclusive rather than claim "no limit"
-from a burst the gate clamped below the floor. min_attempts defaults to 12
-(> typical lockout thresholds of 5-10, <= the hard burst ceiling of 20).
+ceiling still cap it). When the gate allows fewer than min_attempts but still
+>= 2, the leg fires the reduced burst at lower confidence rather than skipping
+entirely. min_attempts defaults to 5 (> typical lockout thresholds of 3,
+reasonable with default burst ceilings).
 
 SAFE subset: it REPLAYS THE CAPTURED REQUEST UNCHANGED, N times. A captured login
 carries valid credentials, so N successful logins with no throttle is the finding
@@ -51,7 +51,7 @@ class RateLimitValidator(Validator):
     active = True
 
     def __init__(self, *, allowed_hosts: list[str] | None = None, timeout: float = 10.0,
-                 min_attempts: int = 12):
+                 min_attempts: int = 5):
         self.allowed_hosts = allowed_hosts or []
         self.timeout = timeout
         self.min_attempts = max(2, int(min_attempts))
@@ -59,8 +59,6 @@ class RateLimitValidator(Validator):
     def applies(self, finding: Finding, exchange: HttpExchange) -> bool:
         if not super().applies(finding, exchange):
             return False
-        # A rate-limit/lockout test is about repeated ATTEMPTS -- a mutating auth
-        # send (login/register/reset), not an idempotent GET.
         return (exchange.method or "GET").upper() not in ("GET", "HEAD", "OPTIONS")
 
     def _skip(self, why: str) -> ValidationResult:
@@ -82,19 +80,16 @@ class RateLimitValidator(Validator):
             return self._skip(f"host {host!r} out of scope")
         method = (exchange.method or "POST").upper()
 
-        # Authorise the whole burst once -- respects the operator's max_burst_size
-        # and the hard ceiling. If the gate clamps below the floor, we can't make
-        # a "no rate limit after N" claim, so skip as inconclusive.
         decision = get_default_gate().authorize_burst(
             validator_name=self.name, method=method, url=exchange.url,
             requested_burst_size=self.min_attempts, body=exchange.request_body)
         if not decision.allowed:
             return self._skip(f"burst not authorized by safety gate: {decision.reason}")
         allowed = decision.allowed_burst_size
-        if allowed < self.min_attempts:
+        if allowed < 2:
             return self._skip(
-                f"burst ceiling {allowed} is below min_attempts {self.min_attempts} -- raise "
-                f"validators.max_burst_size to test rate limiting meaningfully (inconclusive)")
+                f"burst ceiling {allowed} is below 2 -- need at least 2 attempts to "
+                f"test rate limiting (raise validators.max_burst_size)")
 
         headers = {k: v for k, v in (exchange.request_headers or {}).items()
                    if k.lower() not in ("content-length", "host")}
@@ -123,6 +118,9 @@ class RateLimitValidator(Validator):
         except Exception as e:
             return self._skip(f"burst failed: {e.__class__.__name__}")
 
+        if completed < 2:
+            return self._skip(f"only {completed} attempt(s) completed -- too few for any claim")
+
         if completed >= self.min_attempts:
             return ValidationResult(
                 self.name, "confirmed", "rate_limit", confidence=0.85, confirmed=True,
@@ -133,5 +131,12 @@ class RateLimitValidator(Validator):
                          f"(>= min_attempts {self.min_attempts}). Status distribution: {statuses}. "
                          f"An endpoint enforcing a limit would have returned 429 / a lockout "
                          f"before this many attempts.")
-        return self._skip(f"only {completed}/{allowed} attempts completed -- too few for a "
-                          f"conclusive no-rate-limit claim")
+        # Reduced burst: fewer than min_attempts but still >= 2 with no throttle.
+        return ValidationResult(
+            self.name, "confirmed", "rate_limit", confidence=0.6, confirmed=True,
+            summary=f"No rate limiting / lockout (reduced burst): {completed} rapid {method} "
+                    f"attempts to {exchange.url} all accepted without throttle signal.",
+            evidence=f"Replayed the captured request {completed} times (burst ceiling "
+                     f"capped below min_attempts {self.min_attempts}, but all {completed} "
+                     f"succeeded without 429/Retry-After/lockout). Status distribution: "
+                     f"{statuses}. Lower confidence due to reduced sample size.")

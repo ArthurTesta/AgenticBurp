@@ -463,6 +463,116 @@ class FfufIntegrationTests(unittest.TestCase):
         self.assertEqual(login_route.source, "ffuf")
 
 
+class HtmlLinkMiningTests(unittest.TestCase):
+    """HTML link/form mining in _mine_responses: <a href> and <form action>
+    tags in HTML responses feed discovered routes back into the surface."""
+
+    def _responder(self, known):
+        def r(method, path):
+            return known.get(path, (500, _NF, ""))
+        return r
+
+    def test_html_anchor_links_fed_back(self):
+        known = {
+            "/web/home": (200, '<html><body><a href="/web/search">Search</a>'
+                          '<a href="/web/ticket/1">Ticket</a></body></html>', ""),
+            "/web/search": (200, "<html>search page</html>", ""),
+            "/web/ticket/1": (200, "<html>ticket</html>", ""),
+        }
+        disc = _FakeDiscovery(self._responder(known),
+                              prefixes=["/web/"], collections=[], nouns=["home"],
+                              actions=[], sensitive_files=[])
+        res = _run(disc)
+        self.assertIn("/web/search", res.paths())
+        self.assertIn("/web/ticket/1", res.paths())
+
+    def test_form_action_fed_back(self):
+        known = {
+            "/web/login": (200, '<html><form action="/api/auth/login" method="post">'
+                           '<input name="user"></form></html>', ""),
+            "/api/auth/login": (405, "{}", "POST"),
+        }
+        disc = _FakeDiscovery(self._responder(known),
+                              prefixes=["/web/"], collections=[], nouns=["login"],
+                              actions=[], sensitive_files=[])
+        res = _run(disc)
+        self.assertIn("/api/auth/login", res.paths())
+
+    def test_non_html_body_no_html_mining(self):
+        known = {"/api/data": (200, '{"link":"/api/other"}', "")}
+        disc = _FakeDiscovery(self._responder(known),
+                              prefixes=["/api/"], collections=[], nouns=["data"],
+                              actions=[], sensitive_files=[])
+        res = _run(disc)
+        self.assertNotIn("/api/other", [r.path for r in res.routes if r.source == "html"])
+
+
+class DeepNestedTests(unittest.TestCase):
+    """Three-segment nesting under live 2-segment prefixes."""
+
+    def _responder(self, known):
+        def r(method, path):
+            return known.get(path, (500, _NF, ""))
+        return r
+
+    def test_deep_nested_found_under_live_prefix(self):
+        known = {
+            "/api/admin": (200, "{}", ""),
+            "/api/admin/diagnostics/health": (200, '{"ok":true}', ""),
+        }
+        disc = _FakeDiscovery(self._responder(known),
+                              prefixes=["/api/"], collections=["diagnostics"],
+                              nouns=["admin", "health"],
+                              actions=[], sensitive_files=[])
+        res = _run(disc)
+        self.assertIn("/api/admin/diagnostics/health", res.paths())
+
+    def test_dead_prefix_no_deep_nesting(self):
+        known = {"/api/health": (200, "{}", "")}
+        disc = _FakeDiscovery(self._responder(known),
+                              prefixes=["/api/"], collections=["admin"],
+                              nouns=["health", "users"],
+                              actions=[], sensitive_files=[])
+        res = _run(disc)
+        found_deep = [p for p in res.paths() if p.count("/") >= 4]
+        self.assertEqual(found_deep, [])
+
+
+class QueryParamProbeTests(unittest.TestCase):
+    """Query-parameter discovery: probe common params on discovered endpoints."""
+
+    def _responder(self, known):
+        def r(method, path):
+            return known.get(path, (500, _NF, ""))
+        return r
+
+    def test_distinct_response_with_param_discovered(self):
+        known = {
+            "/api/tickets": (200, '{"items":[]}', ""),
+            "/api/tickets?filter=1": (200, '{"items":[{"id":1}], "filtered":true}', ""),
+        }
+        disc = _FakeDiscovery(self._responder(known),
+                              prefixes=["/api/"], collections=[], nouns=["tickets"],
+                              actions=[], sensitive_files=[])
+        res = _run(disc)
+        param_routes = [r for r in res.routes if r.source == "param_probe"]
+        self.assertTrue(len(param_routes) >= 1)
+
+    def test_identical_response_not_recorded(self):
+        body = '{"items":[]}'
+        known = {"/api/tickets": (200, body, "")}
+        # all param variants return the same body -> nothing recorded
+        def r(method, path):
+            if path.startswith("/api/tickets"):
+                return (200, body, "")
+            return (500, _NF, "")
+        disc = _FakeDiscovery(r, prefixes=["/api/"], collections=[], nouns=["tickets"],
+                              actions=[], sensitive_files=[])
+        res = _run(disc)
+        param_routes = [r for r in res.routes if r.source == "param_probe"]
+        self.assertEqual(len(param_routes), 0)
+
+
 class SpecTests(unittest.TestCase):
     def test_spec_paths_parsed(self):
         body = '{"openapi":"3.0.0","paths":{"/api/a":{},"/api/b/{id}":{},"bad":{}}}'

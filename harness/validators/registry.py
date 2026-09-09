@@ -34,6 +34,7 @@ from .rate_limit_validator import RateLimitValidator
 from .reset_token_validator import ResetTokenValidator
 from .dom_xss_validator import DomXssValidator
 from .toctou_validator import ToctouValidator
+from .verbose_error_validator import VerboseErrorValidator
 from safety_gate import get_default_gate, reset_default_gate
 
 
@@ -281,6 +282,11 @@ class ValidatorRegistry:
                 max_visits=int(dom_cfg.get("max_visits", 8)),
                 cdp_endpoint=dom_cfg.get("cdp_endpoint") or None)
 
+        # Verbose error / stack trace / debug info validator (passive -- no network).
+        verbose_cfg = cfg.get("verbose_error", {})
+        if verbose_cfg.get("enabled", True):
+            self.validators["verbose_error"] = VerboseErrorValidator()
+
         # Browser-driven XSS validator (A2) -- active: loads candidate URLs in a
         # real headless browser and confirms only on observed script execution.
         # Enabled here just registers it; it still only RUNS when
@@ -350,3 +356,19 @@ class ValidatorRegistry:
             return []
         return [v for v in self.validators.values()
                 if v.applies(finding, exchange) and (not v.active or self.active_enabled)]
+
+    def passive_validators(self) -> list[Validator]:
+        """Return validators that can run without sending any network traffic
+        (active=False). Used by the universal header audit to scan every
+        captured exchange regardless of agent findings."""
+        return [v for v in self.validators.values() if not v.active]
+
+    def header_audit_validators(self) -> list[Validator]:
+        """Return validators suitable for a universal header audit pass
+        (CORS, CSP, verbose_error). These are run against every captured
+        exchange regardless of whether any agent flagged their class --
+        closing the passive analysis gap where header-level issues are
+        missed because the LLM never labelled them."""
+        names = {"cors", "csp", "verbose_error"}
+        return [v for n, v in self.validators.items()
+                if n in names and (not v.active or self.active_enabled)]
