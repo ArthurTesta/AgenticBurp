@@ -245,6 +245,28 @@ LIVE_VERIFIED_MARKERS = frozenset({
 })
 
 
+# Provisional technique markers: a leg EXISTS but is NOT yet live-verified.
+# These are checked BEFORE the live set so a provisional subclass whose name
+# merely CONTAINS a live class's name as a substring is not mis-promoted to
+# "live" (R09). The reproduced defects: leg_tier("dom_xss") returned "live"
+# because "xss" is a substring; leg_tier("privilege escalation race") returned
+# "live" because "privilege escalation" is a substring. dom_xss / toctou-race /
+# rate_limit / reset_token are provisional (see CURRENT_STATE leg tiers) and must
+# resolve to "provisional" regardless of those substrings.
+PROVISIONAL_MARKERS = frozenset({
+    # DOM XSS (⊃ "xss", which is live)
+    "dom_xss", "dom xss", "dom-based xss", "dom based xss", "client-side xss", "client side xss",
+    # TOCTOU / privilege-escalation RACE (⊃ "privilege escalation", which is live)
+    "toctou", "time-of-check", "time of check", "check-then-act", "check then act",
+    "privilege escalation race", "privilege_escalation_race",
+    # rate limit / lockout
+    "rate_limit", "rate limit", "no rate limiting", "brute force", "brute_force",
+    "lockout", "account lockout",
+    # predictable reset/session token
+    "reset_token", "reset token", "predictable token", "insecure token", "token entropy",
+})
+
+
 def is_confirmable_class(vuln_class: str | None) -> bool:
     """Check if the given vulnerability class has a deterministic confirmation leg."""
     if not vuln_class:
@@ -257,13 +279,43 @@ def leg_tier(vuln_class: str | None, live_verified_markers: frozenset | None = N
     """Verification tier of the confirmation leg for a class:
     "live" (a live-verified leg exists), "provisional" (a leg exists but is only
     smoke/hermetic-verified), or "none" (no leg). `live_verified_markers` overrides
-    the default LIVE_VERIFIED_MARKERS seed -- this is the seam Phase 2 uses to
-    promote a leg once it is live-verified."""
+    the default LIVE_VERIFIED_MARKERS seed -- the seam Phase 2 uses to promote a
+    leg once it is live-verified.
+
+    R09: a provisional subclass is NOT promoted to "live" merely because a live
+    class's NAME is a substring of it (dom_xss ⊃ "xss"; "privilege escalation
+    race" ⊃ "privilege escalation"). It is promoted only when an explicit override
+    lists one of ITS OWN provisional markers -- the deliberate Phase-2 promotion
+    path, not an accidental substring."""
     if not is_confirmable_class(vuln_class):
         return "none"
-    live = LIVE_VERIFIED_MARKERS if live_verified_markers is None else live_verified_markers
     lowered = (vuln_class or "").lower()
+    live = LIVE_VERIFIED_MARKERS if live_verified_markers is None else live_verified_markers
+    prov_hit = {m for m in PROVISIONAL_MARKERS if m in lowered}
+    if prov_hit:
+        # Only a deliberate override that names one of this technique's OWN
+        # provisional markers promotes it to live; the built-in default never does.
+        if live_verified_markers is not None and (prov_hit & set(live)):
+            return "live"
+        return "provisional"
     return "live" if any(marker in lowered for marker in live) else "provisional"
+
+
+def _controlled_negative_classes(validation_reports: list | None) -> set:
+    """Canonical finding classes for which a validator produced a real controlled
+    NEGATIVE -- it actually ran and returned `not_confirmed` (R08). This is what
+    separates a refutation ("a reliable leg ran and said no") from a leg that
+    never produced a verdict (skipped / error / disabled / absent), which is NOT
+    evidence of a false positive and must not be labelled as one."""
+    from categories import canonicalize
+    neg: set = set()
+    for vr in validation_reports or []:
+        status = (getattr(vr, "status", "") or "").lower()
+        confirmed = bool(getattr(vr, "confirmed", False))
+        if status == "not_confirmed" and not confirmed:
+            fc = getattr(vr, "finding_class", "") or ""
+            neg.add(canonicalize(fc) or fc.lower())
+    return neg
 
 
 def apply_confirmation_suppression(
@@ -272,20 +324,30 @@ def apply_confirmation_suppression(
     live_verified_markers: frozenset | None = None,
 ) -> int:
     """
-    Place each unconfirmed finding into the leg-aware 3-state model (see module
-    docstring). Mutates findings in place; returns the number demoted (REFUTED +
-    UNPROVEN). Confirmed findings and no-leg classes are left untouched.
+    Place each unconfirmed finding into an execution-aware, leg-aware state model.
+    Mutates findings in place; returns the number demoted. Confirmed findings and
+    no-leg classes are left untouched.
 
-    - REFUTED  (class has a LIVE-verified leg): severity -> "low", confidence
-      <= 0.35, verdict "unconfirmed_hypothesis", prefix "[Hypothesis]".
-    - UNPROVEN (class has a leg, but only smoke/hermetic-verified): severity
-      capped at "medium" (high/critical -> medium), confidence <= 0.5, verdict
-      "unproven_unverified_leg", prefix "[Unconfirmed]".
+    - REFUTED  (live-verified leg AND a real controlled negative for the class in
+      `validation_reports`): the leg actually ran and said no -> likely false
+      positive. severity -> "low", confidence <= 0.35, verdict
+      "unconfirmed_hypothesis", prefix "[Hypothesis]".
+    - UNVERIFIED (live-verified leg but NO controlled negative executed -- the leg
+      was skipped / errored / disabled / not run, or no validation reports were
+      supplied): NOT a refutation (R08). Still capped for safety (severity -> low,
+      confidence <= 0.35 -- the precision floor), but labelled honestly: verdict
+      "inconclusive_unverified", prefix "[Unverified]", note says it was neither
+      confirmed nor refuted so it must not be treated as a false positive.
+    - UNPROVEN (class has a leg, but only smoke/hermetic-verified): severity capped
+      at "medium", confidence <= 0.5, verdict "unproven_unverified_leg", prefix
+      "[Unconfirmed]".
 
     `live_verified_markers` overrides which classes count as live-verified -- the
     seam Phase 2 uses to promote a leg after live-verifying it.
     """
     demoted = 0
+    negatives = _controlled_negative_classes(validation_reports)
+    from categories import canonicalize as _canon
 
     for report in reports:
         for finding in report.findings:
@@ -300,17 +362,36 @@ def apply_confirmation_suppression(
                 finding.original_confidence = finding.confidence
 
             if tier == "live":
-                # REFUTED: a reliable leg stayed silent -> likely a false positive.
+                fc_canon = _canon(finding.vulnerability_class) or (finding.vulnerability_class or "").lower()
+                has_controlled_negative = fc_canon in negatives
+                # Cap for safety in both cases (the precision floor: an unconfirmed
+                # live-class finding never ships actionable), but DISTINGUISH why.
                 finding.confidence = min(finding.confidence, _REFUTED_CONFIDENCE_CAP)
                 if finding.severity in ("critical", "high", "medium"):
                     if finding.original_severity is None:
                         finding.original_severity = finding.severity
                     finding.severity = "low"
-                finding.review_verdict = "unconfirmed_hypothesis"
-                prefix = "[Hypothesis]"
-                note = ("Demoted by confirmation-suppression gate: this class has a LIVE-VERIFIED "
-                        "leg that did not confirm the finding on target -- treated as a likely "
-                        "false positive.")
+                if has_controlled_negative:
+                    # REFUTED: a reliable leg ran and stayed silent -> likely FP.
+                    finding.review_verdict = "unconfirmed_hypothesis"
+                    prefix = "[Hypothesis]"
+                    note = ("Demoted by confirmation-suppression gate: this class has a LIVE-VERIFIED "
+                            "leg that RAN and did not confirm the finding on target -- treated as a "
+                            "likely false positive.")
+                else:
+                    # UNVERIFIED: no leg produced a negative -- inconclusive, not refuted (R08).
+                    finding.review_verdict = "inconclusive_unverified"
+                    prefix = "[Unverified]"
+                    note = ("Capped by confirmation-suppression gate: this class has a live-verified "
+                            "leg, but NO confirmation execution produced a negative for this finding "
+                            "(the leg was skipped/errored/disabled or not run). It is neither confirmed "
+                            "nor refuted -- do NOT treat it as a false positive; re-run with the leg enabled.")
+                finding.review_note = (
+                    (finding.review_note + " " + note) if finding.review_note else note
+                )
+                if finding.summary and not finding.summary.startswith(prefix):
+                    finding.summary = f"{prefix} {finding.summary}"
+                continue
             else:  # provisional
                 # UNPROVEN: the leg isn't live-verified, so silence is weak
                 # evidence -- keep it visible (capped) rather than bury it.

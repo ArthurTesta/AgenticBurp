@@ -112,13 +112,16 @@ class TestBlindNegativesRegression(unittest.TestCase):
                 f"Secure control '{entry['label']}' emitted actionable findings: {actionable_findings}",
             )
 
-            # All findings must be demoted to low with confidence capped <= 0.35
+            # All findings must be capped to low with confidence <= 0.35 (the
+            # precision floor). With no leg execution simulated here, the honest
+            # verdict is UNVERIFIED (inconclusive), not "refuted" (R08) -- but the
+            # floor (zero medium+) is identical either way.
             for r in reports:
                 for f in r.findings:
                     self.assertEqual(f.severity, "low")
                     self.assertLessEqual(f.confidence, 0.35)
-                    self.assertEqual(f.review_verdict, "unconfirmed_hypothesis")
-                    self.assertTrue(f.summary.startswith("[Hypothesis]"))
+                    self.assertEqual(f.review_verdict, "inconclusive_unverified")
+                    self.assertTrue(f.summary.startswith("[Unverified]"))
 
     # NOTE: passive-banner dependency capping (formerly asserted inline here with
     # test-local logic) moved to Phase 1.2 -- the cap now lives in harness code
