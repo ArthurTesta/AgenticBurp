@@ -72,7 +72,9 @@ class FileUploadValidator(Validator):
             await global_throttle.acquire()
             async with GatedAsyncClient(get_default_gate(), self.name, timeout=self.timeout,
                                         follow_redirects=True, verify=False) as client:
-                resp = await client.post(url, headers=headers or None, files=files_data)
+                # GatedAsyncClient exposes only .request() (R04): calling .post()/.get()
+                # raised AttributeError before any request was ever sent.
+                resp = await client.request(method, url, headers=headers or None, files=files_data)
         except SafetyGateBlocked:
             return self._skip("mutating file upload not authorized (set validators.allow_mutating_replay)")
         except httpx.HTTPError as e:
@@ -125,7 +127,7 @@ class FileUploadValidator(Validator):
             await global_throttle.acquire()
             async with GatedAsyncClient(get_default_gate(), self.name, timeout=self.timeout,
                                         follow_redirects=True, verify=False) as client:
-                retrieve = await client.get(upload_url, headers=headers or None)
+                retrieve = await client.request("GET", upload_url, headers=headers or None)
         except httpx.HTTPError:
             return ValidationResult(
                 self.name, "not_confirmed", "file_upload", confidence=0.2, confirmed=False,

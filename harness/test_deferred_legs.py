@@ -220,7 +220,8 @@ class FileUploadTests(unittest.TestCase):
         mock_resp = MagicMock()
         mock_resp.status_code = 415
         mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_resp)
+        # GatedAsyncClient exposes only .request() (R04) -- mock that, not .post().
+        mock_client.request = AsyncMock(return_value=mock_resp)
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock()
         mock_client_cls.return_value = mock_client
@@ -242,16 +243,13 @@ class FileUploadTests(unittest.TestCase):
         retrieve_resp.headers = {"content-type": "text/html"}
 
         mock_client = AsyncMock()
-        call_count = {"n": 0}
 
-        async def _post(*args, **kwargs):
-            return upload_resp
+        # GatedAsyncClient exposes only .request(method, url, ...) (R04): dispatch
+        # on the method rather than mocking .post()/.get() (which never existed).
+        async def _request(method, url, *args, **kwargs):
+            return retrieve_resp if method.upper() == "GET" else upload_resp
 
-        async def _get(*args, **kwargs):
-            return retrieve_resp
-
-        mock_client.post = _post
-        mock_client.get = _get
+        mock_client.request = _request
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock()
         mock_client_cls.return_value = mock_client
@@ -268,6 +266,79 @@ class FileUploadTests(unittest.TestCase):
 
         self.assertEqual(r.status, "confirmed")
         self.assertTrue(r.confirmed)
+
+
+class RealWrapperFileUploadTests(unittest.TestCase):
+    """R04 regression guard: exercise the REAL GatedAsyncClient (which exposes
+    ONLY .request(), not .post()/.get()) against an in-process httpx.MockTransport.
+    The previous mocked tests used an unrestricted AsyncMock that silently
+    provided .post()/.get(), so they never caught the AttributeError that fired
+    before any upload request was sent. This test uses the real wrapper + gate."""
+
+    def setUp(self):
+        import safety_gate
+        safety_gate.reset_default_gate()
+        safety_gate.get_default_gate({"active_enabled": True, "allow_mutating_replay": True})
+        self.v = FileUploadValidator(allowed_hosts=["target.test"])
+
+    def tearDown(self):
+        import safety_gate
+        safety_gate.reset_default_gate()
+
+    def _validate_with(self, handler):
+        import httpx
+        import validators.file_upload_validator as fu_mod
+        real_cls = fu_mod.GatedAsyncClient
+
+        def _factory(gate, name, **kw):
+            kw.pop("verify", None)  # custom transport supersedes verify
+            kw["transport"] = httpx.MockTransport(handler)
+            return real_cls(gate, name, **kw)
+
+        ex = _exchange(url="http://target.test/api/upload", method="POST", status=200)
+        with patch.object(fu_mod, "GatedAsyncClient", _factory), \
+                patch("global_throttle.acquire", new_callable=AsyncMock):
+            return asyncio.run(self.v.validate(_finding("file_upload"), ex))
+
+    def test_confirmed_through_real_gated_wrapper(self):
+        import re
+        import httpx
+        stored = {}
+
+        def handler(request):
+            if request.method == "POST":
+                body = request.content.decode(errors="ignore")
+                m = re.search(r"harness-upload-([0-9a-f]+)", body)
+                token = m.group(1) if m else "x"
+                stored["marker"] = f"<!-- harness-upload-{token} -->"
+                return httpx.Response(200, json={"url": f"/uploads/test-{token}.html"})
+            return httpx.Response(200, text=stored.get("marker", ""),
+                                  headers={"content-type": "text/html"})
+
+        r = self._validate_with(handler)
+        self.assertEqual(r.status, "confirmed")
+        self.assertTrue(r.confirmed)
+
+    def test_rejected_upload_is_negative_control(self):
+        import httpx
+
+        def handler(request):
+            return httpx.Response(415, text="unsupported media type")
+
+        r = self._validate_with(handler)
+        self.assertEqual(r.status, "not_confirmed")
+
+    def test_blocked_when_mutating_not_authorized(self):
+        # With mutating replay OFF, the gate must block the POST -> skipped, not crash.
+        import safety_gate, httpx
+        safety_gate.reset_default_gate()
+        safety_gate.get_default_gate({"active_enabled": True, "allow_mutating_replay": False})
+
+        def handler(request):  # should never be reached
+            return httpx.Response(200, json={"url": "/uploads/x.html"})
+
+        r = self._validate_with(handler)
+        self.assertEqual(r.status, "skipped")
 
 
 # ---- Negative controls ----
