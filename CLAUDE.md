@@ -125,11 +125,19 @@ a run. `validators/registry.py` is the source of truth.
 | `reset_token` | predictable reset token | sample tokens, `analyze_tokens` deterministic predictability oracle (provisional) |
 | `dom_xss` | DOM-based XSS | payload in URL fragment (never server-sent) → browser execution = client-side taint (provisional) |
 | `verb_tamper` (mutating) | method authz bypass | opt-in PUT/PATCH/DELETE (`try_mutating_methods`, triple-gated) |
+| `toctou` | priv-esc race (V19) | baseline read → concurrent burst of an authority write → verify read; confirm on field-flip-under-concurrency + ≥2 clean successes (provisional) |
 
 Second-order chains (V22 SQLi / V17 IDOR) have no single-request leg: `chaining.py`
-composes the plant→trigger `(A,B)` pair (`second_order_sqli`/`second_order_idor`
-rules) and `second_order.py` supplies the boolean-differential / cross-identity
-plant-read confirmation primitives (over injected send callables).
+composes the plant→trigger `(A,B)` pair (`second_order_{sqli,idor}` rules,
+`second_order_candidates()`), `second_order.py` supplies the boolean-differential /
+cross-identity plant-read primitives, and `investigate_engagement` runs them live
+over each pair (`auto_confirm_candidates`, gated on `allow_mutating_replay`).
+
+The **coverage matrix is a driver, not just a recorder** (I1): with
+`engagement.coverage_drive_legs` on, `coverage_tracker.build_coverage_driven` fires
+every applicable deterministic leg per (identity×endpoint×check) cell regardless of
+the LLM label, so "every applicable check attempted" is true by construction and
+detection no longer hinges on label variance.
 
 Three legs above are **provisional** — built + hermetically tested but not yet
 live-verified on a target, so CONFIRMABLE but not in `LIVE_VERIFIED_MARKERS`. A

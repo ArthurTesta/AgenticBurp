@@ -9,10 +9,11 @@ file map) is in [`CLAUDE.md`](CLAUDE.md) — read that first, then this.
 
 ## ►► SESSION-16 STATE (READ FIRST) ◄◄
 
-Branch `WorkingSunday`, **HEAD `1e0ec65`** (+ this doc commit), suite **1374 OK**
+Branch `WorkingSunday`, **HEAD `0feec46`** (+ this doc commit), suite **1390 OK**
 (`cd harness && python -m unittest discover -p "test_*.py"`, 230 s). Everything
 committed and green; working tree clean; `config.yaml` at safe defaults;
-`config.local.yaml` untouched.
+`config.local.yaml` untouched. Session 16 ran in two waves — the ranked build list
+(items 1–8) then the operator's pre-run follow-ups (items 9–11 below).
 
 ### What session 16 shipped — the operator's ranked build list, top to bottom
 
@@ -75,26 +76,46 @@ deliberately **provisional** (see below).
 (reset-token), WSTG-CLNT-01 (DOM XSS), and WSTG-ATHN-03 lockout now maps to the
 `rate_limit` leg (was "manual").
 
+### Session-16 second wave (pre-run code the operator asked for)
+
+Three more items landed after the first wave, all deterministic (I3) + tested:
+
+9. **V19 TOCTOU priv-esc race** (`1015228`) — `toctou_validator.py`: baseline read
+   → N genuinely-concurrent copies of the authority write (asyncio.gather) → verify
+   read; confirms only when a privileged field FLIPPED under concurrency AND ≥2
+   requests succeeded cleanly (a single clean success that flips = mass-assign, the
+   sequence leg's case). New `toctou` category + WSTG-BUSL-08 check. **Provisional**.
+10. **Coverage matrix as a DRIVER** (`185cf44`) — `coverage_tracker.build_coverage_driven`
+    + `drive_coverage_legs`: with `engagement.coverage_drive_legs` on, actively fire
+    every applicable leg-backed cell (regardless of the LLM label) and record the
+    real status. This is the full I1 and the detection-reliability fix (SQLi flicker).
+    DEFAULT OFF; bounded by `coverage_leg_budget` (80).
+11. **Second-order auto-confirmation** (`0feec46`) — `chaining.second_order_candidates`
+    surfaces the (A,B) pairs; `second_order.auto_confirm_candidates` +
+    `investigate_engagement` run the boolean-differential (SQLi) / cross-identity
+    plant-read (IDOR) live over each pair, gated on `allow_mutating_replay`.
+
 ### Leg tiers after session 16 (confirmation_gate)
 
 - **LIVE_VERIFIED** now also includes `privilege_escalation` (V18).
 - **Provisional** (CONFIRMABLE, leg built + hermetically tested, NOT yet live-run):
-  `rate_limit`, `reset_token`, `dom_xss`. Promote each after a live/browser run
-  (the freeze-policy discipline). The confirmation-gate 3-state tests use these as
-  the provisional examples now.
+  `rate_limit`, `reset_token`, `dom_xss`, `toctou`. Promote each after a live/browser
+  run (the freeze-policy discipline). The confirmation-gate 3-state tests use
+  rate_limit/reset_token as the provisional examples.
 
 ### The remaining honest frontier (for the next session)
 
-- **Run the fresh measured VulnCorp run** (ranked #5) with feature_crawl on + Burp
-  import of a human browse — this is what turns "capability present" into a
-  confirmed-on-target recall number for the session-16 legs (and the session-15
-  csrf/file_upload/verb_tamper that have still never been scored against VulnCorp).
-  Use the run harness in `testing/vulncorp-helpdesk/maxrun/`, FRESH cache DB.
-- **Promote rate_limit / reset_token / dom_xss** to LIVE once that run (or the
-  browser runner for dom_xss) confirms them.
-- **Second-order auto-confirmation**: the composition rules + `second_order.py`
-  primitives exist; auto-selecting (A,B) pairs and running the differential live
-  inside `investigate_engagement` is the remaining wiring.
+- **Run the fresh measured VulnCorp run** (ranked #5) with `feature_crawl` +
+  `coverage_drive_legs` on (and a Burp import of a human browse) — this is the ONE
+  remaining thing that turns "capability present" into a confirmed-on-target recall
+  number for every session-15/16 leg (csrf/file_upload/verb_tamper have still never
+  been scored against VulnCorp). Use `testing/vulncorp-helpdesk/maxrun/`, FRESH
+  cache DB, and enable the toggles in `config.local.yaml` (never a committed flip).
+- **Promote `rate_limit` / `reset_token` / `dom_xss` / `toctou`** to LIVE once that
+  run (or the browser runner for dom_xss) confirms them.
+- Everything the matrix then reports as `skipped: needs human` (business-logic /
+  no-leg classes, already flagged via `flag_unconfirmable`) is the true
+  human-judgment tail — by design, never auto-confirmed.
 
 ---
 
