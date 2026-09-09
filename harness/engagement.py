@@ -257,6 +257,35 @@ def business_logic_review(finding_class: str, url: str) -> dict | None:
             "needs": "human judgment (business logic)"}
 
 
+def needs_human_review(finding_class: str, url: str) -> dict | None:
+    """Whether a finding's class has NO automated confirmation leg at all, so the
+    only honest disposition is a HUMAN verification hand-off -- never a fabricated
+    confirmation. This is the general guard the operator asked for on the classes
+    with no leg (V2/V37 and any other no-leg class): the harness must flag them for
+    a tester, not let an agent's guess masquerade as confirmed and not silently
+    drop them. Business-logic classes are handled by their own richer hand-off
+    (business_logic_review), so this defers to that and covers everything else.
+
+    Returns a review-task spec (blocked on human judgment) or None. Deterministic;
+    keyed off the leg-tier table (confirmation_gate), not free text."""
+    # business logic has its own, more specific hand-off -- don't double-flag.
+    if business_logic_review(finding_class, url) is not None:
+        return None
+    try:
+        from confirmation_gate import leg_tier
+        tier = leg_tier(finding_class)
+    except Exception:  # pragma: no cover - confirmation_gate always importable
+        tier = "none"
+    if tier != "none":
+        return None  # a leg exists (live or provisional) -> confirmation path owns it
+    path = normalize_path(url)
+    return {"target": path,
+            "reason": (f"finding class {finding_class!r} has no automated confirmation leg in this "
+                       f"harness -- it is reported UNCONFIRMED and flagged for human verification. "
+                       f"The harness never fabricates confirmation for a class it cannot actually test."),
+            "needs": "human verification (no automated leg for this class)"}
+
+
 def detect_capabilities(finding: dict, resp_headers: dict | None, resp_body: str | None,
                         url: str) -> list[dict]:
     """What new access, if any, a finding grants -- the trigger for the closed
@@ -437,6 +466,18 @@ class EngagementState:
         if spec is None:
             return False
         self.graph.add("review", spec["target"], reason=spec["reason"],
+                       needs=spec["needs"], source=url)
+        return True
+
+    def flag_unconfirmable(self, finding_class: str, url: str) -> bool:
+        """If this finding's class has NO automated confirmation leg, add a BLOCKED
+        'verify' task (needs=human verification) so it is surfaced to the tester as
+        reported-not-verified rather than fake-confirmed or dropped. Returns whether
+        one was added. De-duped by (kind, target) via the task graph."""
+        spec = needs_human_review(finding_class, url)
+        if spec is None:
+            return False
+        self.graph.add("verify", spec["target"], reason=spec["reason"],
                        needs=spec["needs"], source=url)
         return True
 

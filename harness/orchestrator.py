@@ -1198,6 +1198,21 @@ class Orchestrator:
             chains = list(link["chain_findings"])
             creds = link["credential_caps"]
 
+        # Flag-only hand-off: an UNCONFIRMED finding whose class has no automated
+        # leg (and isn't business-logic, which has its own richer hand-off) is
+        # surfaced as a BLOCKED human-verification task -- reported-not-verified,
+        # never fabricated as confirmed and never dropped. This is the honest
+        # disposition for the no-leg classes (V2/V37 and any other).
+        for f in all_findings:
+            if f.get("confirmed"):
+                continue
+            url = f.get("url") or ""
+            vc = f.get("vulnerability_class") or ""
+            if not url or not vc:
+                continue
+            if not state.flag_business_logic(vc, url):
+                state.flag_unconfirmable(vc, url)
+
         # Coverage matrix (I1/I2/I5): reconcile the finished engagement into the
         # auditable identity x endpoint x check matrix -- every applicable check is
         # confirmed / detected / attempted-not_detected, or skipped WITH A REASON,
