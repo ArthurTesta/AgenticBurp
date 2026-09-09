@@ -32,6 +32,7 @@ from .csrf_validator import CsrfValidator
 from .file_upload_validator import FileUploadValidator
 from .rate_limit_validator import RateLimitValidator
 from .reset_token_validator import ResetTokenValidator
+from .dom_xss_validator import DomXssValidator
 from safety_gate import get_default_gate, reset_default_gate
 
 
@@ -259,6 +260,18 @@ class ValidatorRegistry:
             self.validators["reset_token"] = ResetTokenValidator(
                 allowed_hosts=_allowed, timeout=float(rt_cfg.get("timeout", 10.0)),
                 samples=int(rt_cfg.get("samples", 5)))
+
+        # DOM-based XSS leg -- drives a real browser with the payload in the URL
+        # FRAGMENT (never sent to the server), so execution proves a client-side
+        # source->sink taint. Same browser seam as browser_xss; active.
+        dom_cfg = cfg.get("dom_xss", {})
+        if dom_cfg.get("enabled", True):
+            self.validators["dom_xss"] = DomXssValidator(
+                timeout=float(dom_cfg.get("timeout", 15.0)),
+                allowed_hosts=config.get("server", {}).get("allowed_hosts", []),
+                wait_ms=int(dom_cfg.get("wait_ms", 1200)),
+                max_visits=int(dom_cfg.get("max_visits", 8)),
+                cdp_endpoint=dom_cfg.get("cdp_endpoint") or None)
 
         # Browser-driven XSS validator (A2) -- active: loads candidate URLs in a
         # real headless browser and confirms only on observed script execution.

@@ -194,6 +194,8 @@ class TestChainRuleCoverageIsDocumented(unittest.TestCase):
         # session-16: reset_token is a standalone auth-hardening finding, not an
         # escalation primitive that composes into a chain -> intentionally no rule.
         "reset_token",
+        # dom_xss composes like xss but has no dedicated chain rule of its own yet.
+        "dom_xss",
     })
 
     def test_categories_with_no_chain_rule_are_the_known_documented_set(self):

@@ -89,6 +89,7 @@ _REMEDIATION_HINTS: dict[str, str] = {
     "session_fixation": "Issue a new session identifier immediately after successful authentication; never continue using a pre-login session ID.",
     "session_timeout": "Invalidate the session server-side on logout (not just client-side cookie clearing), and enforce an absolute/idle session timeout.",
     "reset_token": "Generate password-reset/session tokens from a cryptographically secure RNG with at least 128 bits of entropy; never derive them from a timestamp, user id, email, or a sequential counter, and expire them after a short single use.",
+    "dom_xss": "Never pass client-side sources (location.hash/.search, document.referrer, postMessage data) into a dangerous sink (innerHTML, document.write, eval, jQuery .html()); use textContent or a sanitizer (e.g. DOMPurify) and treat all URL/DOM input as untrusted in client JS.",
     "graphql": "Disable introspection in production, and enforce field-level authorization independent of the overall query being otherwise valid.",
     "supply_chain": "Pin dependency versions, monitor for disclosed advisories against them, and remove exposed manifests/lockfiles from public access.",
 }

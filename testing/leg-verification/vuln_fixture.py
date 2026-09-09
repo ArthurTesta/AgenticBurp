@@ -91,6 +91,27 @@ def make_app(file_base: str | None = None) -> Flask:
         q = request.args.get("q", "")
         return Response(f"<html><body>hello {html.escape(q)}</body></html>", mimetype="text/html")
 
+    # --- DOM-based XSS (dom_xss leg): a client-side sink reads location.hash and
+    #     writes it to innerHTML. The payload lives in the FRAGMENT, so the server
+    #     never sees it -- only a real browser executing the DOM sink can trigger it.
+    #     TP writes hash to innerHTML raw; control uses textContent. For the
+    #     operator's real-browser run (run_leg_verification.py), not the auto-suite.
+    @app.get("/xss/dom-hash")
+    def xss_dom_hash():
+        return Response(
+            "<html><body><div id=out></div><script>"
+            "document.getElementById('out').innerHTML = "
+            "decodeURIComponent(location.hash.slice(1));"  # VULNERABLE: hash -> innerHTML
+            "</script></body></html>", mimetype="text/html")
+
+    @app.get("/xss/dom-safe")
+    def xss_dom_safe():
+        return Response(
+            "<html><body><div id=out></div><script>"
+            "document.getElementById('out').textContent = "
+            "decodeURIComponent(location.hash.slice(1));"  # safe: textContent, no HTML parse
+            "</script></body></html>", mimetype="text/html")
+
     # --- SSRF: TP fetches the url param server-side; control never fetches -----
     @app.get("/ssrf/fetch")
     def ssrf_fetch():

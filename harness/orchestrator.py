@@ -957,6 +957,7 @@ class Orchestrator:
         from validators.stored_xss_validator import StoredXssValidator
         from validators.rate_limit_validator import RateLimitValidator
         from validators.reset_token_validator import ResetTokenValidator
+        from validators.dom_xss_validator import DomXssValidator
         from models import Finding
         host = urlsplit(base_url).hostname or ""
         for r in roles:
@@ -981,6 +982,7 @@ class Orchestrator:
         _sxss = StoredXssValidator(allowed_hosts=self.allowed_hosts)
         _rate = RateLimitValidator(allowed_hosts=self.allowed_hosts)
         _reset = ResetTokenValidator(allowed_hosts=self.allowed_hosts)
+        _domxss = DomXssValidator(allowed_hosts=self.allowed_hosts)
 
         # Memoisation cache: avoid re-running the same validator on the same
         # endpoint during one investigate_engagement() call.  Keyed by
@@ -1037,6 +1039,14 @@ class Orchestrator:
                         return
                 try:
                     _apply(finding, await _cached_validate(_xval, _as_finding(finding, "idor"), exchange), "cross-identity", 0.9)
+                except Exception:
+                    return
+            elif ("dom" in low and "xss" in low) or "dom_xss" in low or "dom-based" in low or "client-side xss" in low:
+                # DOM-based XSS: fragment-payload browser execution (client-side
+                # source->sink), distinct from server-reflected browser_xss.
+                try:
+                    _apply(finding, await _cached_validate(_domxss, _as_finding(finding, "dom_xss"), exchange),
+                           "dom-xss", 0.95)
                 except Exception:
                     return
             elif "xss" in low or "cross-site scripting" in low or "cross_site" in low:

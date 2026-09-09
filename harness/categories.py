@@ -39,7 +39,7 @@ CANONICAL_CATEGORIES: tuple[str, ...] = (
     "web_cache_poisoning", "oauth", "subdomain_takeover",
     "crypto", "csp", "header_injection", "api_security",
     "websocket", "race_condition", "deserialization",
-    "session_fixation", "session_timeout", "reset_token",
+    "session_fixation", "session_timeout", "reset_token", "dom_xss",
 )
 
 # Deliberately generous but not promiscuous: each entry is a phrase an
@@ -148,6 +148,10 @@ _SYNONYMS: dict[str, str] = {
     "predictable token": "reset_token", "predictable reset token": "reset_token",
     "weak token": "reset_token", "insecure token": "reset_token",
     "token entropy": "reset_token", "weak_reset_token": "reset_token",
+    "dom_xss": "dom_xss", "dom xss": "dom_xss", "dom-based xss": "dom_xss",
+    "dom based xss": "dom_xss", "dom-based cross-site scripting": "dom_xss",
+    "client-side xss": "dom_xss", "client side xss": "dom_xss",
+    "client-side cross-site scripting": "dom_xss",
     "session_timeout": "session_timeout", "session timeout": "session_timeout",
     "logout invalidation": "session_timeout", "logout_invalidation": "session_timeout",
     "session not invalidated": "session_timeout",

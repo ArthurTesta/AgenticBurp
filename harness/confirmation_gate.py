@@ -173,6 +173,13 @@ CONFIRMABLE_CLASS_MARKERS = frozenset({
     "weak token",
     "insecure token",
     "token entropy",
+
+    # DOM-based XSS (dom_xss_validator -- fragment-payload browser execution)
+    "dom_xss",
+    "dom xss",
+    "dom-based xss",
+    "dom based xss",
+    "client-side xss",
 })
 
 # The subset of confirmable classes whose leg is LIVE-VERIFIED -- proven to

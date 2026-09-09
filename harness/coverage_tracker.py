@@ -53,7 +53,7 @@ _LEG_CONFIRMATIONS = {
     "sqlmap", "cross_identity", "browser_xss", "jwt_forge", "xxe", "ssrf", "ssti",
     "command_injection", "path_traversal", "open_redirect", "sequence",
     "deserialization_oob", "auth_sequence", "stored_xss", "verb_tamper", "csrf",
-    "file_upload", "rate_limit", "reset_token",
+    "file_upload", "rate_limit", "reset_token", "dom_xss",
 }
 
 
