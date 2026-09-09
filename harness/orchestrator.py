@@ -1219,6 +1219,58 @@ class Orchestrator:
             chains = list(link["chain_findings"])
             creds = link["credential_caps"]
 
+        # Second-order auto-confirmation (V22 SQLi / V17 IDOR): actively run the
+        # plant->trigger differential over each composed (A,B) pair. The plant is a
+        # mutating write, so this is gated on allow_mutating_replay; inert by
+        # default. Confirmed pairs fold in as confirmed findings.
+        try:
+            import json as _json, chaining as _chaining, second_order as _so
+            from safety_gate import GatedAsyncClient as _GAC, get_default_gate as _gg2
+            if _gg2().config.allow_mutating_replay:
+                _MARK_FIELDS = ("q", "name", "value", "comment", "data", "note", "subject", "title")
+                _other = next((r for r in roles if (r.role or "").lower() != "anonymous" and r.headers), None)
+                _other_headers = dict(_other.headers) if _other else None
+
+                async def _plant(a_url, marker):
+                    await global_throttle.acquire()
+                    body = _json.dumps({f: marker for f in _MARK_FIELDS})
+                    try:
+                        async with _GAC(_gg2(), "second_order", timeout=10.0,
+                                        follow_redirects=False, verify=False) as c:
+                            await c.request("POST", a_url, headers={"Content-Type": "application/json"},
+                                            content=body)
+                    except Exception:
+                        pass
+
+                async def _read(b_url, headers=None):
+                    await global_throttle.acquire()
+                    try:
+                        async with httpx.AsyncClient(timeout=10.0, follow_redirects=False,
+                                                     verify=False) as c:
+                            r = await c.get(b_url, headers=headers or None)
+                        return r.text or ""
+                    except Exception:
+                        return ""
+
+                async def _confirm_sqli(a_url, b_url):
+                    return await _so.confirm_second_order_sqli(
+                        plant=lambda m: _plant(a_url, m), trigger=lambda: _read(b_url))
+
+                async def _confirm_idor(a_url, b_url):
+                    return await _so.confirm_second_order_idor(
+                        plant=lambda m: _plant(a_url, m),
+                        read_as_other=lambda: _read(b_url, _other_headers))
+
+                _cands = _chaining.second_order_candidates(all_findings)
+                _confirmed_so = await _so.auto_confirm_candidates(
+                    _cands, confirm_sqli=_confirm_sqli, confirm_idor=_confirm_idor,
+                    is_allowed=lambda u: scope_discovery.is_host_allowed(u, self.allowed_hosts))
+                for cf in _confirmed_so:
+                    all_findings.append(cf)
+                    state.ingest_findings(cf["url"], "GET", [cf])
+        except Exception as e:  # auto-confirm is additive -- never sink the run
+            log.warning("investigate_engagement: second-order auto-confirm failed: %s", e)
+
         # Flag-only hand-off: an UNCONFIRMED finding whose class has no automated
         # leg (and isn't business-logic, which has its own richer hand-off) is
         # surfaced as a BLOCKED human-verification task -- reported-not-verified,

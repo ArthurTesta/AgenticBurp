@@ -436,6 +436,27 @@ def pivot_hints(new_finding_class: str, new_summary: str, host_findings: list[di
     return hints
 
 
+def second_order_candidates(host_findings: list[dict]) -> list[dict]:
+    """The structured (A,B) plant->trigger pairs for the second-order chains, so
+    an active confirmer can act on them (the narrative Findings from detect() bury
+    the urls in prose). A = a write that persists input (tag `stored_write`),
+    B = the SQLi- or IDOR-suspected read. Each candidate:
+    {signature, kind ('sqli'|'idor'), a: <write finding>, b: <read finding>}."""
+    tagged = [(f, _tags_for(f.get("vulnerability_class", ""), f.get("summary", "")))
+              for f in host_findings]
+    writes = [f for f, tags in tagged if "stored_write" in tags]
+    out: list[dict] = []
+    for kind, read_tag, sig in (("sqli", "sqli", "second_order_sqli"),
+                                ("idor", "idor", "second_order_idor")):
+        reads = [f for f, tags in tagged if read_tag in tags]
+        for a in writes:
+            for b in reads:
+                if a.get("url") == b.get("url"):
+                    continue  # A and B must be distinct requests
+                out.append({"signature": sig, "kind": kind, "a": a, "b": b})
+    return out
+
+
 def detect(host_findings: list[dict]) -> list[Finding]:
     """
     host_findings: dicts as returned by store.all_host_findings() --

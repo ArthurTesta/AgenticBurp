@@ -125,5 +125,71 @@ class CompositionRuleTests(unittest.TestCase):
         self.assertNotIn("potential-attack-chain:second_order_sqli", sigs)
 
 
+class CandidateAndAutoConfirmTests(unittest.TestCase):
+    def _findings(self):
+        return [
+            {"url": "https://t.test/api/profile", "vulnerability_class": "mass_assignment",
+             "severity": "medium", "confidence": 0.6, "summary": "stored input persists"},
+            {"url": "https://t.test/api/search", "vulnerability_class": "sqli",
+             "severity": "high", "confidence": 0.6, "summary": "sqli suspected"},
+        ]
+
+    def test_second_order_candidates_structured_pair(self):
+        cands = chaining.second_order_candidates(self._findings())
+        self.assertTrue(any(c["signature"] == "second_order_sqli" for c in cands))
+        c = next(c for c in cands if c["signature"] == "second_order_sqli")
+        self.assertEqual(c["kind"], "sqli")
+        self.assertEqual(c["a"]["url"], "https://t.test/api/profile")  # the write
+        self.assertEqual(c["b"]["url"], "https://t.test/api/search")   # the read
+
+    def test_auto_confirm_folds_confirmed_finding(self):
+        cands = chaining.second_order_candidates(self._findings())
+
+        async def confirm_sqli(a_url, b_url):
+            return second_order.SecondOrderResult(confirmed=True, reason="boolean differential bit",
+                                                  evidence="TRUE vs FALSE diverged")
+
+        async def confirm_idor(a_url, b_url):
+            return second_order.SecondOrderResult(confirmed=False, reason="n/a")
+
+        out = asyncio.run(second_order.auto_confirm_candidates(
+            cands, confirm_sqli=confirm_sqli, confirm_idor=confirm_idor))
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["vulnerability_class"], "second_order_sqli")
+        self.assertTrue(out[0]["confirmed"])
+        self.assertEqual(out[0]["severity"], "critical")
+
+    def test_auto_confirm_nothing_when_differential_flat(self):
+        cands = chaining.second_order_candidates(self._findings())
+
+        async def confirm_sqli(a_url, b_url):
+            return second_order.SecondOrderResult(confirmed=False, reason="flat")
+
+        async def confirm_idor(a_url, b_url):
+            return second_order.SecondOrderResult(confirmed=False, reason="scoped")
+
+        out = asyncio.run(second_order.auto_confirm_candidates(
+            cands, confirm_sqli=confirm_sqli, confirm_idor=confirm_idor))
+        self.assertEqual(out, [])
+
+    def test_auto_confirm_scope_gate_and_cap(self):
+        cands = chaining.second_order_candidates(self._findings())
+        calls = {"n": 0}
+
+        async def confirm_sqli(a_url, b_url):
+            calls["n"] += 1
+            return second_order.SecondOrderResult(confirmed=False, reason="x")
+
+        async def confirm_idor(a_url, b_url):
+            return second_order.SecondOrderResult(confirmed=False, reason="x")
+
+        # scope gate rejects everything -> no confirm call
+        out = asyncio.run(second_order.auto_confirm_candidates(
+            cands, confirm_sqli=confirm_sqli, confirm_idor=confirm_idor,
+            is_allowed=lambda u: False))
+        self.assertEqual(out, [])
+        self.assertEqual(calls["n"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

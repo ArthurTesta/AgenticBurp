@@ -108,6 +108,54 @@ async def confirm_second_order_sqli(
         evidence=f"TRUE vs FALSE plant produced near-identical read responses (similarity {sim:.2f}).")
 
 
+async def auto_confirm_candidates(candidates, *, confirm_sqli, confirm_idor,
+                                  is_allowed=None, cap: int = 12) -> list[dict]:
+    """Drive live confirmation over the composed (A,B) pairs from
+    chaining.second_order_candidates. `confirm_sqli(a_url, b_url)` and
+    `confirm_idor(a_url, b_url)` are injected async callables returning a
+    SecondOrderResult (the orchestrator wires them to gated sends; tests inject
+    fakes). `is_allowed(url)` scope-gates the plant target. Returns a list of
+    CONFIRMED finding dicts (empty when nothing bites). Bounded by `cap`; a pair
+    that raises is skipped, never fatal."""
+    out: list[dict] = []
+    seen: set[tuple] = set()
+    ran = 0
+    for cand in candidates or []:
+        if ran >= cap:
+            break
+        a_url = (cand.get("a") or {}).get("url")
+        b_url = (cand.get("b") or {}).get("url")
+        if not a_url or not b_url:
+            continue
+        key = (cand.get("signature"), a_url, b_url)
+        if key in seen:
+            continue
+        seen.add(key)
+        if is_allowed is not None and not is_allowed(a_url):
+            continue
+        ran += 1
+        try:
+            if cand.get("kind") == "sqli":
+                res = await confirm_sqli(a_url, b_url)
+            else:
+                res = await confirm_idor(a_url, b_url)
+        except Exception as e:  # a pair blowing up must not sink the rest
+            log.debug("auto_confirm_candidates: %s failed: %s", cand.get("signature"), e)
+            continue
+        if res is not None and getattr(res, "confirmed", False):
+            out.append({
+                "vulnerability_class": cand["signature"],
+                "url": b_url,
+                "confirmed": True,
+                "confidence": 0.9,
+                "severity": "critical" if cand.get("kind") == "sqli" else "high",
+                "summary": res.reason,
+                "evidence": res.evidence,
+                "basis": "derived",
+            })
+    return out
+
+
 async def confirm_second_order_idor(
     *,
     plant,          # async plant(marker) -> None: create an object carrying marker as identity 1
