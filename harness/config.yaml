@@ -172,6 +172,16 @@ engagement:
   # driver never dispatches active testing automatically. DEFAULT OFF: planning
   # is always safe; execution sends traffic.
   driver_execute: false
+  # Stateful agent-role feature crawling (feature_workflow.py). When on,
+  # investigate_engagement drives each distinct role through the app's real
+  # workflows (GET a page -> submit its forms with benign defaults -> follow the
+  # result) and folds the captured, session-bearing exchanges into content review
+  # and the surface -- reaching the workflow endpoints route-guessing provably
+  # cannot (a created ticket, an integration call, a pickle in a session cookie).
+  # DEFAULT OFF: it sends active traffic. Form submits are additionally gated by
+  # validators.allow_mutating_replay, so with mutating replay off this reduces to
+  # an authenticated read-only walk. Scope-gated to server.allowed_hosts + throttled.
+  feature_crawl: false
 
 retry_budget:
   max_retries: 2              # extra re-dispatches after the first pass (0 = one pass)

@@ -68,3 +68,62 @@ async def build_engagement(
     log.info("build_engagement: %s -- %d endpoints, %d idor candidates, %d idor findings",
              base_url, len(result.endpoints), len(result.idor_candidates), len(result.idor_findings))
     return state, result
+
+
+async def feature_crawl_captures(
+    base_url: str,
+    roles: list[RoleSession],
+    *,
+    fetch_fn=None,
+    allowed_hosts: list[str] | None = None,
+    submit_forms: bool = True,
+    max_steps: int = 40,
+    max_depth: int = 3,
+    max_captured: int = 200,
+) -> list:
+    """Run the stateful feature-workflow crawl (feature_workflow.crawl_features) as
+    each DISTINCT-feature role and union the captured exchanges.
+
+    This reaches the surface route-guessing can't: a workflow's own requests,
+    carrying the authenticated session, which the confirmation legs then consume.
+    Deduped across roles by (method, url, request body, credential-bearing headers,
+    response body): a public page returning identical content to several roles
+    with the same session context collapses to one review candidate, but a
+    response that DIFFERS per identity, or a request carrying a DISTINCT session
+    (e.g. a pickle cookie only one role holds -- V26), is always kept. `fetch_fn`
+    defaults to the scope-gated, throttled production client (mutating submits are
+    gated by allow_mutating_replay inside it). Returns a list of `HttpExchange`
+    (model objects, ready for review_captured_exchanges)."""
+    import hashlib
+    import feature_workflow
+    from urllib.parse import urlsplit
+
+    def _h(*parts: str) -> str:
+        return hashlib.sha1("\x00".join(parts).encode("utf-8", "ignore")).hexdigest()[:12]
+
+    fx = fetch_fn or feature_workflow.default_fetch_fn(allowed_hosts)
+    sweep_roles = role_crawl._distinct_discovery_roles(roles) if roles else []
+    seen: set[tuple] = set()
+    out: list = []
+    for r in sweep_roles:
+        try:
+            res = await feature_workflow.crawl_features(
+                base_url, r.role, r.norm_headers(), fetch_fn=fx,
+                allowed_hosts=allowed_hosts, submit_forms=submit_forms,
+                max_steps=max_steps, max_depth=max_depth, max_captured=max_captured)
+        except Exception as e:  # a role's feature crawl must not sink the build
+            log.debug("feature_crawl_captures: role %r failed: %s", r.role, e)
+            continue
+        for ex in res.captured:
+            sp = urlsplit(ex.url)
+            hdrs = ex.request_headers or {}
+            cred = " ".join(v for k, v in hdrs.items() if k.lower() in ("cookie", "authorization"))
+            key = (ex.method, sp.path, sp.query,
+                   _h(ex.request_body or ""), _h(cred), _h((ex.response_body or "")[:4000]))
+            if key in seen or len(out) >= max_captured:
+                continue
+            seen.add(key)
+            out.append(ex)
+    log.info("feature_crawl_captures: %s -- %d unique exchange(s) across %d role sweep(s)",
+             base_url, len(out), len(sweep_roles))
+    return out

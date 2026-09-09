@@ -599,6 +599,15 @@ class Orchestrator:
         self.engagement_max_escalations = int(
             (config.get("engagement", {}) or {}).get("max_auto_escalations", 10))
         self._escalation_counts: dict[str, int] = {}
+        # Stateful agent-role feature crawling (feature_workflow.py). When on,
+        # investigate_engagement drives each distinct role through the app's real
+        # workflows (GET a page -> submit its forms -> follow) and folds the
+        # captured, credential-bearing exchanges into content review + the surface
+        # -- reaching what route-guessing can't. DEFAULT OFF: it sends active
+        # traffic, and its form submits are additionally gated by
+        # allow_mutating_replay inside the client. Scope-gated + throttled.
+        self.engagement_feature_crawl = bool(
+            (config.get("engagement", {}) or {}).get("feature_crawl", False))
 
         log.info(f"Orchestrator initialized with {len(self.agent_manager.get_enabled_agents())} agents")
 
@@ -901,6 +910,27 @@ class Orchestrator:
         # that is correctly access-scoped but itself leaks otherwise never
         # becomes an analyzable exchange -- see review_captured_exchanges.
         await review_captured_exchanges(self, state, getattr(rc, "captured", None))
+
+        # Stateful agent-role feature crawling (default off). Drive each role
+        # through the app's real workflows and fold the captured, session-bearing
+        # exchanges into the surface + content review -- the frontier gap
+        # route-guessing can't close (sessions 11/13/15). The submits inside are
+        # gated by allow_mutating_replay, so with mutating replay off this reduces
+        # to an authenticated read-only walk.
+        if self.engagement_feature_crawl:
+            try:
+                import engagement as _eng
+                from safety_gate import get_default_gate as _get_gate
+                feature_caps = await engagement_builder.feature_crawl_captures(
+                    base_url, roles, allowed_hosts=self.allowed_hosts,
+                    submit_forms=_get_gate().config.allow_mutating_replay)
+                # make the workflow surface visible to prioritisation + coverage,
+                # then run the same content-level review as discovery captures.
+                for ex in feature_caps:
+                    state._ep(ex.method, _eng.normalize_path(ex.url))
+                await review_captured_exchanges(self, state, feature_caps)
+            except Exception as e:  # feature crawl is additive -- never sink the run
+                log.warning("investigate_engagement: feature crawl failed: %s", e)
 
         async def _probe(exchange, hypothesis, specialty, sb):
             return await self.run_active_probe(exchange, hypothesis, specialty, step_budget=sb)
