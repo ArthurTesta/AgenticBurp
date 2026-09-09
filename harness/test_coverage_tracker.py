@@ -82,17 +82,74 @@ class BuildTests(unittest.TestCase):
         cell = t.matrix.get("user", "GET /api/admin/users", "WSTG-ATHZ-02")
         self.assertEqual(cell.status, CellStatus.DETECTED)
 
-    def test_leg_attempt_marks_not_detected(self):
+    def test_execution_event_marks_not_detected(self):
+        """A REAL recorded leg execution with a not_detected outcome marks the
+        cell not_detected (R01: only actual executions, never inference)."""
         st = _state_with([
             ("GET", "/api/tickets/{id}", {"reachable_roles": ["user"]}),
         ])
         t = CoverageTracker()
         eps = endpoint_view(st)
         t.build(eps, ["user"])
-        # no finding, but the endpoint was investigated -> the cross_identity leg ran
-        t.mark_leg_attempts({"GET /api/tickets/{id}"}, ["user"])
+        t.record_execution_events([{
+            "identity": "user", "endpoint_key": "GET /api/tickets/{id}",
+            "confirmation": "cross_identity", "status": "not_detected"}])
         cell = t.matrix.get("user", "GET /api/tickets/{id}", "WSTG-ATHZ-04")
         self.assertEqual(cell.status, CellStatus.NOT_DETECTED)
+
+    def test_execution_event_can_confirm(self):
+        st = _state_with([("GET", "/api/tickets/{id}", {"reachable_roles": ["user"]})])
+        t = CoverageTracker()
+        eps = endpoint_view(st)
+        t.build(eps, ["user"])
+        t.record_execution_events([{
+            "identity": "user", "endpoint_key": "GET /api/tickets/{id}",
+            "check_id": "WSTG-ATHZ-04", "status": "confirmed", "evidence": "cross-id 200"}])
+        cell = t.matrix.get("user", "GET /api/tickets/{id}", "WSTG-ATHZ-04")
+        self.assertEqual(cell.status, CellStatus.CONFIRMED)
+
+    def test_no_execution_events_never_invents_not_detected(self):
+        """R01 NEGATIVE CONTROL: an endpoint the worklist investigated, with NO
+        recorded leg execution, must NOT be marked not_detected. It is skipped
+        with an explicit "attempt not tracked" reason -- never inferred as tested."""
+        st = _state_with([
+            ("GET", "/api/tickets/{id}", {"reachable_roles": ["user"]}),
+        ])
+        report = build_coverage(st, [type("R", (), {"role": "user"})()],
+                                investigated_keys={"GET /api/tickets/{id}"})
+        # no cell may be not_detected -- nothing actually ran
+        self.assertEqual(report.get("not_detected", 0), 0)
+        # the applicable leg cells are skipped, and the reason says WHY (not tested)
+        skipped_reasons = [nt["reason"] for nt in report["not_tested"]
+                           if nt["status"] == "skipped"]
+        self.assertTrue(any("attempt not tracked" in r for r in skipped_reasons))
+
+    def test_summary_excludes_skipped_and_error_from_tested(self):
+        """R02: skipped/error/pending/running never count as tested/attempted."""
+        st = _state_with([
+            ("GET", "/api/tickets/{id}", {"reachable_roles": ["user"]}),
+            ("POST", "/api/search", {"reachable_roles": ["user"]}),
+        ])
+        t = CoverageTracker()
+        eps = endpoint_view(st)
+        t.build(eps, ["user"])
+        t.record_execution_events([
+            {"identity": "user", "endpoint_key": "GET /api/tickets/{id}",
+             "check_id": "WSTG-ATHZ-04", "status": "not_detected"},
+            {"identity": "user", "endpoint_key": "POST /api/search",
+             "check_id": "WSTG-INPV-05", "status": "error"},
+        ])
+        t.finalize_pending_reasons(investigated_keys={"GET /api/tickets/{id}", "POST /api/search"})
+        s = t.matrix.summary()
+        # one real verdict (not_detected) -> conclusive/tested == 1
+        self.assertEqual(s["conclusive"], 1)
+        self.assertEqual(s["tested"], 1)
+        # attempted counts the errored execution too, but NOT skipped/pending
+        self.assertEqual(s["attempted"], 2)
+        self.assertGreater(s["skipped"], 0)
+        self.assertEqual(s["error"], 1)
+        # tested must never include skipped
+        self.assertLess(s["tested"], s["skipped"] + s["tested"])
 
     def test_not_tested_has_reasons(self):
         st = _state_with([

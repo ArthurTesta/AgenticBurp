@@ -157,19 +157,57 @@ class CoverageTracker:
                     n += 1
         return n
 
-    def mark_leg_attempts(self, investigated_keys: set[str], identities: list[str]) -> int:
-        """For each investigated endpoint, an applicable+pending cell whose check
-        has a deterministic leg was actually attempted by the shape-driven
-        precondition path and found nothing -> not_detected. Manual/agent checks
-        stay pending (they need a human/LLM, not a leg)."""
+    def record_execution_events(self, events) -> int:
+        """Record REAL leg executions into the matrix (R01).
+
+        Each event is a mapping identifying a cell (`identity`, `endpoint_key`, and
+        either a `check_id` or a `confirmation` leg name) plus the observed
+        `status` ("confirmed" | "detected" | "not_detected"/"not_confirmed" |
+        "error" | "skipped"). It records that a specific leg ACTUALLY RAN on a
+        specific cell and what it found.
+
+        This REPLACES the former `mark_leg_attempts` inference, which fabricated a
+        `not_detected` verdict on every applicable cell of an endpoint the worklist
+        merely "investigated" -- without any evidence a leg ran there for that
+        identity/check. No event => no attempt recorded; the cell stays pending and
+        `finalize_pending_reasons` marks it skipped with an explicit reason. Returns
+        the number of cells updated."""
+        _STATUS = {
+            "confirmed": CellStatus.CONFIRMED, "detected": CellStatus.DETECTED,
+            "not_detected": CellStatus.NOT_DETECTED, "not_confirmed": CellStatus.NOT_DETECTED,
+            "error": CellStatus.ERROR, "skipped": CellStatus.SKIPPED,
+        }
         n = 0
-        for (ident, ep_key, check_id), cell in list(self.matrix.cells().items()):
-            if ep_key not in investigated_keys or cell.status != CellStatus.PENDING:
+        for ev in events or []:
+            ident = ev.get("identity")
+            ep_key = ev.get("endpoint_key")
+            status = _STATUS.get((ev.get("status") or "").lower())
+            if not ident or not ep_key or status is None:
                 continue
-            check = CHECKS_BY_ID.get(check_id)
-            if check and check.confirmation in _LEG_CONFIRMATIONS:
-                self.matrix.record(ident, ep_key, check_id, status=CellStatus.NOT_DETECTED,
-                                   reason=f"{check.confirmation} leg ran on this endpoint, no instance confirmed")
+            if ev.get("check_id"):
+                check_ids = [ev["check_id"]]
+            elif ev.get("confirmation"):
+                check_ids = [c.id for c in self.checks if c.confirmation == ev["confirmation"]]
+            else:
+                continue
+            conf = ev.get("confirmation")
+            for cid in check_ids:
+                cell = self.matrix.get(ident, ep_key, cid)
+                # Only record on a cell the shape marked applicable (PENDING), or
+                # upgrade an already-attempted cell to a stronger verdict. Never
+                # resurrect a not_applicable cell, never fabricate a new one.
+                if cell is None:
+                    continue
+                if cell.status != CellStatus.PENDING and not (
+                        cell.status in (CellStatus.NOT_DETECTED, CellStatus.DETECTED, CellStatus.ERROR)
+                        and status == CellStatus.CONFIRMED):
+                    continue
+                self.matrix.record(
+                    ident, ep_key, cid, status=status,
+                    reason=ev.get("reason") or f"{conf or cid} leg executed",
+                    confidence=ev.get("confidence"),
+                    validator=conf or (CHECKS_BY_ID.get(cid).confirmation if cid in CHECKS_BY_ID else None),
+                    evidence=(ev.get("evidence") or "")[:200] or None)
                 n += 1
         return n
 
@@ -223,17 +261,25 @@ class CoverageTracker:
                 evidence=(getattr(res, "evidence", "") or "")[:200])
         return n
 
-    def finalize_pending_reasons(self) -> int:
+    def finalize_pending_reasons(self, investigated_keys: set[str] | None = None) -> int:
         """Give remaining applicable-pending cells an explicit reason so the
-        'not tested + why' audit is complete: a leg-backed check that never
-        reached an investigated endpoint vs a check needing agent/manual work."""
+        'not tested + why' audit is complete (I5). A leg-backed check on an
+        endpoint the worklist DID investigate, but for which no execution was
+        recorded, is skipped with an honest "attempt not tracked" reason -- it is
+        NEVER inferred as tested (R01). Everything else is either "endpoint not
+        reached" or "needs agent/manual review"."""
+        investigated_keys = investigated_keys or set()
         n = 0
         for (ident, ep_key, check_id), cell in list(self.matrix.cells().items()):
             if cell.status != CellStatus.PENDING:
                 continue
             check = CHECKS_BY_ID.get(check_id)
             if check and check.confirmation in _LEG_CONFIRMATIONS:
-                reason = "endpoint not reached in this run's node budget (leg available, not attempted)"
+                if ep_key in investigated_keys:
+                    reason = (f"endpoint investigated but no {check.confirmation} execution was recorded "
+                              f"for identity {ident!r} (attempt not tracked -- not inferred as tested)")
+                else:
+                    reason = "endpoint not reached in this run's node budget (leg available, not attempted)"
             else:
                 reason = f"no deterministic leg (confirmation={getattr(check, 'confirmation', '?')}); needs agent/manual review"
             self.matrix.record(ident, ep_key, check_id, status=CellStatus.SKIPPED, reason=reason)
@@ -262,11 +308,15 @@ def endpoint_view(state) -> dict[str, dict]:
     return out
 
 
-def build_coverage(state, roles, investigated_keys: set[str] | None = None) -> dict:
+def build_coverage(state, roles, investigated_keys: set[str] | None = None,
+                   execution_events=None) -> dict:
     """One call: build + fill + record the coverage matrix for a finished
     engagement and return the auditable report. `roles` is the list of
     role_crawl.RoleSession; `investigated_keys` are the endpoint keys the worklist
-    actually probed this run (for the attempted-vs-never distinction)."""
+    actually probed this run (used only to phrase the skip reason for a leg that
+    was never recorded as executed -- NOT to infer a not_detected, R01);
+    `execution_events` are real per-cell leg executions to record (see
+    `record_execution_events`)."""
     tracker = CoverageTracker()
     endpoints = endpoint_view(state)
     identities = [getattr(r, "role", str(r)) for r in (roles or [])] or ["anonymous"]
@@ -274,9 +324,9 @@ def build_coverage(state, roles, investigated_keys: set[str] | None = None) -> d
     identities = sorted(set(identities))
     tracker.build(endpoints, identities)
     tracker.record_findings_from_state(endpoints, identities)
-    if investigated_keys:
-        tracker.mark_leg_attempts(set(investigated_keys), identities)
-    tracker.finalize_pending_reasons()
+    if execution_events:
+        tracker.record_execution_events(execution_events)
+    tracker.finalize_pending_reasons(investigated_keys=set(investigated_keys or ()))
     return tracker.report()
 
 
@@ -292,10 +342,11 @@ async def build_coverage_driven(state, roles, run_leg, *, driveable: set[str] | 
     identities = sorted({getattr(r, "role", str(r)) for r in (roles or [])}) or ["anonymous"]
     tracker.build(endpoints, identities)
     tracker.record_findings_from_state(endpoints, identities)
+    # The driver records REAL leg outcomes cell-by-cell; there is no inference to
+    # add afterwards. Cells the driver did not reach stay pending and are given an
+    # honest skip reason below (R01: never fabricate a not_detected).
     driven = await tracker.drive_coverage_legs(run_leg, driveable=driveable, budget=budget)
-    if investigated_keys:
-        tracker.mark_leg_attempts(set(investigated_keys), identities)
-    tracker.finalize_pending_reasons()
+    tracker.finalize_pending_reasons(investigated_keys=set(investigated_keys or ()))
     report = tracker.report()
     report["legs_driven"] = driven
     return report

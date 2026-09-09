@@ -455,13 +455,27 @@ class CoverageMatrix:
                 by_check.setdefault(check_id, {})
                 by_check[check_id][s] = by_check[check_id].get(s, 0) + 1
         total = len(self._cells)
-        tested = sum(1 for r in self._cells.values()
-                     if r.status not in (CellStatus.PENDING, CellStatus.NOT_APPLICABLE))
+        # Honest, separated counts (R02). Only cells where a leg was actually
+        # executed count as an attempt. SKIPPED, PENDING, RUNNING and
+        # NOT_APPLICABLE are NOT attempts and must never inflate a "tested"
+        # number -- that is exactly what made 3,633 skipped cells look tested.
+        conclusive = (by_status.get("confirmed", 0) + by_status.get("detected", 0)
+                      + by_status.get("not_detected", 0))
+        attempted = conclusive + by_status.get("error", 0)
         return {
             "total_cells": total,
-            "tested": tested,
+            # attempted: an execution was actually launched (produced a verdict, or errored).
+            "attempted": attempted,
+            # conclusive: the attempt produced a usable verdict.
+            "conclusive": conclusive,
+            # `tested` is retained for back-compat but is now an alias of `conclusive`
+            # -- it deliberately EXCLUDES skipped/error/pending/running/not_applicable.
+            "tested": conclusive,
             "not_applicable": by_status.get("not_applicable", 0),
             "pending": by_status.get("pending", 0),
+            "skipped": by_status.get("skipped", 0),
+            "running": by_status.get("running", 0),
+            "error": by_status.get("error", 0),
             "confirmed": by_status.get("confirmed", 0),
             "detected": by_status.get("detected", 0),
             "not_detected": by_status.get("not_detected", 0),
