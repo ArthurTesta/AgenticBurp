@@ -438,6 +438,75 @@ class TestNoValidatorBypassesTheGate(unittest.TestCase):
         self.assertIn("assert self.level <= 2", sqlmap_src)
 
 
+class PerFindingMutationCeilingTests(unittest.TestCase):
+    """R16: max_mutating_requests_per_finding must actually be ENFORCED. Before
+    the fix it was declared in config but never counted, so N separate POSTs for
+    one finding all passed with a configured ceiling of one."""
+
+    def _gate(self, ceiling=1):
+        return SafetyGate(SafetyGateConfig(active_enabled=True, allow_mutating_replay=True,
+                                           max_burst_size=99,
+                                           max_mutating_requests_per_finding=ceiling))
+
+    def test_third_post_denied_with_ceiling_of_one(self):
+        gate = self._gate(ceiling=1)
+        d1 = gate.authorize(validator_name="seq", method="POST", url="https://x.example/a",
+                            finding_id="F1")
+        d2 = gate.authorize(validator_name="seq", method="POST", url="https://x.example/a",
+                            finding_id="F1")
+        self.assertTrue(d1.allowed)
+        self.assertFalse(d2.allowed)                     # ceiling of 1 reached
+        self.assertIn("ceiling", d2.reason.lower())
+
+    def test_ceiling_of_three_allows_three_denies_fourth(self):
+        gate = self._gate(ceiling=3)
+        allowed = [gate.authorize(validator_name="seq", method="POST",
+                                  url="https://x.example/a", finding_id="F1").allowed
+                   for _ in range(4)]
+        self.assertEqual(allowed, [True, True, True, False])
+
+    def test_no_finding_id_is_not_counted_backcompat(self):
+        # Existing callers that pass no finding_id keep the old behaviour.
+        gate = self._gate(ceiling=1)
+        for _ in range(5):
+            self.assertTrue(gate.authorize(validator_name="seq", method="POST",
+                                           url="https://x.example/a").allowed)
+
+    def test_distinct_findings_have_independent_budgets(self):
+        gate = self._gate(ceiling=1)
+        self.assertTrue(gate.authorize(validator_name="s", method="POST",
+                                       url="https://x/a", finding_id="F1").allowed)
+        self.assertTrue(gate.authorize(validator_name="s", method="POST",
+                                       url="https://x/a", finding_id="F2").allowed)
+
+    def test_burst_reserves_whole_burst_against_finding(self):
+        gate = self._gate(ceiling=3)
+        first = gate.authorize_burst(validator_name="race", method="POST",
+                                     url="https://x/a", requested_burst_size=3, finding_id="F1")
+        self.assertTrue(first.allowed)
+        self.assertEqual(first.allowed_burst_size, 3)
+        # budget now exhausted -> a second mutating send for F1 is denied
+        second = gate.authorize(validator_name="race", method="POST",
+                                url="https://x/a", finding_id="F1")
+        self.assertFalse(second.allowed)
+
+    def test_reset_finding_budget_clears(self):
+        gate = self._gate(ceiling=1)
+        self.assertTrue(gate.authorize(validator_name="s", method="POST",
+                                       url="https://x/a", finding_id="F1").allowed)
+        self.assertFalse(gate.authorize(validator_name="s", method="POST",
+                                        url="https://x/a", finding_id="F1").allowed)
+        gate.reset_finding_budget("F1")
+        self.assertTrue(gate.authorize(validator_name="s", method="POST",
+                                       url="https://x/a", finding_id="F1").allowed)
+
+    def test_safe_methods_never_counted(self):
+        gate = self._gate(ceiling=1)
+        for _ in range(10):
+            self.assertTrue(gate.authorize(validator_name="s", method="GET",
+                                           url="https://x/a", finding_id="F1").allowed)
+
+
 if __name__ == "__main__":
     unittest.main()
 

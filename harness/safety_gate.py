@@ -153,6 +153,35 @@ class SafetyGate:
     def __init__(self, config: SafetyGateConfig | None = None):
         self.config = config or SafetyGateConfig()
         self.audit_log: list[AuditLogEntry] = []
+        # Per-finding mutating-request accounting (R16): finding_id -> count of
+        # mutating sends already reserved this run. Enforced against
+        # min(config.max_mutating_requests_per_finding, HARD ceiling).
+        self._mutating_counts: dict[str, int] = {}
+
+    def _mutating_ceiling(self) -> int:
+        return min(self.config.max_mutating_requests_per_finding,
+                   HARD_MAX_MUTATING_REQUESTS_PER_FINDING)
+
+    def _reserve_mutating(self, finding_id: str | None, n: int) -> tuple[bool, int, int]:
+        """Atomically reserve `n` mutating sends against a finding's budget (R16).
+        Returns (ok, used_before, ceiling). A no-op that always succeeds when no
+        finding_id is supplied (accounting is opt-in per call, so existing callers
+        are unaffected) or n<=0."""
+        if not finding_id or n <= 0:
+            return True, 0, 0
+        ceiling = self._mutating_ceiling()
+        used = self._mutating_counts.get(finding_id, 0)
+        if used + n > ceiling:
+            return False, used, ceiling
+        self._mutating_counts[finding_id] = used + n
+        return True, used, ceiling
+
+    def reset_finding_budget(self, finding_id: str | None = None) -> None:
+        """Clear the mutating-request budget for one finding, or all of them."""
+        if finding_id is None:
+            self._mutating_counts.clear()
+        else:
+            self._mutating_counts.pop(finding_id, None)
 
     def classify(self, method: str, body: str | None = None, url: str | None = None) -> ActionRiskTier:
         # Check both the raw string AND a URL-decoded version of it.
@@ -190,8 +219,15 @@ class SafetyGate:
         return ActionRiskTier.MUTATING
 
     def authorize(self, *, validator_name: str, method: str, url: str,
-                  body: str | None = None) -> AuthorizationDecision:
-        """Authorize a single (non-repeated) request."""
+                  body: str | None = None, finding_id: str | None = None,
+                  count: int = 1) -> AuthorizationDecision:
+        """Authorize a single (non-repeated) request.
+
+        When `finding_id` is supplied, a MUTATING request is also counted against
+        that finding's mutating-request budget (R16): once
+        max_mutating_requests_per_finding (capped by the hard ceiling) sends have
+        been authorized for the finding, further mutating sends are denied. `count`
+        is how many sends this authorization represents (>1 for a burst)."""
         tier = self.classify(method, body=body, url=url)
 
         if tier == ActionRiskTier.HARD_DENIED:
@@ -220,14 +256,28 @@ class SafetyGate:
                            "live target, distinct from ordinary read-only active probing.",
                 )
             else:
-                decision = AuthorizationDecision(allowed=True, tier=tier,
-                                                  reason="Mutating method explicitly authorized.")
+                # Enforce the per-finding mutating-request ceiling (R16) when a
+                # finding_id is supplied -- previously this ceiling was declared in
+                # config but never counted, so N separate POSTs all passed.
+                ok, used, ceiling = self._reserve_mutating(finding_id, count)
+                if not ok:
+                    decision = AuthorizationDecision(
+                        allowed=False, tier=tier,
+                        reason=f"Per-finding mutating-request ceiling reached: {used}/{ceiling} "
+                               f"mutating send(s) already authorized for finding {finding_id!r} "
+                               f"(max_mutating_requests_per_finding, capped at "
+                               f"{HARD_MAX_MUTATING_REQUESTS_PER_FINDING}). Refusing further "
+                               f"mutating replay for this finding.")
+                else:
+                    decision = AuthorizationDecision(allowed=True, tier=tier,
+                                                      reason="Mutating method explicitly authorized.")
 
         self._log(validator_name, method, url, decision)
         return decision
 
     def authorize_burst(self, *, validator_name: str, method: str, url: str,
-                         requested_burst_size: int, body: str | None = None) -> AuthorizationDecision:
+                         requested_burst_size: int, body: str | None = None,
+                         finding_id: str | None = None) -> AuthorizationDecision:
         """
         Authorize a repeated/concurrent burst of the same request.
         The effective burst size is the minimum of what was requested,
@@ -235,7 +285,13 @@ class SafetyGate:
         this file -- in that order, so a generous config can never
         exceed HARD_MAX_BURST_SIZE, and a validator's own requested
         size can never exceed what the operator configured.
+
+        When `finding_id` is supplied and the request is mutating, the WHOLE
+        effective burst is reserved against that finding's mutating budget (R16),
+        atomically -- a burst that would exceed the remaining budget is denied.
         """
+        # Base tier/enablement check only -- reserve the budget as a single
+        # atomic unit below (not one-per-authorize), so pass no finding_id here.
         base = self.authorize(validator_name=validator_name, method=method, url=url, body=body)
         if not base.allowed:
             return base
@@ -247,12 +303,21 @@ class SafetyGate:
                 reason="Configured max_burst_size is below 1 -- bursts are disabled.",
             )
         else:
-            decision = AuthorizationDecision(
-                allowed=True, tier=base.tier,
-                reason=f"Burst authorized at {effective_burst} (requested {requested_burst_size}, "
-                       f"operator ceiling {self.config.max_burst_size}, hard ceiling {HARD_MAX_BURST_SIZE}).",
-                allowed_burst_size=effective_burst,
-            )
+            reserve_ok, used, ceiling = (
+                self._reserve_mutating(finding_id, effective_burst)
+                if base.tier == ActionRiskTier.MUTATING else (True, 0, 0))
+            if not reserve_ok:
+                decision = AuthorizationDecision(
+                    allowed=False, tier=base.tier,
+                    reason=f"Per-finding mutating budget exhausted: {used}/{ceiling} already used "
+                           f"for finding {finding_id!r}; a burst of {effective_burst} would exceed it (R16).")
+            else:
+                decision = AuthorizationDecision(
+                    allowed=True, tier=base.tier,
+                    reason=f"Burst authorized at {effective_burst} (requested {requested_burst_size}, "
+                           f"operator ceiling {self.config.max_burst_size}, hard ceiling {HARD_MAX_BURST_SIZE}).",
+                    allowed_burst_size=effective_burst,
+                )
         self._log(validator_name, method, url, decision, burst_size=decision.allowed_burst_size)
         return decision
 
