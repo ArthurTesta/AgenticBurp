@@ -314,7 +314,10 @@ class TestNoValidatorBypassesTheGate(unittest.TestCase):
                                   "csrf_validator.py",
                                   # file_upload sends a POST upload, gate-routed + self-gated
                                   # on allow_mutating_replay.
-                                  "file_upload_validator.py"}
+                                  "file_upload_validator.py",
+                                  # rate_limit replays the captured auth method N times via
+                                  # authorize_burst (like race_condition) -- verified below.
+                                  "rate_limit_validator.py"}
         # Files whose exchange.method reference is provably not a live
         # send at all -- verified by reading the code, not assumed.
         inert_usage_exceptions = {
@@ -384,6 +387,11 @@ class TestNoValidatorBypassesTheGate(unittest.TestCase):
         self.assertIn("authorize_burst", race,
                        "race_condition_validator.py uses exchange.method but doesn't call authorize_burst")
         self.assertIn("get_default_gate", race)
+
+        rate = (here / "validators" / "rate_limit_validator.py").read_text()
+        self.assertIn("authorize_burst", rate,
+                       "rate_limit_validator.py replays the captured method but doesn't call authorize_burst")
+        self.assertIn("get_default_gate", rate)
 
         self.assertIn("get_default_gate", sqlmap_src,
                        "sqlmap.py uses exchange.method for --method but doesn't call the safety gate")

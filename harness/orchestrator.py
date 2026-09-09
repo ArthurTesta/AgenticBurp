@@ -955,6 +955,8 @@ class Orchestrator:
         from validators.deserialization_oob_validator import DeserializationOobValidator
         from validators.auth_sequence_validator import AuthSequenceValidator
         from validators.stored_xss_validator import StoredXssValidator
+        from validators.rate_limit_validator import RateLimitValidator
+        from validators.reset_token_validator import ResetTokenValidator
         from models import Finding
         host = urlsplit(base_url).hostname or ""
         for r in roles:
@@ -977,6 +979,8 @@ class Orchestrator:
         _deser = DeserializationOobValidator(allowed_hosts=self.allowed_hosts)
         _auth = AuthSequenceValidator(allowed_hosts=self.allowed_hosts)
         _sxss = StoredXssValidator(allowed_hosts=self.allowed_hosts)
+        _rate = RateLimitValidator(allowed_hosts=self.allowed_hosts)
+        _reset = ResetTokenValidator(allowed_hosts=self.allowed_hosts)
 
         # Memoisation cache: avoid re-running the same validator on the same
         # endpoint during one investigate_engagement() call.  Keyed by
@@ -1103,6 +1107,19 @@ class Orchestrator:
                 try:
                     _apply(finding, await _cached_validate(_auth, _as_finding(finding, low or "broken_authentication"), exchange),
                            "auth-sequence", 0.85)
+                except Exception:
+                    return
+            elif "rate limit" in low or "rate_limit" in low or "lockout" in low or "brute" in low:
+                try:
+                    _apply(finding, await _cached_validate(_rate, _as_finding(finding, "rate_limit"), exchange),
+                           "rate-limit", 0.85)
+                except Exception:
+                    return
+            elif ("reset_token" in low or "reset token" in low or "predictable token" in low
+                  or "weak token" in low or "token entropy" in low):
+                try:
+                    _apply(finding, await _cached_validate(_reset, _as_finding(finding, "reset_token"), exchange),
+                           "reset-token", 0.9)
                 except Exception:
                     return
 

@@ -30,6 +30,8 @@ from .stored_xss_validator import StoredXssValidator
 from .verb_tamper_validator import VerbTamperValidator
 from .csrf_validator import CsrfValidator
 from .file_upload_validator import FileUploadValidator
+from .rate_limit_validator import RateLimitValidator
+from .reset_token_validator import ResetTokenValidator
 from safety_gate import get_default_gate, reset_default_gate
 
 
@@ -240,6 +242,22 @@ class ValidatorRegistry:
         if fu_cfg.get("enabled", True):
             self.validators["file_upload"] = FileUploadValidator(
                 allowed_hosts=_allowed, timeout=float(fu_cfg.get("timeout", 15.0)))
+        # Rate-limit / lockout absence -- replays the captured auth request N times
+        # (safe subset: unchanged, valid creds) via authorize_burst and confirms no
+        # 429/lockout after min_attempts. Active; gated by max_burst_size + mutating.
+        rl_cfg = cfg.get("rate_limit", {})
+        if rl_cfg.get("enabled", True):
+            self.validators["rate_limit"] = RateLimitValidator(
+                allowed_hosts=_allowed, timeout=float(rl_cfg.get("timeout", 10.0)),
+                min_attempts=int(rl_cfg.get("min_attempts", 12)))
+        # Predictable reset-token -- samples reset tokens and confirms only the
+        # unambiguous predictability cases (sequential/timestamp/below-floor/
+        # derived). Active; the reset trigger is a mutating POST (allow_mutating_replay).
+        rt_cfg = cfg.get("reset_token", {})
+        if rt_cfg.get("enabled", True):
+            self.validators["reset_token"] = ResetTokenValidator(
+                allowed_hosts=_allowed, timeout=float(rt_cfg.get("timeout", 10.0)),
+                samples=int(rt_cfg.get("samples", 5)))
 
         # Browser-driven XSS validator (A2) -- active: loads candidate URLs in a
         # real headless browser and confirms only on observed script execution.

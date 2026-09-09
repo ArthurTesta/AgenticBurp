@@ -156,6 +156,23 @@ CONFIRMABLE_CLASS_MARKERS = frozenset({
     "method tampering",
     "http method",
     "misconfig",
+
+    # Rate limiting / lockout absence (rate_limit_validator)
+    "rate_limit",
+    "rate limit",
+    "no rate limiting",
+    "brute force",
+    "brute_force",
+    "lockout",
+    "account lockout",
+
+    # Predictable reset/session token (reset_token_validator)
+    "reset_token",
+    "reset token",
+    "predictable token",
+    "weak token",
+    "insecure token",
+    "token entropy",
 })
 
 # The subset of confirmable classes whose leg is LIVE-VERIFIED -- proven to
