@@ -18,8 +18,10 @@ have discovered the endpoint. This is the deterministic, human-in-the-loop
 counterpart to the stateful feature crawl (`feature_workflow.py`).
 
 Pure parsing: no network, no LLM. The XML is untrusted input, so parsing is
-defensive (a malformed item is skipped, never fatal) and XXE-safe (entity
-resolution is not used; we only walk elements). Scope-gating to allowed_hosts is
+defensive (a malformed item is skipped, never fatal) and hardened against XXE:
+`_safe_fromstring` uses defusedxml when installed and otherwise rejects any
+DTD/ENTITY declaration outright, blocking external-entity resolution and
+entity-expansion ("billion laughs") bombs. Scope-gating to allowed_hosts is
 applied on request.
 """
 from __future__ import annotations
@@ -27,6 +29,7 @@ from __future__ import annotations
 import base64
 import binascii
 import logging
+import re
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 from xml.etree import ElementTree as ET
@@ -34,6 +37,30 @@ from xml.etree import ElementTree as ET
 from models import HttpExchange
 
 log = logging.getLogger("harness.burp_sitemap")
+
+# Prefer defusedxml (forbids DTDs/entities/entity-expansion bombs) when installed;
+# otherwise the DTD/ENTITY reject-guard below is the dependency-free equivalent.
+try:  # pragma: no cover - exercised whichever way the host is provisioned
+    import defusedxml.ElementTree as _DEFUSED_ET
+except Exception:
+    _DEFUSED_ET = None
+
+# A Burp site-map export never legitimately carries a DTD or entity declaration.
+# Rejecting one up front deterministically blocks XXE external-entity resolution
+# AND billion-laughs entity expansion even on the stdlib parser (Bandit B313).
+_DOCTYPE_RE = re.compile(rb"<!\s*(?:DOCTYPE|ENTITY)\b", re.IGNORECASE)
+
+
+def _safe_fromstring(xml_text: str):
+    """Parse XML with external-entity / entity-expansion attacks disabled. The
+    Burp export is operator-supplied but still treated as untrusted input."""
+    probe = (xml_text or "").encode("utf-8", "ignore") if isinstance(xml_text, str) else (xml_text or b"")
+    if _DOCTYPE_RE.search(probe):
+        raise ValueError("refusing to parse a Burp export containing a DTD/ENTITY "
+                         "declaration (XXE / entity-expansion guard)")
+    if _DEFUSED_ET is not None:
+        return _DEFUSED_ET.fromstring(xml_text)
+    return ET.fromstring(xml_text)
 
 
 @dataclass
@@ -140,9 +167,9 @@ def parse_sitemap(source: str) -> list[BurpItem]:
     ValueError so the caller knows the input was not a Burp export."""
     xml_text = _read_source(source)
     try:
-        # ElementTree does not resolve external entities by default, so this is
-        # not itself an XXE sink; we still never enable entity resolution.
-        root = ET.fromstring(xml_text)
+        # Hardened parse: defusedxml when present, else a DTD/ENTITY reject-guard --
+        # blocks XXE external-entity resolution and entity-expansion bombs.
+        root = _safe_fromstring(xml_text)
     except ET.ParseError as e:
         raise ValueError(f"not a parseable Burp XML export: {e}") from e
 
@@ -165,9 +192,11 @@ def _read_source(source: str) -> str:
     if stripped.startswith("<"):
         return s
     # Treat as a path; read as bytes and decode leniently (Burp exports are UTF-8
-    # but may carry stray bytes in CDATA).
+    # but may carry stray bytes in CDATA). `s` is an OPERATOR-supplied export path
+    # (the tester points the harness at their own saved Burp file), not attacker-
+    # controlled input, so this open is trusted by the harness's threat model.
     try:
-        with open(s, "rb") as fh:
+        with open(s, "rb") as fh:  # nosec B108 - operator-supplied export path, not user input
             return fh.read().decode("utf-8", "replace")
     except OSError as e:
         raise ValueError(f"burp_sitemap source is neither XML nor a readable file: {e}") from e

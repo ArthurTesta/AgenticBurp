@@ -45,7 +45,7 @@ def make_app(file_base: str | None = None) -> Flask:
     @app.get("/ssti/render")
     def ssti_render():
         q = request.args.get("q", "")
-        return Response(Template(q).render(), mimetype="text/html")  # VULNERABLE
+        return Response(Template(q).render(), mimetype="text/html")  # nosec B701 - INTENTIONAL SSTI sink; disposable fixture that live-verifies the ssti leg
 
     @app.get("/ssti/echo")
     def ssti_echo():
@@ -66,7 +66,7 @@ def make_app(file_base: str | None = None) -> Flask:
     def files_read():
         name = request.args.get("file", "")
         try:
-            with open(os.path.join(base, name), "r", errors="ignore") as f:  # VULNERABLE
+            with open(os.path.join(base, name), "r", errors="ignore") as f:  # nosec - INTENTIONAL path-traversal sink; disposable fixture for the path_traversal leg
                 return Response(f.read(), mimetype="text/plain")
         except OSError:
             return Response("not found", status=404, mimetype="text/plain")
@@ -117,7 +117,7 @@ def make_app(file_base: str | None = None) -> Flask:
     def ssrf_fetch():
         url = request.args.get("url", "")
         try:
-            with urllib.request.urlopen(url, timeout=2) as r:  # VULNERABLE: fetches attacker URL
+            with urllib.request.urlopen(url, timeout=2) as r:  # nosec B310 - INTENTIONAL SSRF sink; disposable fixture for the ssrf leg
                 r.read(64)
             return Response("fetched", mimetype="text/plain")
         except Exception:
@@ -133,7 +133,7 @@ def make_app(file_base: str | None = None) -> Flask:
     def cmdi_ping():
         host = request.args.get("host", "")
         try:
-            out = subprocess.run(f"echo {host}", shell=True, capture_output=True,  # VULNERABLE
+            out = subprocess.run(f"echo {host}", shell=True, capture_output=True,  # nosec B602 - INTENTIONAL shell-injection sink; disposable fixture for the command_injection leg
                                  timeout=5, text=True)
             return Response(out.stdout, mimetype="text/plain")
         except Exception:
@@ -210,7 +210,7 @@ def make_app(file_base: str | None = None) -> Flask:
     def deser_load():
         c = request.cookies.get("session", "")
         try:
-            obj = pickle.loads(base64.b64decode(c + "==="))  # VULNERABLE: pickle on client input
+            obj = pickle.loads(base64.b64decode(c + "==="))  # nosec B301 - INTENTIONAL insecure-deserialization sink; disposable fixture for the deserialization_oob leg
             return jsonify({"ok": True, "who": str(obj)[:40]})
         except Exception:
             return jsonify({"ok": False}), 200

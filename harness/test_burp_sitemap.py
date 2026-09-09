@@ -82,6 +82,23 @@ class ParseTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             burp_sitemap.parse_sitemap("not xml at all <<<")
 
+    def test_xxe_doctype_is_rejected(self):
+        # An XXE payload (external entity) must be refused before parsing, not
+        # resolved -- the Bandit B313 hardening.
+        xxe = ('<?xml version="1.0"?>\n'
+               '<!DOCTYPE items [ <!ENTITY xxe SYSTEM "file:///etc/passwd"> ]>\n'
+               '<items><item><path>&xxe;</path></item></items>')
+        with self.assertRaises(ValueError) as ctx:
+            burp_sitemap.parse_sitemap(xxe)
+        self.assertIn("DTD/ENTITY", str(ctx.exception))
+
+    def test_billion_laughs_entity_declaration_rejected(self):
+        bomb = ('<?xml version="1.0"?>\n'
+                '<!DOCTYPE lolz [ <!ENTITY lol "lol"> ]>\n'
+                '<items><item><path>&lol;</path></item></items>')
+        with self.assertRaises(ValueError):
+            burp_sitemap.parse_sitemap(bomb)
+
 
 class ExchangeTests(unittest.TestCase):
     def test_url_reconstructed_without_default_port(self):

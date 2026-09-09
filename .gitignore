@@ -11,3 +11,9 @@ harness/*.db
 # score.py results (regenerable from the fixture)
 testing/**/scorecard.json
 testing/**/fixture/
+
+# Captured run artifacts can carry live target session tokens (JWTs/cookies) --
+# keep them out of git so a browse/run capture never leaks a secret into history.
+testing/**/run-*-results/
+testing/**/exports/
+testing/**/uploads/
