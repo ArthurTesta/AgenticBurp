@@ -162,6 +162,22 @@ class InvestigateProactiveJwtSmokeTest(unittest.TestCase):
         # It was proven from the low-trust 'user' identity, and it's a real confirm.
         self.assertTrue(any(f.get("confidence", 0) >= 0.9 for f in confirmed))
 
+    def test_coverage_matrix_is_filled_end_to_end(self):
+        # The coverage cell-filler must actually run inside investigate_engagement
+        # (I1/I2/I5): a real run produces a matrix with the JWT check confirmed and
+        # an auditable "not tested + reason" list -- not an empty stub.
+        result = self._run(vulnerable=True)
+        cov = result.get("coverage") or {}
+        self.assertTrue(cov, "coverage matrix was not built by investigate_engagement")
+        self.assertGreater(cov.get("total_cells", 0), 0)
+        self.assertGreaterEqual(cov.get("confirmed", 0), 1,
+                                "the confirmed JWT forge did not fill a CONFIRMED coverage cell")
+        # WSTG-CRYP-04 is the JWT check; it must show a confirmed cell.
+        jwt_check = cov.get("by_check", {}).get("WSTG-CRYP-04", {})
+        self.assertGreaterEqual(jwt_check.get("confirmed", 0), 1)
+        # every not-tested cell carries a reason (the audit guarantee)
+        self.assertTrue(all(nt.get("reason") for nt in cov.get("not_tested", [])))
+
     def test_negative_control_secure_server_yields_no_confirmation(self):
         # A server that actually verifies signatures must NOT be confirmed -- proving
         # the test guards CONFIRMATION, not merely that the leg executed.

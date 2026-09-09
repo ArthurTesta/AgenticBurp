@@ -1,0 +1,230 @@
+"""
+Coverage tracker -- drive the WSTG check catalog as a live cell-filler (I1/I2/I5).
+
+`coverage_model` is the data spine: a fixed check catalog and an identity ×
+endpoint × check matrix with auditable cell statuses. It was data-only -- nothing
+filled it during a run, so the harness could not answer the operator's actual
+definition of coverage: "every applicable check × endpoint × identity was
+attempted (or skipped with a reason)."
+
+This module closes that. Given the final engagement state (endpoints, per-role
+access, the findings each produced) it:
+
+  1. FILLS APPLICABILITY deterministically -- each check's shape predicate marks
+     a cell not_applicable(reason) or pending (I1/I5).
+  2. Encodes REACHABILITY -- a cell for an identity that never reached the
+     endpoint is skipped with that reason, not silently blank.
+  3. RECORDS OUTCOMES -- a confirmed finding -> CONFIRMED, an unconfirmed one ->
+     DETECTED, on the check(s) its class maps to, attributed to the probe identity
+     (the lowest-trust role that reached the endpoint -- the strongest proof).
+  4. Marks ATTEMPTED -- an applicable cell whose check has a deterministic leg, on
+     an endpoint this run actually investigated, that produced nothing -> the leg
+     was run and found nothing (not_detected), distinct from never-attempted.
+
+The result is the auditable report substrate (I2): summary counts, per-check
+rollups, and the explicit "not tested + why" list. Pure and deterministic -- no
+network, no LLM; it reconciles what the run already produced.
+"""
+from __future__ import annotations
+
+import logging
+
+from categories import canonicalize
+from coverage_model import (
+    CHECK_CATALOG, CHECKS_BY_ID, Check, CellStatus, CellResult, CoverageMatrix,
+)
+
+log = logging.getLogger("harness.coverage_tracker")
+
+# Trust ordering mirrors worklist_investigator: the driver probes from the
+# lowest-trust identity that can reach a node, so a finding is attributed there.
+_TRUST = {"anonymous": 0, "user": 1, "agent": 2, "service": 2, "manager": 3, "admin": 4}
+
+
+def _trust(role: str) -> int:
+    return _TRUST.get((role or "").lower(), 1)
+
+
+# Confirmation methods that are deterministic legs (vs "agent"/"manual"): an
+# applicable cell for one of these, on an investigated endpoint, can be marked
+# "attempted -> not_detected" because the shape-driven precondition path runs it
+# regardless of an agent label.
+_LEG_CONFIRMATIONS = {
+    "sqlmap", "cross_identity", "browser_xss", "jwt_forge", "xxe", "ssrf", "ssti",
+    "command_injection", "path_traversal", "open_redirect", "sequence",
+    "deserialization_oob", "auth_sequence", "stored_xss", "verb_tamper", "csrf",
+    "file_upload", "rate_limit", "reset_token",
+}
+
+
+class CoverageTracker:
+    """Reconciles a finished engagement into a filled CoverageMatrix."""
+
+    def __init__(self, checks: tuple[Check, ...] = CHECK_CATALOG):
+        self.matrix = CoverageMatrix()
+        self.checks = checks
+        # canonical vulnerability_class -> [check_id]; plus the raw class token so
+        # a check class canonicalize() returns None for (e.g. "misconfig") still maps.
+        self._class_to_checks: dict[str, list[str]] = {}
+        for c in checks:
+            for token in {c.vulnerability_class, canonicalize(c.vulnerability_class) or c.vulnerability_class}:
+                self._class_to_checks.setdefault(token, []).append(c.id)
+
+    # --- mapping a finding's class to catalog checks ---
+
+    def checks_for_class(self, vuln_class: str) -> list[str]:
+        """Catalog check ids a finding of `vuln_class` bears on. Tries the
+        canonical class, then the access-control free-text family (which the
+        canonicaliser returns None for), then a whole-word fallback against each
+        check's own class token. Whole-word so a short token like 'auth' does not
+        spuriously match inside 'authorization'."""
+        import re as _re
+        raw = (vuln_class or "").lower().strip()
+        canon = canonicalize(vuln_class)
+        # 1. exact canonical / raw token match.
+        ids: list[str] = []
+        for key in (canon, raw):
+            if key and key in self._class_to_checks:
+                ids.extend(self._class_to_checks[key])
+        if ids:
+            return sorted(set(ids))
+        # 2. access-control free-text family (canonicalize misses these; BFLA and
+        #    function-level authz map to WSTG-ATHZ-02, IDOR/BOLA to WSTG-ATHZ-04).
+        if any(w in raw for w in ("bfla", "function-level", "function level", "broken function")):
+            return ["WSTG-ATHZ-02"]
+        if any(w in raw for w in ("idor", "bola", "object-level", "object level",
+                                   "insecure direct object")):
+            return sorted(c.id for c in self.checks if c.vulnerability_class == "idor")
+        # 3. whole-word fallback against check class tokens.
+        for c in self.checks:
+            ct = c.vulnerability_class.lower()
+            if len(ct) >= 4 and _re.search(r"\b" + _re.escape(ct) + r"\b", raw):
+                ids.append(c.id)
+        return sorted(set(ids))
+
+    # --- build the matrix from the engagement ---
+
+    def build(self, endpoints: dict[str, dict], identities: list[str]) -> dict:
+        """Fill applicability across identities × endpoints × checks, then mark
+        reachability skips. `endpoints` maps endpoint_key -> a dict carrying
+        path/methods/access/reachable_roles/object_scoped (see
+        `endpoint_view`). Returns {applicable, not_applicable, skipped_reach}."""
+        na = self.matrix.fill_applicability(identities, endpoints, self.checks)
+        skipped = 0
+        for ep_key, ep in endpoints.items():
+            reach = [str(r) for r in (ep.get("reachable_roles") or [])]
+            if not reach:
+                continue  # reachability unknown -> leave applicable cells pending
+            for ident in identities:
+                if ident in reach:
+                    continue
+                # this identity never reached this endpoint -> not attemptable as it
+                for check in self.checks:
+                    cell = self.matrix.get(ident, ep_key, check.id)
+                    if cell and cell.status == CellStatus.PENDING:
+                        self.matrix.record(
+                            ident, ep_key, check.id, status=CellStatus.SKIPPED,
+                            reason=f"identity {ident!r} did not reach this endpoint in the access matrix")
+                        skipped += 1
+        applicable = sum(1 for c in self.matrix.cells().values() if c.status == CellStatus.PENDING)
+        return {"applicable": applicable, "not_applicable": na, "skipped_reachability": skipped}
+
+    def _probe_identity(self, ep: dict, identities: list[str]) -> str:
+        reach = [str(r) for r in (ep.get("reachable_roles") or [])]
+        pool = [i for i in identities if i in reach] or list(identities)
+        return min(pool, key=_trust) if pool else (identities[0] if identities else "anonymous")
+
+    def record_findings_from_state(self, endpoints: dict[str, dict], identities: list[str]) -> int:
+        """Record CONFIRMED/DETECTED cells from the findings attached to each
+        endpoint, attributed to the endpoint's probe identity. Returns cells set."""
+        n = 0
+        for ep_key, ep in endpoints.items():
+            findings = ep.get("findings") or []
+            if not findings:
+                continue
+            ident = self._probe_identity(ep, identities)
+            for f in findings:
+                vc = f.get("vulnerability_class", "")
+                confirmed = bool(f.get("confirmed"))
+                status = CellStatus.CONFIRMED if confirmed else CellStatus.DETECTED
+                for check_id in self.checks_for_class(vc):
+                    self.matrix.record(
+                        ident, ep_key, check_id, status=status,
+                        reason=f"{'confirmed' if confirmed else 'detected'} {vc}",
+                        severity=f.get("severity"), confidence=f.get("confidence"),
+                        validator=CHECKS_BY_ID.get(check_id).confirmation if check_id in CHECKS_BY_ID else None,
+                        evidence=(f.get("summary") or "")[:200])
+                    n += 1
+        return n
+
+    def mark_leg_attempts(self, investigated_keys: set[str], identities: list[str]) -> int:
+        """For each investigated endpoint, an applicable+pending cell whose check
+        has a deterministic leg was actually attempted by the shape-driven
+        precondition path and found nothing -> not_detected. Manual/agent checks
+        stay pending (they need a human/LLM, not a leg)."""
+        n = 0
+        for (ident, ep_key, check_id), cell in list(self.matrix.cells().items()):
+            if ep_key not in investigated_keys or cell.status != CellStatus.PENDING:
+                continue
+            check = CHECKS_BY_ID.get(check_id)
+            if check and check.confirmation in _LEG_CONFIRMATIONS:
+                self.matrix.record(ident, ep_key, check_id, status=CellStatus.NOT_DETECTED,
+                                   reason=f"{check.confirmation} leg ran on this endpoint, no instance confirmed")
+                n += 1
+        return n
+
+    def finalize_pending_reasons(self) -> int:
+        """Give remaining applicable-pending cells an explicit reason so the
+        'not tested + why' audit is complete: a leg-backed check that never
+        reached an investigated endpoint vs a check needing agent/manual work."""
+        n = 0
+        for (ident, ep_key, check_id), cell in list(self.matrix.cells().items()):
+            if cell.status != CellStatus.PENDING:
+                continue
+            check = CHECKS_BY_ID.get(check_id)
+            if check and check.confirmation in _LEG_CONFIRMATIONS:
+                reason = "endpoint not reached in this run's node budget (leg available, not attempted)"
+            else:
+                reason = f"no deterministic leg (confirmation={getattr(check, 'confirmation', '?')}); needs agent/manual review"
+            self.matrix.record(ident, ep_key, check_id, status=CellStatus.SKIPPED, reason=reason)
+            n += 1
+        return n
+
+    def report(self) -> dict:
+        s = self.matrix.summary()
+        s["not_tested"] = self.matrix.not_tested()
+        return s
+
+
+def endpoint_view(state) -> dict[str, dict]:
+    """Project an EngagementState's endpoints to the dict shape the check
+    predicates + tracker read (methods as a tuple, findings/access/reachability)."""
+    out: dict[str, dict] = {}
+    for key, ep in state.endpoints.items():
+        out[key] = {
+            "path": ep.path,
+            "methods": (ep.method,),
+            "access": ep.access,
+            "reachable_roles": ep.reachable_roles,
+            "object_scoped": ep.object_scoped,
+            "findings": ep.findings,
+        }
+    return out
+
+
+def build_coverage(state, roles, investigated_keys: set[str] | None = None) -> dict:
+    """One call: build + fill + record the coverage matrix for a finished
+    engagement and return the auditable report. `roles` is the list of
+    role_crawl.RoleSession; `investigated_keys` are the endpoint keys the worklist
+    actually probed this run (for the attempted-vs-never distinction)."""
+    tracker = CoverageTracker()
+    endpoints = endpoint_view(state)
+    identities = [getattr(r, "role", str(r)) for r in (roles or [])] or ["anonymous"]
+    # dedup identities by label (two 'user' accounts are one column here)
+    identities = sorted(set(identities))
+    tracker.build(endpoints, identities)
+    tracker.record_findings_from_state(endpoints, identities)
+    if investigated_keys:
+        tracker.mark_leg_attempts(set(investigated_keys), identities)
+    tracker.finalize_pending_reasons()
+    return tracker.report()

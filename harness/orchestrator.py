@@ -1171,12 +1171,29 @@ class Orchestrator:
             chains = list(link["chain_findings"])
             creds = link["credential_caps"]
 
+        # Coverage matrix (I1/I2/I5): reconcile the finished engagement into the
+        # auditable identity x endpoint x check matrix -- every applicable check is
+        # confirmed / detected / attempted-not_detected, or skipped WITH A REASON,
+        # so "what was NOT tested and why" is answerable. Endpoints the worklist
+        # actually probed (by path) are the attempted set.
+        coverage: dict = {}
+        try:
+            import coverage_tracker
+            investigated_paths = {o.get("path") for o in outcomes if o.get("path")}
+            investigated_keys = {k for k in state.endpoints
+                                 if k.split(" ", 1)[-1] in investigated_paths}
+            coverage = coverage_tracker.build_coverage(state, roles,
+                                                       investigated_keys=investigated_keys)
+        except Exception as e:  # coverage is a report layer -- never sink the run
+            log.warning("investigate_engagement: coverage build failed: %s", e)
+
         return {
             "summary": state.summary(),
             "worklist": state.worklist(50),
             "outcomes": outcomes,
             "chains": chains,
             "chain_rounds": rounds,
+            "coverage": coverage,
             "task_graph": state.graph.to_dict(),
             "ready_tasks": state.pending(),
             "blocked_tasks": state.blocked(),
