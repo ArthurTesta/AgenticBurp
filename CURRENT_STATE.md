@@ -7,7 +7,98 @@ file map) is in [`CLAUDE.md`](CLAUDE.md) — read that first, then this.
 
 ---
 
-## ►► SESSION-15 STATE (READ FIRST) ◄◄
+## ►► SESSION-16 STATE (READ FIRST) ◄◄
+
+Branch `WorkingSunday`, **HEAD `1e0ec65`** (+ this doc commit), suite **1374 OK**
+(`cd harness && python -m unittest discover -p "test_*.py"`, 230 s). Everything
+committed and green; working tree clean; `config.yaml` at safe defaults;
+`config.local.yaml` untouched.
+
+### What session 16 shipped — the operator's ranked build list, top to bottom
+
+Every item is fixture/hermetically verified with a negative control, one item per
+commit, suite green at each. **What is NOT done: a fresh live measured VulnCorp
+run** (ranked #5) — an operator step (~2–3 h, needs Ollama+Docker+mutating config),
+so the confirmed-on-target numbers are still session-13's. The new capabilities are
+verified-capable and wired, target-unverified until that run. Three new legs are
+deliberately **provisional** (see below).
+
+1. **Burp site-map import** (`c89511a`) — `harness/burp_sitemap.py`: parse Burp's
+   XML export → analyzable `HttpExchange`s with real headers/cookies/body intact,
+   scope-gated. Unblocks Bucket A: an imported exchange CARRIES the authenticated
+   session (V26 pickle cookie, XXE body, SSRF param) so the shape legs bite on
+   endpoints no crawler could discover. `seed_engagement_state` folds it into the
+   fused worklist. 9 tests.
+2. **Stateful agent-role feature crawl** (`3cc0b31`) — `harness/feature_workflow.py`:
+   drives each role through real workflows (GET page → submit forms with benign
+   defaults → follow), capturing session-bearing exchanges. Injected `fetch_fn`
+   seam (hermetic). `engagement_builder.feature_crawl_captures` unions/dedups per
+   role; wired into `investigate_engagement` behind `engagement.feature_crawl`
+   (DEFAULT OFF; submits gated by `allow_mutating_replay`). 17 tests.
+3. **Coverage matrix cell-filler** (`7c64058`) — `harness/coverage_tracker.py`
+   reconciles a finished engagement into the identity×endpoint×check matrix
+   (applicability + reachability skips + confirmed/detected + attempted-vs-never +
+   every not-tested cell carries a reason). `investigate_engagement` result now
+   carries `coverage`. This is the I1/I2/I5 integration — verified end-to-end in
+   `test_smoke_investigate` (confirmed JWT fills a CONFIRMED WSTG-CRYP-04 cell).
+4. **V4 rate-limit + V3 reset-token legs** (`811bf00`) — `rate_limit_validator`
+   (replay captured auth N× via authorize_burst, confirm no 429/lockout;
+   min_attempts default 12, needs `max_burst_size ≥ min_attempts`) and
+   `reset_token_validator` (pure `analyze_tokens` oracle: constant/sequential/
+   timestamp/below-64-bit-floor/derived-from-known-value). Both **provisional**.
+5. **Bucket C fixes** (`45f31e7`) — V15 verb-tamper `try_mutating_methods` opt-in
+   (triple-gated); V14 sequence leg now handles **form-encoded** bodies (the
+   no-bite cause) — live-verified; V18 `privilege_escalation` **promoted to LIVE**
+   (the sequence write→re-read differential IS priv-esc, live-verified case added);
+   V13 BFLA reconciled — cross_identity is BOLA-scoped (needs an object id) so it
+   correctly skipped `/api/admin/users`; added a **function-level branch** (a
+   non-privileged role reaching an admin-namespaced function while anon is denied
+   → confirmed BFLA).
+6. **V29 DOM-XSS** (`b60cc4e`) — `dom_xss_validator`: payload in the URL FRAGMENT
+   (never sent to the server) → execution proves a client-side source→sink taint,
+   not reflection. Same browser seam as browser_xss. **Provisional** (promote via
+   the operator's real-browser run; fixture gained `/xss/dom-hash` + `-safe`).
+7. **V22/V17 second-order chains** (`aa35bdd`) — `chaining.py` `second_order_sqli`
+   / `second_order_idor` composition rules surface the (A,B) plant→trigger pair;
+   `second_order.py` supplies the boolean-differential (SQLi) and cross-identity
+   plant-read (IDOR) confirmation primitives over injected send callables.
+8. **V2/V37 flag-only** (`1e0ec65`) — `engagement.needs_human_review` +
+   `flag_unconfirmable`: any UNCONFIRMED finding whose class has NO leg (leg_tier
+   == "none", business-logic deferred to its own hand-off) becomes a BLOCKED
+   `verify` task — reported-not-verified, never fake-confirmed, never dropped.
+   Agents already can't set `confirmed`; only a leg's CONFIRMED result does.
+
+### New canonical categories + coverage checks
+
+`categories.py` gained `reset_token` and `dom_xss` (+ synonyms, remediation hints,
+`test_chaining` KNOWN_UNCOVERED entries). `coverage_model.py` gained WSTG-ATHN-09
+(reset-token), WSTG-CLNT-01 (DOM XSS), and WSTG-ATHN-03 lockout now maps to the
+`rate_limit` leg (was "manual").
+
+### Leg tiers after session 16 (confirmation_gate)
+
+- **LIVE_VERIFIED** now also includes `privilege_escalation` (V18).
+- **Provisional** (CONFIRMABLE, leg built + hermetically tested, NOT yet live-run):
+  `rate_limit`, `reset_token`, `dom_xss`. Promote each after a live/browser run
+  (the freeze-policy discipline). The confirmation-gate 3-state tests use these as
+  the provisional examples now.
+
+### The remaining honest frontier (for the next session)
+
+- **Run the fresh measured VulnCorp run** (ranked #5) with feature_crawl on + Burp
+  import of a human browse — this is what turns "capability present" into a
+  confirmed-on-target recall number for the session-16 legs (and the session-15
+  csrf/file_upload/verb_tamper that have still never been scored against VulnCorp).
+  Use the run harness in `testing/vulncorp-helpdesk/maxrun/`, FRESH cache DB.
+- **Promote rate_limit / reset_token / dom_xss** to LIVE once that run (or the
+  browser runner for dom_xss) confirms them.
+- **Second-order auto-confirmation**: the composition rules + `second_order.py`
+  primitives exist; auto-selecting (A,B) pairs and running the differential live
+  inside `investigate_engagement` is the remaining wiring.
+
+---
+
+## ►► SESSION-15 STATE (reference) ◄◄
 
 Branch `WorkingSunday`, **HEAD `0e29928`**, suite **1301 OK**
 (`cd harness && python -m unittest discover -p "test_*.py"`). Everything committed and

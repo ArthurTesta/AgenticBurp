@@ -121,6 +121,20 @@ a run. `validators/registry.py` is the source of truth.
 | `verb_tamper` | method bypass | safe read-only alternates + override headers |
 | `file_upload` | upload bypass | benign .html upload + retrieve |
 | `secret_disclosure` | key leaks | HMAC-verified JWT key in response |
+| `rate_limit` | no rate limit / lockout | replay captured auth N× via authorize_burst, confirm no 429/lockout (provisional) |
+| `reset_token` | predictable reset token | sample tokens, `analyze_tokens` deterministic predictability oracle (provisional) |
+| `dom_xss` | DOM-based XSS | payload in URL fragment (never server-sent) → browser execution = client-side taint (provisional) |
+| `verb_tamper` (mutating) | method authz bypass | opt-in PUT/PATCH/DELETE (`try_mutating_methods`, triple-gated) |
+
+Second-order chains (V22 SQLi / V17 IDOR) have no single-request leg: `chaining.py`
+composes the plant→trigger `(A,B)` pair (`second_order_sqli`/`second_order_idor`
+rules) and `second_order.py` supplies the boolean-differential / cross-identity
+plant-read confirmation primitives (over injected send callables).
+
+Three legs above are **provisional** — built + hermetically tested but not yet
+live-verified on a target, so CONFIRMABLE but not in `LIVE_VERIFIED_MARKERS`. A
+finding whose class has **no** leg at all is flagged for human verification
+(`engagement.flag_unconfirmable`), never fake-confirmed.
 
 Enable in a run: `active_enabled: true`; sqlmap needs `container_image: harness/sqlmap:1.10.9`
 + Docker; xxe/ssrf/csrf/file_upload need `allow_mutating_replay: true` (mutating sends go
@@ -141,7 +155,9 @@ false` only `deserialization` runs — the rest arm only once a live run turns a
 | Area | Modules |
 |---|---|
 | Engagement loop | `orchestrator.py`, `engagement_builder.py`, `engagement.py`, `worklist_investigator.py`, `chain_linker.py`, `chaining.py`, `task_graph.py` |
-| Discovery / crawl | `api_surface_discovery.py`, `role_crawl.py`, `scope_discovery.py`, `crawler.py`, `js_endpoint_extractor.py` |
+| Discovery / crawl | `api_surface_discovery.py`, `role_crawl.py`, `scope_discovery.py`, `crawler.py`, `js_endpoint_extractor.py`, `feature_workflow.py` (stateful role workflow crawl), `burp_sitemap.py` (import a human's browsing) |
+| Coverage matrix | `coverage_model.py` (catalog), `coverage_tracker.py` (fills it during a run → auditable I1/I2/I5 report in `investigate_engagement` result under `coverage`) |
+| Second-order | `chaining.py` (compose `(A,B)`), `second_order.py` (plant→trigger differentials) |
 | Agents / LLM | `iterative_agent.py`, `agent_manager.py`, `ollama_client.py`, `planner.py`, `analysis_pipeline.py` |
 | Confirmation | `validators/` (18 graph-loop legs + ~8 registry-only — `registry.py` is the source of truth), `collaborator.py`, `active_verification.py`, `tool_runner.py` |
 | Coverage | `coverage_model.py` (WSTG check catalog + coverage matrix), `ffuf_runner.py` |
