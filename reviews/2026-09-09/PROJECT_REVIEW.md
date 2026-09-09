@@ -355,9 +355,9 @@ The live target's complete vulnerability denominator remains unknown to this rev
 | 5 | Cache case identity + mutation invalidation | R03 | ✅ identity+subtype key done (hermetic); post-mutation invalidation still TODO | `test_orchestrator_precondition.ConfirmationCacheKeyTests` |
 | 6 | Execution-aware outcomes (replace class-tier suppression) | R08 | ✅ done (hermetic) | `test_confirmation_gate` (`test_leg_error_is_inconclusive_not_refuted`, `test_unconfirmed_idor_with_controlled_negative_is_refuted`, `test_unconfirmed_idor_no_execution_is_capped_but_not_refuted`) |
 | 7 | Demote unsound oracles; add negative controls | R12 + WIP auto-confirm | ✅ R12 + removed LLM-label config auto-confirm (hermetic); the fuller oracle-table controls (CSRF/rate/reset/smuggling/passive-deser) are Phase 5 | `test_second_order` (`test_not_confirmed_on_literal_echo_of_payload`) |
-| 8 | Replay captured request templates in graph/coverage | R05, R14 | 🔶 R14 typed-routing done (hermetic); R05 template preservation NOT started (Phase 2, large) | `test_chaining.test_kind_is_typed_by_read_content_type` |
+| 8 | Replay captured request templates in graph/coverage | R05, R14 | ✅ done (hermetic); R14 typed-routing + R05 template store/replay | `test_engagement.RequestTemplateTests`, `test_worklist_investigator.SeedExchangeTemplateTests`, `test_chaining.test_kind_is_typed_by_read_content_type` |
 | 9 | One bound result-ingestion path (matrix→report) | R06 | ✅ done (hermetic, isolated + neg control) | `test_smoke_investigate.test_coverage_driver_confirmation_reaches_findings_not_just_matrix`; `test_orchestrator_precondition.CoverageConfirmationFindingTests` |
-| 10 | Expose graph investigation as a job; wire feedback | R18, R19 | ⬜ not started (Phase 4/8, integration-heavy) | — |
+| 10 | Expose graph investigation as a job; wire feedback | R18, R19 | ✅ done (hermetic); job lifecycle+cancel (R18), response-map + st2 merge (R19). Mid-run RESUME cursor deferred (needs execution ledger) | `test_server.InvestigateJobEndpointTests`, `test_engagement.MergeStateTests` |
 | + | Enforce per-finding mutation ceiling | R16 | ✅ done (hermetic) | `test_safety_gate.PerFindingMutationCeilingTests` |
 | + | Exact-technique leg tiers (no substring inheritance) | R09 | ✅ done (hermetic) | `test_confirmation_gate.test_provisional_subclass_not_promoted_by_substring_of_live_class` |
 
@@ -366,6 +366,16 @@ Later phases (2–9: request/identity model, unified executor, graph feedback, o
 ## Work log
 
 _(newest first)_
+
+### 2026-09-10 — Phase 1B/2/4 batch: R05, R18, R19 (+ commits of the first batch)
+
+Committed the Phase-1A/1B batch (HEAD `cf8d95b`): a session-17 WIP snapshot commit, then one focused commit per finding group, then this tracker. Then:
+
+- **R05 (request-template preservation)** — `SurfaceEndpoint.template` + `EngagementState.record_template()` + `template_from_exchange()` capture the real query/body/content-type/observed-object-id from each exchange (recorded in `review_captured_exchanges`); `worklist_investigator._seed_exchange` and the coverage `_run_leg` now REPLAY that template (real body/query, observed id, captured Content-Type, identity's own auth overlaid) instead of fabricating an empty body / stripped query / id=1. Falls back to fabrication when no capture exists. Full suite 1468 OK.
+- **R18 (flagship job API)** — `server.py`: `POST /engagement/{host}/investigate` runs `investigate_engagement` as a tracked background asyncio job; `GET .../investigate[/{job_id}]` polls status/result; `POST .../{job_id}/cancel` cancels via task cancellation. Closes "the flagship path is unreachable from the API." Mid-run **resume cursor** (SHOULD-tier) is deferred — investigate_engagement isn't internally checkpointed; that needs the Phase-2 execution ledger (documented in code).
+- **R19 (credential feedback loop)** — `investigate_engagement` now builds a `responses` map (url→{headers,body}) from real captures and passes it to `chain_linker.link_findings` (previously omitted, so leaked-credential detection was starved), and merges the derived-identity state `st2` back into the primary `state` via new `EngagementState.merge_from()` (previously st2's surface/findings never reached the final report). Merge is monotonic (respects R07).
+
+Suite after this batch: **1468 OK** for R05; R18/R19 targeted green — full-suite confirmation recorded below once it lands.
 
 ### 2026-09-09 — Phase 1A/1B P0 correctness batch (12 findings)
 
