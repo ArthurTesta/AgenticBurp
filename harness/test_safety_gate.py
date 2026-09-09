@@ -317,7 +317,10 @@ class TestNoValidatorBypassesTheGate(unittest.TestCase):
                                   "file_upload_validator.py",
                                   # rate_limit replays the captured auth method N times via
                                   # authorize_burst (like race_condition) -- verified below.
-                                  "rate_limit_validator.py"}
+                                  "rate_limit_validator.py",
+                                  # toctou fires a concurrent burst of the captured mutating
+                                  # method via authorize_burst (like race_condition) -- verified below.
+                                  "toctou_validator.py"}
         # Files whose exchange.method reference is provably not a live
         # send at all -- verified by reading the code, not assumed.
         inert_usage_exceptions = {
@@ -392,6 +395,11 @@ class TestNoValidatorBypassesTheGate(unittest.TestCase):
         self.assertIn("authorize_burst", rate,
                        "rate_limit_validator.py replays the captured method but doesn't call authorize_burst")
         self.assertIn("get_default_gate", rate)
+
+        toctou = (here / "validators" / "toctou_validator.py").read_text()
+        self.assertIn("authorize_burst", toctou,
+                       "toctou_validator.py fires a burst but doesn't call authorize_burst")
+        self.assertIn("get_default_gate", toctou)
 
         self.assertIn("get_default_gate", sqlmap_src,
                        "sqlmap.py uses exchange.method for --method but doesn't call the safety gate")

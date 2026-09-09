@@ -958,6 +958,7 @@ class Orchestrator:
         from validators.rate_limit_validator import RateLimitValidator
         from validators.reset_token_validator import ResetTokenValidator
         from validators.dom_xss_validator import DomXssValidator
+        from validators.toctou_validator import ToctouValidator
         from models import Finding
         host = urlsplit(base_url).hostname or ""
         for r in roles:
@@ -983,6 +984,7 @@ class Orchestrator:
         _rate = RateLimitValidator(allowed_hosts=self.allowed_hosts)
         _reset = ResetTokenValidator(allowed_hosts=self.allowed_hosts)
         _domxss = DomXssValidator(allowed_hosts=self.allowed_hosts)
+        _toctou = ToctouValidator(allowed_hosts=self.allowed_hosts)
 
         # Memoisation cache: avoid re-running the same validator on the same
         # endpoint during one investigate_engagement() call.  Keyed by
@@ -1097,6 +1099,16 @@ class Orchestrator:
                 try:
                     _apply(finding, await _cached_validate(_redir, _as_finding(finding, "open_redirect"), exchange),
                            "open-redirect", 0.9)
+                except Exception:
+                    return
+            elif ("toctou" in low or "time-of-check" in low or "time of check" in low
+                  or "check-then-act" in low or "check then act" in low
+                  or ("privilege" in low and "race" in low) or ("race" in low and "escalat" in low)):
+                # TOCTOU privilege-escalation race: concurrent check-then-write.
+                # Must precede the mass/privilege->sequence branch below.
+                try:
+                    _apply(finding, await _cached_validate(_toctou, _as_finding(finding, "toctou"), exchange),
+                           "toctou", 0.85)
                 except Exception:
                     return
             elif "mass" in low or "assignment" in low or "privilege" in low or low in ("api_security", "api security"):

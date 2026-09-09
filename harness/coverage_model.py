@@ -350,6 +350,11 @@ CHECK_CATALOG: tuple[Check, ...] = (
           "race_condition", _accepts_body, "race_condition",
           "Test for TOCTOU and concurrent-request bugs",
           "Race conditions"),
+    Check("WSTG-BUSL-08", "TOCTOU privilege-escalation race", Phase.ENDPOINT,
+          "toctou", _accepts_body, "toctou",
+          "Concurrent copies of an authority-changing write race a check-then-write "
+          "window; confirm a privilege field flipped under concurrency via re-read",
+          "Race conditions"),
 )
 
 CHECKS_BY_ID: dict[str, Check] = {c.id: c for c in CHECK_CATALOG}

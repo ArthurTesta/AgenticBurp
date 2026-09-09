@@ -196,6 +196,8 @@ class TestChainRuleCoverageIsDocumented(unittest.TestCase):
         "reset_token",
         # dom_xss composes like xss but has no dedicated chain rule of its own yet.
         "dom_xss",
+        # toctou is a standalone atomicity finding; no dedicated chain rule yet.
+        "toctou",
     })
 
     def test_categories_with_no_chain_rule_are_the_known_documented_set(self):

@@ -180,6 +180,13 @@ CONFIRMABLE_CLASS_MARKERS = frozenset({
     "dom-based xss",
     "dom based xss",
     "client-side xss",
+
+    # TOCTOU privilege-escalation race (toctou_validator)
+    "toctou",
+    "time-of-check",
+    "time of check",
+    "check-then-act",
+    "privilege escalation race",
 })
 
 # The subset of confirmable classes whose leg is LIVE-VERIFIED -- proven to

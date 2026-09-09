@@ -39,7 +39,7 @@ CANONICAL_CATEGORIES: tuple[str, ...] = (
     "web_cache_poisoning", "oauth", "subdomain_takeover",
     "crypto", "csp", "header_injection", "api_security",
     "websocket", "race_condition", "deserialization",
-    "session_fixation", "session_timeout", "reset_token", "dom_xss",
+    "session_fixation", "session_timeout", "reset_token", "dom_xss", "toctou",
 )
 
 # Deliberately generous but not promiscuous: each entry is a phrase an
@@ -152,6 +152,11 @@ _SYNONYMS: dict[str, str] = {
     "dom based xss": "dom_xss", "dom-based cross-site scripting": "dom_xss",
     "client-side xss": "dom_xss", "client side xss": "dom_xss",
     "client-side cross-site scripting": "dom_xss",
+    "toctou": "toctou", "time-of-check": "toctou", "time of check": "toctou",
+    "time-of-check to time-of-use": "toctou", "time of check to time of use": "toctou",
+    "check-then-act": "toctou", "check then act": "toctou",
+    "privilege escalation race": "toctou", "race privilege escalation": "toctou",
+    "priv esc race": "toctou", "toctou_privilege_escalation": "toctou",
     "session_timeout": "session_timeout", "session timeout": "session_timeout",
     "logout invalidation": "session_timeout", "logout_invalidation": "session_timeout",
     "session not invalidated": "session_timeout",

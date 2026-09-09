@@ -444,6 +444,14 @@ validators:
     enabled: true
     timeout: 10.0
     samples: 5
+  # TOCTOU privilege-escalation race (V19): fires burst_size genuinely-concurrent
+  # copies of an authority-changing write (asyncio.gather) and confirms only when a
+  # privileged field flipped under concurrency AND >=2 requests succeeded cleanly,
+  # via an independent re-read. Needs validators.max_burst_size >= 2 + mutating.
+  toctou:
+    enabled: true
+    timeout: 10.0
+    burst_size: 12
 
 # Autonomous scope-discovery MVP (harness/scope_discovery.py). Off by
 # default -- the harness has never, until this option exists, decided on

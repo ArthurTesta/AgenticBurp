@@ -33,6 +33,7 @@ from .file_upload_validator import FileUploadValidator
 from .rate_limit_validator import RateLimitValidator
 from .reset_token_validator import ResetTokenValidator
 from .dom_xss_validator import DomXssValidator
+from .toctou_validator import ToctouValidator
 from safety_gate import get_default_gate, reset_default_gate
 
 
@@ -260,6 +261,13 @@ class ValidatorRegistry:
             self.validators["reset_token"] = ResetTokenValidator(
                 allowed_hosts=_allowed, timeout=float(rt_cfg.get("timeout", 10.0)),
                 samples=int(rt_cfg.get("samples", 5)))
+        # TOCTOU privilege-escalation race -- concurrent burst of an authority write
+        # + baseline/verify re-reads. Active; burst gated by max_burst_size + mutating.
+        toctou_cfg = cfg.get("toctou", {})
+        if toctou_cfg.get("enabled", True):
+            self.validators["toctou"] = ToctouValidator(
+                allowed_hosts=_allowed, timeout=float(toctou_cfg.get("timeout", 10.0)),
+                burst_size=int(toctou_cfg.get("burst_size", 12)))
 
         # DOM-based XSS leg -- drives a real browser with the payload in the URL
         # FRAGMENT (never sent to the server), so execution proves a client-side
