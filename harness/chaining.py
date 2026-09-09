@@ -283,6 +283,38 @@ _RULES: list[ChainRule] = [
             "as a working SSRF path rather than XXE alone."
         ),
     ),
+    # --- Second-order chains (V22 / V17): a WRITE that persists user input,
+    # combined with a later SQLi- or IDOR-suspected READ that consumes stored
+    # data. The classic second-order shape (HARNESS_IMPROVEMENT_NOTES #3): a value
+    # accepted safely by A is reused unsafely by B on an unrelated path. The write
+    # ("stored_write" umbrella: mass-assignment / stored-XSS / persisted input) is
+    # the plant; the read is the trigger. Composed as a hypothesis here; the active
+    # boolean differential that confirms it lives in second_order.py.
+    ChainRule(
+        signature="second_order_sqli",
+        tag_a="stored_write", tag_b="sqli",
+        severity="critical",
+        narrative_template=(
+            "A write that persists user-controlled input at {a_url} and a SQL-injection"
+            "-suspected read at {b_url} on the same host: this is the second-order SQLi "
+            "shape -- a value stored safely by the write is later concatenated into a "
+            "query on the read path, so single-request sqlmap on {b_url} alone misses it. "
+            "Confirm with a plant->trigger boolean differential (store a TRUE vs FALSE SQL "
+            "marker via {a_url}, compare {b_url}'s response); see second_order.py."
+        ),
+    ),
+    ChainRule(
+        signature="second_order_idor",
+        tag_a="stored_write", tag_b="idor",
+        severity="high",
+        narrative_template=(
+            "A write that persists an object reference at {a_url} and an object-level "
+            "access-control gap at {b_url}: the value planted by the write may be read "
+            "back by another identity through the IDOR on {b_url} -- a second-order IDOR "
+            "chain. Confirm by planting a marker object as one identity via {a_url} and "
+            "reading it as another identity via {b_url}."
+        ),
+    ),
     ChainRule(
         signature="command_injection+known_vuln",
         tag_a="command_injection", tag_b="known_vuln",
@@ -317,6 +349,14 @@ _CLASS_TAGS: dict[str, set[str]] = {
     "xss": {"xss", "cross-site-scripting", "cross-site scripting"},
     "oauth_redirect": {"oauth_redirect", "oauth-redirect", "oauth redirect"},
     "graphql_introspection": {"graphql_introspection", "graphql-introspection", "graphql introspection"},
+    # A write that PERSISTS user-controlled input -- the plant side of a
+    # second-order chain. Umbrella over mass-assignment / stored-XSS / explicitly
+    # second-order-labelled findings. (Deliberately not the canonical category
+    # name "api_security", so the canonical-category chain-coverage audit is
+    # unchanged; a real mass_assignment/stored-xss finding still gets this tag.)
+    "stored_write": {"mass_assignment", "mass assignment", "stored_xss", "stored xss",
+                     "stored cross-site scripting", "second-order", "second order",
+                     "second-order sqli", "second order idor"},
 }
 
 

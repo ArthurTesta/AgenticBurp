@@ -1,0 +1,134 @@
+"""
+Second-order confirmation primitives (V22 second-order SQLi, V17 second-order IDOR).
+
+The confirmation legs in this harness share one shape: replay ~one request under a
+different condition and diff against a baseline. That structurally cannot catch a
+second-order bug, where a value is stored safely by request A and reused unsafely
+by a DIFFERENT request B on an unrelated path (HARNESS_IMPROVEMENT_NOTES #3).
+sqlmap is single-request; the cross-identity leg replays one request. Neither
+models plant-A -> trigger-B.
+
+This module supplies the missing plant->trigger DIFFERENTIALS as pure-ish
+primitives over injected async callables, so the (A, B) pair the chain composer
+identifies (chaining.py's second_order_* rules) can be actively confirmed without
+baking the network into the oracle -- and the oracle is unit-tested with simulated
+vulnerable/safe B endpoints, no live target.
+
+  - confirm_second_order_sqli: plant a boolean-TRUE vs boolean-FALSE SQL marker
+    via A, trigger B each time; if B's response depends on the planted boolean,
+    the stored value reaches a SQL query on B -> confirmed second-order SQLi.
+  - confirm_second_order_idor: plant a unique marker object as identity 1 via A,
+    read via B as identity 2; if identity 2 sees identity 1's planted marker, the
+    stored object crosses the identity boundary -> confirmed second-order IDOR.
+
+Deterministic given the injected callables. The orchestrator supplies real,
+scope-gated, gated (allow_mutating_replay) send callables; the plant is a mutating
+write, so this only runs under the mutating opt-in.
+"""
+from __future__ import annotations
+
+import logging
+import secrets
+from dataclasses import dataclass
+
+log = logging.getLogger("harness.second_order")
+
+# Boolean markers whose only difference is the truth of the injected condition.
+# A value stored verbatim and later concatenated into `... WHERE x='<value>'`
+# makes the TRUE variant return the row set and the FALSE variant return nothing.
+_TRUE_SUFFIX = "' OR '1'='1"
+_FALSE_SUFFIX = "' OR '1'='2"
+
+
+@dataclass
+class SecondOrderResult:
+    confirmed: bool
+    reason: str
+    evidence: str = ""
+
+
+def _similar(a: str, b: str) -> float:
+    """Cheap response-similarity in [0,1] on length + shared-token overlap -- used
+    to tell 'B's response changed with the planted boolean' from 'identical'."""
+    a, b = a or "", b or ""
+    if not a and not b:
+        return 1.0
+    la, lb = len(a), len(b)
+    length_sim = min(la, lb) / max(la, lb) if max(la, lb) else 1.0
+    ta, tb = set(a.split()), set(b.split())
+    tok_sim = len(ta & tb) / len(ta | tb) if (ta | tb) else 1.0
+    return 0.5 * length_sim + 0.5 * tok_sim
+
+
+async def confirm_second_order_sqli(
+    *,
+    plant,          # async plant(marker_value) -> None: perform write A storing marker_value
+    trigger,        # async trigger() -> str: perform read B, return its response text
+    reset=None,     # optional async reset() -> None between plants
+    base_marker: str | None = None,
+    similarity_threshold: float = 0.9,
+) -> SecondOrderResult:
+    """Boolean-based second-order SQLi differential.
+
+    Plants a TRUE and a FALSE boolean SQL marker via `plant` (write A), triggering
+    `trigger` (read B) after each. If B's response is (near-)identical for both,
+    the stored value is inert on B (not confirmed). If B's response differs
+    materially between the TRUE and FALSE plant, the stored value is being
+    interpreted as SQL on B -- confirmed second-order SQLi.
+
+    A per-run nonce namespaces the marker so this never collides with real data."""
+    base = base_marker or ("so" + secrets.token_hex(4))
+    true_val = f"{base}{_TRUE_SUFFIX}"
+    false_val = f"{base}{_FALSE_SUFFIX}"
+
+    if reset:
+        await reset()
+    await plant(true_val)
+    resp_true = await trigger() or ""
+
+    if reset:
+        await reset()
+    await plant(false_val)
+    resp_false = await trigger() or ""
+
+    sim = _similar(resp_true, resp_false)
+    if sim < similarity_threshold:
+        return SecondOrderResult(
+            confirmed=True,
+            reason="second-order SQLi confirmed: the read's response depends on a boolean SQL "
+                   "condition planted via the write",
+            evidence=(f"Planted TRUE marker ({true_val!r}) then FALSE ({false_val!r}) via the write; "
+                      f"the read's response differed materially between them "
+                      f"(similarity {sim:.2f} < {similarity_threshold}). A stored value that changes "
+                      f"the read's result set by flipping '1'='1' vs '1'='2' is being concatenated "
+                      f"into a SQL query on the read path."))
+    return SecondOrderResult(
+        confirmed=False,
+        reason="no second-order SQLi: the read's response did not depend on the planted SQL boolean",
+        evidence=f"TRUE vs FALSE plant produced near-identical read responses (similarity {sim:.2f}).")
+
+
+async def confirm_second_order_idor(
+    *,
+    plant,          # async plant(marker) -> None: create an object carrying marker as identity 1
+    read_as_other,  # async read_as_other() -> str: read the object as identity 2, return text
+    marker: str | None = None,
+) -> SecondOrderResult:
+    """Plant-then-cross-identity-read confirmation. Identity 1 stores an object
+    carrying a unique marker via `plant` (write A); identity 2 reads via B
+    (`read_as_other`). If identity 2's response contains identity 1's marker, the
+    stored object crosses the identity boundary -> confirmed second-order IDOR."""
+    mark = marker or ("SOIDOR" + secrets.token_hex(6))
+    await plant(mark)
+    seen = await read_as_other() or ""
+    if mark in seen:
+        return SecondOrderResult(
+            confirmed=True,
+            reason="second-order IDOR confirmed: an object planted by one identity was read back "
+                   "by a different identity",
+            evidence=(f"Identity 1 stored a unique marker {mark!r} via the write; identity 2's read "
+                      f"returned it -- the stored object is not scoped to its creator."))
+    return SecondOrderResult(
+        confirmed=False,
+        reason="no second-order IDOR: the other identity did not see the planted marker",
+        evidence=f"Marker {mark!r} planted as identity 1 was absent from identity 2's read.")
