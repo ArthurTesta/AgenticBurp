@@ -2,7 +2,8 @@
 import unittest
 
 import engagement
-from engagement import EngagementState, SurfaceEndpoint, normalize_path
+from engagement import EngagementState, SurfaceEndpoint, normalize_path, template_from_exchange
+from models import HttpExchange
 
 
 class NormalizeTests(unittest.TestCase):
@@ -274,6 +275,78 @@ class StoreAndEndpointTests(unittest.TestCase):
         body = resp.json()
         self.assertTrue(body["worklist"])
         self.assertEqual(body["worklist"][0]["path"], "/rest/admin")
+
+
+class MergeStateTests(unittest.TestCase):
+    """R19: derived-identity discoveries must be merged into the primary state."""
+
+    def test_merge_adds_new_endpoints_findings_identities(self):
+        primary = EngagementState(host="t")
+        primary._ep("GET", "/api/a")
+        derived = EngagementState(host="t")
+        d_ep = derived._ep("GET", "/api/secret")   # reachable only as the leaked id
+        d_ep.reachable_roles = ["derived"]
+        d_ep.add_finding({"vulnerability_class": "idor", "confirmed": True, "severity": "high"})
+        derived.ingest_identity("leaked-bearer", "derived")
+        added = primary.merge_from(derived)
+        self.assertEqual(added, 1)
+        self.assertIn("GET /api/secret", primary.endpoints)
+        self.assertTrue(primary.endpoints["GET /api/secret"].findings[0]["confirmed"])
+        self.assertTrue(any(i["name"] == "leaked-bearer" for i in primary.identities))
+
+    def test_merge_is_monotonic_on_shared_endpoint(self):
+        primary = EngagementState(host="t")
+        primary._ep("GET", "/api/x").add_finding(
+            {"vulnerability_class": "idor", "confirmed": True, "severity": "high", "confidence": 0.9})
+        derived = EngagementState(host="t")
+        derived._ep("GET", "/api/x").add_finding(
+            {"vulnerability_class": "idor", "confirmed": False, "severity": "high", "confidence": 0.99})
+        primary.merge_from(derived)
+        # the confirmed proof survives an unconfirmed higher-confidence merge (R07)
+        self.assertTrue(primary.endpoints["GET /api/x"].findings[0]["confirmed"])
+
+
+class RequestTemplateTests(unittest.TestCase):
+    """R05: capture and preserve the real request shape so replay isn't fabricated."""
+
+    def test_record_template_captures_shape(self):
+        st = EngagementState(host="t")
+        ex = HttpExchange(url="http://t/api/tickets/42?expand=comments", method="POST",
+                          request_headers={"Content-Type": "application/xml"},
+                          request_body="<ticket/>", response_status=200,
+                          response_headers={}, response_body="")
+        st.record_template(ex.url, ex.method, ex)
+        ep = st.endpoints["POST /api/tickets/{id}"]
+        self.assertEqual(ep.template["body"], "<ticket/>")
+        self.assertEqual(ep.template["query"], "expand=comments")
+        self.assertEqual(ep.template["content_type"], "application/xml")
+        self.assertEqual(ep.template["object_id"], "42")   # observed id, not fabricated 1
+
+    def test_record_template_keeps_richest_capture(self):
+        st = EngagementState(host="t")
+        empty = HttpExchange(url="http://t/api/x", method="POST", request_headers={},
+                             request_body="", response_status=200, response_headers={}, response_body="")
+        rich = HttpExchange(url="http://t/api/x", method="POST", request_headers={},
+                            request_body='{"a":1}', response_status=200, response_headers={}, response_body="")
+        st.record_template("http://t/api/x", "POST", empty)
+        st.record_template("http://t/api/x", "POST", rich)
+        self.assertEqual(st.endpoints["POST /api/x"].template["body"], '{"a":1}')
+        # a later empty capture must NOT clobber the richer template
+        st.record_template("http://t/api/x", "POST", empty)
+        self.assertEqual(st.endpoints["POST /api/x"].template["body"], '{"a":1}')
+
+    def test_template_round_trips_through_dict(self):
+        ep = SurfaceEndpoint("POST", "/api/x", template={"method": "POST", "body": "b",
+                             "query": "q=1", "content_type": "application/json", "object_id": None})
+        ep2 = SurfaceEndpoint.from_dict(ep.to_dict())
+        self.assertEqual(ep2.template["body"], "b")
+        self.assertEqual(ep2.template["query"], "q=1")
+
+    def test_template_from_exchange_accepts_dict(self):
+        t = template_from_exchange({"url": "http://t/a/9f8e7d6c5b4a3210?q=2", "method": "GET",
+                                    "request_headers": {}, "request_body": ""})
+        self.assertEqual(t["query"], "q=2")
+        self.assertEqual(t["object_id"], "9f8e7d6c5b4a3210")
 
 
 if __name__ == "__main__":

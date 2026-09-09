@@ -41,6 +41,37 @@ def _nothing():
     return {"iterative_result": {"stop_reason": "gave_up", "findings": []}, "integration": {}}
 
 
+class SeedExchangeTemplateTests(unittest.TestCase):
+    """R05: replay the captured request template instead of fabricating."""
+
+    def test_replays_body_query_and_observed_object_id(self):
+        node = {"method": "POST", "path": "/api/tickets/{id}",
+                "template": {"method": "POST", "body": "<ticket/>", "query": "e=1",
+                             "content_type": "application/xml", "object_id": "42"}}
+        ex = wi._seed_exchange("http://t", node, {"Authorization": "Bearer u"}, "1")
+        self.assertEqual(ex.request_body, "<ticket/>")          # real body, not empty
+        self.assertIn("/api/tickets/42", ex.url)                 # observed id, not 1
+        self.assertIn("e=1", ex.url)                             # query preserved, not stripped
+        self.assertEqual(ex.request_headers.get("Authorization"), "Bearer u")  # probe identity
+        self.assertEqual(ex.request_headers.get("Content-Type"), "application/xml")
+
+    def test_fabricates_when_no_template(self):
+        node = {"method": "GET", "path": "/api/tickets/{id}"}
+        ex = wi._seed_exchange("http://t", node, {"Authorization": "Bearer u"}, "1")
+        self.assertEqual(ex.request_body, "")
+        self.assertIn("/api/tickets/1", ex.url)                  # falls back to id_fill
+        self.assertNotIn("?", ex.url)
+
+    def test_identity_auth_not_overwritten_by_captured_auth(self):
+        # a template must NOT replay the captor's own session; only Content-Type.
+        node = {"method": "POST", "path": "/api/x",
+                "template": {"method": "POST", "body": "b", "query": "",
+                             "content_type": "application/json", "object_id": None}}
+        ex = wi._seed_exchange("http://t", node, {}, "1")   # anonymous probe
+        self.assertNotIn("Authorization", ex.request_headers)
+        self.assertNotIn("Cookie", ex.request_headers)
+
+
 class DeriveTests(unittest.TestCase):
     def test_object_scoped_node_derives_idor(self):
         self.assertEqual(wi._derive_probe(OBJ)[0], "idor")

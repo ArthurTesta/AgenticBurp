@@ -64,12 +64,35 @@ def _derive_probe(node: dict) -> tuple[str, str] | None:
     return None
 
 
-def _seed_exchange(base_url: str, node: dict, headers: dict, id_fill: str) -> HttpExchange:
-    path = node.get("path", "/").replace("{id}", id_fill)
+def _seed_exchange(base_url: str, node: dict, headers: dict, id_fill: str,
+                   template: dict | None = None) -> HttpExchange:
+    """Build the probe exchange for a node. When a captured request TEMPLATE exists
+    (R05), replay its real body, query and content-type, and fill `{id}` with the
+    OBSERVED object id rather than "1" -- overlaying the probe identity's own auth
+    headers so we test AS that identity but with the captured request's real shape.
+    With no template it fabricates as before (empty body, id_fill, no query)."""
+    template = template or node.get("template") or None
+    id_val = (template.get("object_id") if template and template.get("object_id") else id_fill)
+    body = (template.get("body", "") if template else "") or ""
+    query = (template.get("query", "") if template else "") or ""
+    ctype = (template.get("content_type", "") if template else "") or ""
+
+    path = node.get("path", "/").replace("{id}", id_val)
     url = base_url.rstrip("/") + path
+    if query and "?" not in url:
+        url = f"{url}?{query}"
+
+    # Identity headers win (we probe AS the probe identity); the captured
+    # Content-Type is carried over when the identity didn't set one -- it is what a
+    # shape leg (xxe/form/upload) needs. Other captured headers are NOT replayed
+    # (they may carry the captor's own session -- an identity/scope concern).
+    merged = dict(headers or {})
+    if ctype and not any((k or "").lower() == "content-type" for k in merged):
+        merged["Content-Type"] = ctype
+
     return HttpExchange(
         url=url, method=node.get("method", "GET"),
-        request_headers=dict(headers or {}), request_body="",
+        request_headers=merged, request_body=body,
         response_status=None, response_headers={}, response_body="",
     )
 

@@ -510,6 +510,13 @@ async def review_captured_exchanges(orch, state, captured, *, max_reviews: int =
         except Exception:
             continue
         reviewed += 1
+        # R05: record the captured request template on its endpoint so the graph +
+        # coverage replay the real body/query/content-type/object-id, not an empty
+        # fabricated shape. Cheap and additive; failure must not sink the review.
+        try:
+            state.record_template(ex.url, ex.method, ex)
+        except Exception:
+            pass
         try:
             resp = await orch.analyze(ex, _from_discovery=True)
         except Exception as e:  # one capture's failure must not sink the rest
@@ -1407,9 +1414,30 @@ class Orchestrator:
 
         outcomes, all_findings = await _investigate(state, roles)
 
+        # R19: supply link_findings the RESPONSE MAP it needs to detect a leaked
+        # credential (url -> {headers, body}), built from the real captured
+        # exchanges. Without it the closed loop was starved -- no response body was
+        # ever inspected, so a leaked bearer/cookie never triggered a re-test.
+        def _responses_from(captures) -> dict:
+            out: dict = {}
+            for cap in captures or []:
+                try:
+                    ex = cap if isinstance(cap, HttpExchange) else HttpExchange(**cap)
+                except Exception:
+                    continue
+                out[ex.url] = {"headers": dict(ex.response_headers or {}),
+                               "body": ex.response_body or ""}
+            return out
+
+        _responses: dict = _responses_from(getattr(rc, "captured", None))
+        try:
+            _responses.update(_responses_from(feature_caps))
+        except NameError:
+            pass
+
         # Milestone C: link findings into escalation edges + composed chains, then
         # walk the closed loop -- re-test AS any credential a finding leaked.
-        link = chain_linker.link_findings(state, all_findings)
+        link = chain_linker.link_findings(state, all_findings, responses=_responses)
         chains = list(link["chain_findings"])
         creds, rounds, seen_ident = link["credential_caps"], 0, set()
         while creds and rounds < max_chain_rounds:
@@ -1432,7 +1460,13 @@ class Orchestrator:
             outs2, new_findings = await _investigate(st2, derived)
             outcomes.extend(outs2)
             all_findings.extend(new_findings)
-            link = chain_linker.link_findings(state, all_findings)
+            # R19: merge the derived-identity state back into the primary state, so
+            # the surface + findings reachable ONLY as the leaked credential appear
+            # in the final summary/worklist/coverage/report -- not just in a local
+            # list. Also feed the re-crawl's responses into credential detection.
+            state.merge_from(st2)
+            _responses.update(_responses_from(getattr(rc2, "captured", None)))
+            link = chain_linker.link_findings(state, all_findings, responses=_responses)
             chains = list(link["chain_findings"])
             creds = link["credential_caps"]
 
@@ -1583,6 +1617,11 @@ class Orchestrator:
                     if validator is None:
                         return None  # e.g. sqlmap/race_condition -- not driven here
                     node = {"method": method, "path": path}
+                    # R05: replay the captured template for this endpoint if we have
+                    # one, so the coverage-driven leg sends the real shape too.
+                    _ep_obj = state.endpoints.get(f"{method} {path}")
+                    if _ep_obj is not None and getattr(_ep_obj, "template", None):
+                        node["template"] = _ep_obj.template
                     ex = worklist_investigator._seed_exchange(
                         base_url, node, _role_headers.get(identity, {}), "1")
                     res = await _cached_validate(

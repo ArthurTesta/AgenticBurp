@@ -74,6 +74,29 @@ def _looks_privileged(path: str) -> bool:
     return bool(_PRIVILEGED.search(path or ""))
 
 
+def template_from_exchange(ex) -> dict:
+    """A compact, replayable request TEMPLATE captured from a real exchange (R05):
+    method, query string, request body, content-type, and the observed leaf object
+    id -- the detail the graph otherwise fabricates away (empty body, {id}->1, query
+    stripped). Accepts an HttpExchange or a dict."""
+    if isinstance(ex, dict):
+        get = lambda k, d=None: ex.get(k, d)
+    else:
+        get = lambda k, d=None: getattr(ex, k, d)
+    url = get("url", "") or ""
+    method = (get("method", "GET") or "GET").upper()
+    headers = dict(get("request_headers", {}) or {})
+    body = get("request_body", "") or ""
+    parts = urlsplit(url)
+    ctype = next((v for k, v in headers.items() if (k or "").lower() == "content-type"), "")
+    obj_id = None
+    for seg in [s for s in (parts.path or "").split("/") if s]:
+        if re.fullmatch(r"\d+|[0-9a-fA-F-]{8,}", seg):
+            obj_id = seg  # keep the LAST matching segment -> the leaf object id
+    return {"method": method, "query": parts.query or "", "body": body,
+            "content_type": ctype or "", "object_id": obj_id}
+
+
 @dataclass
 class SurfaceEndpoint:
     method: str
@@ -86,6 +109,11 @@ class SurfaceEndpoint:
     object_scoped: bool = False
     findings: list = field(default_factory=list)         # [{class, severity, confidence, confirmed}]
     status: str = "discovered"        # discovered | analyzed | validated
+    # Captured request TEMPLATE (R05): the real query/body/content-type/object-id
+    # observed for this endpoint, so the graph + coverage replay its actual shape
+    # instead of fabricating an empty body, a stripped query, and id=1. None until
+    # a capture is recorded (record_template); replay falls back to fabrication.
+    template: dict | None = None
 
     @property
     def key(self) -> str:
@@ -197,6 +225,7 @@ class SurfaceEndpoint:
             "path_tier": self.path_tier, "llm_priority": self.llm_priority, "llm_score": self.llm_score,
             "access": self.access, "reachable_roles": self.reachable_roles,
             "object_scoped": self.object_scoped, "findings": self.findings,
+            "template": self.template,
             "score": s, "reasons": reasons,
         }
 
@@ -207,7 +236,7 @@ class SurfaceEndpoint:
             path_tier=d.get("path_tier"), llm_priority=d.get("llm_priority"), llm_score=d.get("llm_score"),
             access=d.get("access", {}) or {}, reachable_roles=d.get("reachable_roles", []) or [],
             object_scoped=bool(d.get("object_scoped", False)), findings=d.get("findings", []) or [],
-            status=d.get("status", "discovered"),
+            status=d.get("status", "discovered"), template=d.get("template"),
         )
 
 
@@ -384,6 +413,38 @@ class EngagementState:
             n += 1
         return n
 
+    def merge_from(self, other: "EngagementState") -> int:
+        """Fold another engagement's discoveries into this one (R19).
+
+        The closed-loop re-crawl builds a SEPARATE state (`st2`) as a newly-leaked
+        identity; without merging, the surface and findings reachable only as that
+        identity never reach the primary state's summary/worklist/report. This
+        merges the other state's endpoints (adding new ones, unioning findings via
+        the monotonic add_finding, unioning reachable roles, adopting a template
+        where we lack one) and its identities. Returns the count of NEW endpoints
+        added."""
+        added = 0
+        for key, ep in (other.endpoints or {}).items():
+            mine = self.endpoints.get(key)
+            if mine is None:
+                self.endpoints[key] = ep
+                added += 1
+                continue
+            for f in ep.findings or []:
+                mine.add_finding(f)
+            for r in ep.reachable_roles or []:
+                if r not in mine.reachable_roles:
+                    mine.reachable_roles.append(r)
+            if ep.template and not mine.template:
+                mine.template = ep.template
+            # a proven endpoint status propagates upward, never downward
+            if ep.status == "validated":
+                mine.status = "validated"
+        for ident in getattr(other, "identities", []) or []:
+            if not any(i.get("name") == ident.get("name") for i in self.identities):
+                self.identities.append(ident)
+        return added
+
     def ingest_role_crawl(self, result: dict) -> int:
         """From /crawl-roles: the access matrix + object-scoping per endpoint,
         plus the derived IDOR findings."""
@@ -416,6 +477,23 @@ class EngagementState:
                 ep.llm_score = None
             n += 1
         return n
+
+    def record_template(self, url: str, method: str, exchange) -> None:
+        """Attach the captured request TEMPLATE to the endpoint so the graph and
+        coverage replay its real shape instead of fabricating (R05). When several
+        captures map to one endpoint, keep the most informative (a body/query/
+        object-id beats an empty one)."""
+        ep = self._ep(method, normalize_path(url))
+        tmpl = template_from_exchange(exchange)
+
+        def _richness(t: dict | None) -> int:
+            if not t:
+                return -1
+            return ((1 if t.get("body") else 0) + (1 if t.get("query") else 0)
+                    + (1 if t.get("object_id") else 0))
+
+        if _richness(tmpl) > _richness(ep.template):
+            ep.template = tmpl
 
     def ingest_findings(self, url: str, method: str, findings) -> int:
         """From /analyze (agents + validators): attach findings to the endpoint,
