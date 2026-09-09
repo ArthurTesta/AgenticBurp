@@ -135,6 +135,61 @@ class CrossIdentityValidatorTest(unittest.TestCase):
         ]:
             self.assertFalse(has_object_identifier(url), url)
 
+    # --- R10: reject self-comparison; distinct same-role principals ---
+
+    def test_rejects_self_comparison_but_tests_distinct_same_role_user(self):
+        """R10: the captured request was made by alice (role user). alice must be
+        EXCLUDED (self-comparison), but bob -- a DIFFERENT account with the SAME
+        role -- is a distinct principal and IS tested, confirming the real IDOR."""
+        identity_headers.set_identity("localhost", "alice", {"Authorization": "Bearer alice"}, role="user")
+        identity_headers.set_identity("localhost", "bob", {"Authorization": "Bearer bob"}, role="user")
+
+        probed = []
+
+        def responder(headers):
+            probed.append(headers.get("Authorization"))
+            if headers.get("Authorization") == "Bearer bob":
+                return (200, "OWNER-SECRET-DATA-12345")   # bob reaches alice's object
+            if headers.get("Authorization") == "Bearer alice":
+                return (200, "OWNER-SECRET-DATA-12345")   # alice reaching her own -> must NOT be tested
+            return (403, "Forbidden")                     # anon denied
+
+        v = _StubbedValidator(responder, allowed_hosts=["localhost"])
+        # the captured exchange was made BY alice (source principal)
+        ex = _exchange()
+        ex.request_headers = {"Authorization": "Bearer alice"}
+        r = asyncio.run(v.validate(_finding(), ex))
+        self.assertEqual(r.status, "confirmed")
+        self.assertIn("bob", r.summary)
+        # alice's own credential was NEVER replayed (self-comparison excluded)
+        self.assertNotIn("Bearer alice", probed)
+
+    def test_only_source_principal_configured_skips(self):
+        """R10 NEGATIVE CONTROL: if the ONLY configured identity is the source
+        principal, there is no distinct principal to test -- skip, never confirm
+        a self-comparison as IDOR."""
+        identity_headers.set_identity("localhost", "alice", {"Authorization": "Bearer alice"}, role="user")
+
+        def responder(headers):
+            return (200, "OWNER-SECRET-DATA-12345")  # would falsely 'match' if self-compared
+
+        v = _StubbedValidator(responder, allowed_hosts=["localhost"])
+        ex = _exchange()
+        ex.request_headers = {"Authorization": "Bearer alice"}
+        r = asyncio.run(v.validate(_finding(), ex))
+        self.assertEqual(r.status, "skipped")
+        self.assertIn("distinct principal", r.summary.lower())
+
+    def test_role_session_principal_id_distinguishes_same_role(self):
+        from role_crawl import RoleSession
+        alice = RoleSession(role="user", headers={"Authorization": "Bearer alice"})
+        bob = RoleSession(role="user", headers={"Authorization": "Bearer bob"})
+        self.assertNotEqual(alice.principal_id(), bob.principal_id())
+        # anonymous (no creds) keeps a stable role label
+        self.assertEqual(RoleSession(role="anonymous", headers={}).principal_id(), "anonymous")
+        # explicit name wins
+        self.assertEqual(RoleSession(role="user", headers={}, name="carol").principal_id(), "carol")
+
     def test_only_applies_to_access_control_classes(self):
         v = _StubbedValidator(lambda h: (200, "x"), allowed_hosts=["localhost"])
         self.assertTrue(v.applies(_finding("insecure_direct_object_reference"), _exchange()))

@@ -148,6 +148,47 @@ def has_object_identifier(url: str) -> bool:
     return any(k.lower() in _ID_QUERY_KEYS for k in parse_qs(p.query))
 
 
+def _auth_signature(headers: dict | None) -> tuple:
+    """A normalized fingerprint of the PRINCIPAL a set of request headers
+    authenticates as: its Authorization value plus its Cookie header. Two header
+    sets with the same signature are the SAME principal -- replaying one against
+    the other is self-comparison, never a cross-identity test (R10). An empty
+    signature (no auth material) means an anonymous/unknown principal, for which
+    no self-exclusion is possible."""
+    headers = headers or {}
+    auth = ""
+    cookie = ""
+    for k, v in headers.items():
+        lk = (k or "").lower()
+        if lk == "authorization":
+            auth = (v or "").strip()
+        elif lk == "cookie":
+            cookie = (v or "").strip()
+    if not auth and not cookie:
+        return ()
+    return (auth, cookie)
+
+
+def _distinct_other_principals(idents: list, source_sig: tuple) -> list:
+    """The configured identities that are DISTINCT principals from the source
+    (R10): drop any whose credentials equal the source request's, and collapse
+    duplicate credentials so one principal supplied twice is not counted twice.
+    Two accounts with the SAME role but different credentials are kept -- that is
+    exactly the same-role cross-user case the test must exercise."""
+    out: list = []
+    seen: set = set()
+    for i in idents:
+        sig = _auth_signature(i.get("headers"))
+        if source_sig and sig == source_sig:
+            continue  # this identity IS the source principal
+        if sig and sig in seen:
+            continue  # duplicate credential -> same principal already counted
+        if sig:
+            seen.add(sig)
+        out.append(i)
+    return out
+
+
 class CrossIdentityValidator(Validator):
     name = "cross_identity"
     active = True  # sends live requests; only runs when validators.active_enabled
@@ -248,6 +289,19 @@ class CrossIdentityValidator(Validator):
             return self._skip(fc, "no identities configured for this host -- supply another identity's "
                                   "session headers via POST /identities/session-headers (Autorize-style)")
 
+        # R10: reject SELF-COMPARISON. The captured request was made by some
+        # principal (its Authorization/Cookie). Replaying it "as another identity"
+        # that is really the SAME principal proves nothing -- a principal reaching
+        # its own resource is not an access-control failure. Exclude the source
+        # principal and collapse duplicate credentials to DISTINCT principals.
+        source_sig = _auth_signature(exchange.request_headers)
+        idents_distinct = _distinct_other_principals(idents, source_sig)
+        if not idents_distinct:
+            return self._skip(fc, "only the source principal's own credentials are configured -- "
+                                  "cross-identity needs a DISTINCT principal (a different account, even "
+                                  "with the same role) to replay as; a principal reaching its own resource "
+                                  "is not evidence of IDOR/BFLA (R10 self-comparison guard)")
+
         candidate = identity_compare.Probe(exchange.response_status or 0, exchange.response_body or "")
         try:
             anon = await self._probe(exchange.url, {})
@@ -260,11 +314,11 @@ class CrossIdentityValidator(Validator):
         # declares the intended admin-only boundary; a non-admin role crossing it
         # is a real bypass. Distinct from the BOLA object-swap path below.
         if function_level:
-            return await self._confirm_bfla(fc, exchange, idents, anon)
+            return await self._confirm_bfla(fc, exchange, idents_distinct, anon)
 
         considered = 0
         rejects = 0
-        for ident in idents[:self.max_identities]:
+        for ident in idents_distinct[:self.max_identities]:
             try:
                 attempt = await self._probe(exchange.url, ident["headers"])
             except Exception:

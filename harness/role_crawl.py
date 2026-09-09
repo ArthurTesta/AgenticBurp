@@ -98,9 +98,26 @@ def _distinct_discovery_roles(roles: list, cap: int = 6) -> list:
 class RoleSession:
     role: str                 # "anonymous" | "user" | "admin" | "service" | free label
     headers: dict             # real captured session headers; empty/none for anonymous
+    name: str | None = None   # explicit principal id (username) when the tester supplies one
 
     def norm_headers(self) -> dict:
         return dict(self.headers or {})
+
+    def principal_id(self) -> str:
+        """A STABLE, DISTINCT identifier for this principal (R10). Two sessions
+        with the SAME role but different credentials are different principals and
+        must not collapse to one identity/matrix column. Uses the explicit `name`
+        when supplied, else the role plus a short hash of the credentials (so
+        alice@user and bob@user stay distinct); anonymous (no credentials) keeps
+        its role label."""
+        if self.name:
+            return self.name
+        cred = "".join(f"{k.lower()}={v};" for k, v in (self.headers or {}).items()
+                       if (k or "").lower() in ("authorization", "cookie"))
+        if not cred:
+            return self.role or "anonymous"
+        import hashlib
+        return f"{self.role}#{hashlib.sha256(cred.encode()).hexdigest()[:8]}"
 
 
 @dataclass
@@ -144,6 +161,7 @@ class RoleCrawlResult:
     # would otherwise be dropped without ever becoming reviewable. Deduped by
     # response content, so identical bodies across roles collapse to one.
     captured: list = field(default_factory=list)
+    sensitive_file_hits: list = field(default_factory=list)
     errors: list = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -246,6 +264,7 @@ async def crawl_roles(
                     sres = await disc.discover()
                     discovered |= {_template_ids(rt.path) for rt in sres.routes}
                     total_routes += len(sres.routes); total_probes += sres.probes_sent
+                    result.sensitive_file_hits.extend(sres.sensitive_file_hits)
                     if sres.spec_found:
                         result.errors.append(f"[discovery] used spec {sres.spec_found}")
                 except Exception as e:
