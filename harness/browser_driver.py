@@ -46,8 +46,34 @@ class ExecutionObservation:
 
 @runtime_checkable
 class BrowserDriver(Protocol):
-    async def visit(self, url: str, *, wait_ms: int = 1500) -> ExecutionObservation:
+    async def visit(self, url: str, *, wait_ms: int = 1500,
+                    headers: dict | None = None) -> ExecutionObservation:
         ...
+
+
+def _extra_headers_and_cookies(headers: dict | None, url: str):
+    """Split an identity's request headers into Playwright's two channels (R25):
+    non-cookie headers go to extra_http_headers (carries Authorization), and the
+    Cookie header is parsed into add_cookies() entries scoped to the URL host, so
+    an AUTHENTICATED XSS sink is tested as that identity, not anonymously."""
+    headers = headers or {}
+    extra: dict = {}
+    cookie_val = ""
+    for k, v in headers.items():
+        if (k or "").lower() == "cookie":
+            cookie_val = v or ""
+        elif k:
+            extra[k] = v
+    cookies: list[dict] = []
+    if cookie_val:
+        from urllib.parse import urlsplit
+        host = urlsplit(url).hostname or ""
+        for part in cookie_val.split(";"):
+            if "=" in part:
+                name, _, value = part.strip().partition("=")
+                if name and host:
+                    cookies.append({"name": name, "value": value, "domain": host, "path": "/"})
+    return (extra or None), cookies
 
 
 def playwright_available() -> bool:
@@ -102,7 +128,8 @@ class PlaywrightDriver:
         self.launch_timeout_ms = launch_timeout_ms
         self.cdp_endpoint = cdp_endpoint or None
 
-    async def visit(self, url: str, *, wait_ms: int = 1500) -> ExecutionObservation:
+    async def visit(self, url: str, *, wait_ms: int = 1500,
+                    headers: dict | None = None) -> ExecutionObservation:
         obs = ExecutionObservation(url=url)
         try:
             from playwright.async_api import async_playwright
@@ -122,7 +149,16 @@ class PlaywrightDriver:
                     browser = await p.chromium.launch(headless=True)
                 context = None
                 try:
-                    context = await browser.new_context()
+                    # R25: load the page AS the supplied identity (auth headers +
+                    # cookies), not anonymously, so authenticated XSS sinks are
+                    # reachable. None -> anonymous, as before.
+                    _extra, _cookies = _extra_headers_and_cookies(headers, url)
+                    context = await browser.new_context(extra_http_headers=_extra)
+                    if _cookies:
+                        try:
+                            await context.add_cookies(_cookies)
+                        except Exception:
+                            pass
                     page = await context.new_page()
 
                     async def _on_dialog(dialog):

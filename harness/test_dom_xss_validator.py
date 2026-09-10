@@ -22,7 +22,7 @@ class _DomSinkDriver:
     def __init__(self):
         self.visited = []
 
-    async def visit(self, url, *, wait_ms=1200):
+    async def visit(self, url, *, wait_ms=1200, headers=None):
         self.visited.append(url)
         obs = ExecutionObservation(url=url)
         frag = urlsplit(url).fragment
@@ -39,7 +39,7 @@ class _ServerReflectionOnlyDriver:
     def __init__(self):
         self.visited = []
 
-    async def visit(self, url, *, wait_ms=1200):
+    async def visit(self, url, *, wait_ms=1200, headers=None):
         self.visited.append(url)
         obs = ExecutionObservation(url=url)
         m = _NONCE.search(urlsplit(url).query)  # only query, never fragment
@@ -49,7 +49,7 @@ class _ServerReflectionOnlyDriver:
 
 
 class _BrokenDriver:
-    async def visit(self, url, *, wait_ms=1200):
+    async def visit(self, url, *, wait_ms=1200, headers=None):
         return ExecutionObservation(url=url, load_error="Timeout")
 
 

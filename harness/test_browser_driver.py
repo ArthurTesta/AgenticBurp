@@ -116,5 +116,25 @@ class ValidatorThreadingTest(unittest.TestCase):
         self.assertEqual(captured.get("cdp"), "ws://c:3000")
 
 
+class ExtraHeadersAndCookiesTests(unittest.TestCase):
+    """R25: splitting an identity's headers into Playwright's two channels."""
+
+    def test_authorization_goes_to_extra_headers_cookie_to_cookies(self):
+        from browser_driver import _extra_headers_and_cookies
+        extra, cookies = _extra_headers_and_cookies(
+            {"Authorization": "Bearer alice", "Cookie": "session=abc; theme=dark"},
+            "https://shop.test/x")
+        self.assertEqual(extra, {"Authorization": "Bearer alice"})
+        names = {c["name"]: c["value"] for c in cookies}
+        self.assertEqual(names["session"], "abc")
+        self.assertTrue(all(c["domain"] == "shop.test" for c in cookies))
+
+    def test_none_headers_yield_anonymous(self):
+        from browser_driver import _extra_headers_and_cookies
+        extra, cookies = _extra_headers_and_cookies(None, "https://shop.test/x")
+        self.assertIsNone(extra)
+        self.assertEqual(cookies, [])
+
+
 if __name__ == "__main__":
     unittest.main()

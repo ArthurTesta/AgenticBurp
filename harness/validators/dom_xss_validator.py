@@ -103,7 +103,9 @@ class DomXssValidator(Validator):
         for url in urls:
             await global_throttle.acquire()
             try:
-                obs = await driver.visit(url, wait_ms=self.wait_ms)
+                # R25: drive the browser AS the captured identity, not anonymously.
+                obs = await driver.visit(url, wait_ms=self.wait_ms,
+                                         headers=exchange.request_headers)
             except Exception as e:
                 errors.append(f"{url[:120]}: {e.__class__.__name__}")
                 continue

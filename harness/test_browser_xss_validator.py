@@ -20,7 +20,7 @@ class _VulnDriver:
         self.sink = sink
         self.visited = []
 
-    async def visit(self, url, *, wait_ms=1500):
+    async def visit(self, url, *, wait_ms=1500, headers=None):
         self.visited.append(url)
         obs = ExecutionObservation(url=url)
         m = _NONCE.search(url)
@@ -34,13 +34,13 @@ class _SafeDriver:
     def __init__(self):
         self.visited = []
 
-    async def visit(self, url, *, wait_ms=1500):
+    async def visit(self, url, *, wait_ms=1500, headers=None):
         self.visited.append(url)
         return ExecutionObservation(url=url)
 
 
 class _BrokenDriver:
-    async def visit(self, url, *, wait_ms=1500):
+    async def visit(self, url, *, wait_ms=1500, headers=None):
         return ExecutionObservation(url=url, load_error="Timeout")
 
 
@@ -68,6 +68,21 @@ class BrowserXssValidatorTests(unittest.TestCase):
         self.assertTrue(r.confirmed)
         self.assertIn("console", r.evidence)
 
+    def test_forwards_identity_headers_to_browser_R25(self):
+        # R25: the browser must be driven AS the captured identity, not anonymously.
+        class _RecDriver:
+            def __init__(self): self.seen = []
+            async def visit(self, url, *, wait_ms=1500, headers=None):
+                self.seen.append(headers)
+                return ExecutionObservation(url=url)
+        drv = _RecDriver()
+        ex = _exchange()
+        ex.request_headers = {"Authorization": "Bearer alice", "Cookie": "session=abc"}
+        self._validate(drv, exchange=ex)
+        self.assertTrue(drv.seen)
+        self.assertEqual(drv.seen[0].get("Authorization"), "Bearer alice")
+        self.assertEqual(drv.seen[0].get("Cookie"), "session=abc")
+
     def test_confirms_on_dialog_execution(self):
         r = self._validate(_VulnDriver("dialogs"))
         self.assertEqual(r.status, "confirmed")
@@ -81,7 +96,7 @@ class BrowserXssValidatorTests(unittest.TestCase):
     def test_nonce_prevents_false_positive(self):
         # A page that echoes a DIFFERENT nonce-shaped string must not confirm.
         class _WrongNonce:
-            async def visit(self, url, *, wait_ms=1500):
+            async def visit(self, url, *, wait_ms=1500, headers=None):
                 return ExecutionObservation(url=url, console=["HARNESSXSSdeadbeefdeadbeef"])
         r = self._validate(_WrongNonce())
         self.assertEqual(r.status, "not_confirmed")
