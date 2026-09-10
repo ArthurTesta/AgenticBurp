@@ -14,6 +14,8 @@ from orchestrator import (
     shape_precondition_findings,
     confirmation_cache_key,
     coverage_confirmation_finding,
+    second_order_identities,
+    bounded_gather,
     _carries_jwt,
     _jwt_identity,
     _accepts_xml,
@@ -103,6 +105,64 @@ class CoverageConfirmationFindingTests(unittest.TestCase):
 
     def test_none_result_maps_to_none(self):
         self.assertIsNone(coverage_confirmation_finding(None, self._Check(), "http://t/x", "user"))
+
+
+class SecondOrderIdentitiesTests(unittest.TestCase):
+    """R13: second-order plant/read must use authenticated, distinct identities."""
+
+    def test_planter_is_authenticated_not_anonymous(self):
+        roles = [RoleSession("anonymous", {}),
+                 RoleSession("user", {"Authorization": "Bearer alice"})]
+        planter, other = second_order_identities(roles)
+        self.assertEqual(planter.get("Authorization"), "Bearer alice")  # not anonymous
+        self.assertIsNone(other)                                        # only one authed id
+
+    def test_distinct_other_for_cross_identity_read(self):
+        roles = [RoleSession("user", {"Authorization": "Bearer alice"}),
+                 RoleSession("user", {"Authorization": "Bearer bob"})]
+        planter, other = second_order_identities(roles)
+        self.assertEqual(planter.get("Authorization"), "Bearer alice")
+        self.assertEqual(other.get("Authorization"), "Bearer bob")     # a DISTINCT principal
+
+    def test_no_authenticated_roles_yields_empty_planter(self):
+        planter, other = second_order_identities([RoleSession("anonymous", {})])
+        self.assertEqual(planter, {})
+        self.assertIsNone(other)
+
+
+class BoundedGatherTests(unittest.TestCase):
+    """R29: validation fan-out must be concurrency-capped, not unbounded."""
+
+    def test_caps_in_flight_and_preserves_order(self):
+        import asyncio
+        state = {"cur": 0, "peak": 0}
+
+        async def job(i):
+            state["cur"] += 1
+            state["peak"] = max(state["peak"], state["cur"])
+            await asyncio.sleep(0.01)
+            state["cur"] -= 1
+            return i
+
+        async def run():
+            return await bounded_gather([job(i) for i in range(20)], limit=4)
+
+        results = asyncio.run(run())
+        self.assertEqual(results, list(range(20)))   # order preserved
+        self.assertLessEqual(state["peak"], 4)       # never more than 4 at once
+
+    def test_exceptions_returned_not_raised(self):
+        import asyncio
+
+        async def boom():
+            raise ValueError("x")
+
+        async def ok():
+            return 1
+
+        out = asyncio.run(bounded_gather([boom(), ok()], limit=2))
+        self.assertIsInstance(out[0], ValueError)
+        self.assertEqual(out[1], 1)
 
 
 class CarriesJwtTests(unittest.TestCase):
