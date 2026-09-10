@@ -1,5 +1,7 @@
 __pycache__/
 *.pyc
+.pytest_cache/
+.review-deps/
 
 # Local-only config overrides, never committed (SESSION_4_PLAN.md T0.1)
 config.local.yaml
