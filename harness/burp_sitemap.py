@@ -109,8 +109,10 @@ def _split_message(raw: str) -> tuple[str, dict, str]:
     """Split a raw HTTP message into (start_line, headers, body).
 
     Handles CRLF and bare-LF separators. The header/body boundary is the first
-    blank line. Duplicate headers collapse to the last value (adequate for the
-    replay/analysis the harness does; it never needs multi-valued header sets)."""
+    blank line. Repeated headers are PRESERVED (weakness #9): Set-Cookie keeps each
+    cookie separate (newline-joined, since commas occur inside Expires dates) so a
+    multi-cookie session isn't silently reduced to one; other repeated headers are
+    combined per RFC 7230 (comma-joined)."""
     if not raw:
         return "", {}, ""
     # Normalise line endings so a bare-LF export parses the same as CRLF.
@@ -122,7 +124,13 @@ def _split_message(raw: str) -> tuple[str, dict, str]:
     for line in lines[1:]:
         if ":" in line:
             name, _, value = line.partition(":")
-            headers[name.strip()] = value.strip()
+            name = name.strip()
+            value = value.strip()
+            if name in headers:
+                joiner = "\n" if name.lower() == "set-cookie" else ", "
+                headers[name] = headers[name] + joiner + value
+            else:
+                headers[name] = value
     return start_line, headers, body
 
 

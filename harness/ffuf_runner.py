@@ -37,6 +37,9 @@ class FfufResult:
     raw_stderr: str = ""
     returncode: int = -1
     error: str | None = None
+    used_fallback: bool = False   # #10: the strict-JSON parse found nothing and we
+                                  # fell back to the line parser -- surfaced so a
+                                  # caller never silently trusts scavenged output.
 
 
 def ffuf_available(image: str = DEFAULT_IMAGE) -> tuple[bool, str]:
@@ -93,12 +96,28 @@ def parse_json_lines(stdout: str) -> list[Route]:
     return routes
 
 
+def _looks_like_fuzz_value(line: str) -> bool:
+    """A real ffuf -s line is a SINGLE FUZZ path token. Reject anything that looks
+    like diagnostic/log output (#10) -- whitespace, a URL scheme, ANSI/brackets, an
+    over-long line -- so arbitrary stderr-on-stdout noise never becomes a bogus path."""
+    if not line or len(line) > 256:
+        return False
+    if any(c.isspace() for c in line):          # a path token has no spaces/tabs
+        return False
+    if "://" in line or line.startswith(("[", "*", "-", "#", "{", "}")):
+        return False
+    # printable path-ish characters only
+    return all(32 < ord(c) < 127 for c in line)
+
+
 def parse_silent_lines(stdout: str) -> list[Route]:
-    """Fallback parser for -s (silent, no -json) output: one FUZZ value per line."""
+    """STRICT fallback parser for -s (silent, no -json) output: one FUZZ value per
+    line, but only lines that actually look like a FUZZ path token (#10). Arbitrary
+    non-path output is dropped rather than turned into a fabricated route."""
     routes: list[Route] = []
     for line in stdout.splitlines():
         line = line.strip()
-        if not line:
+        if not _looks_like_fuzz_value(line):
             continue
         path = "/" + line.lstrip("/")
         routes.append(Route(path=path, source="ffuf"))
@@ -128,6 +147,7 @@ def run_sync(target_url: str, *, image: str = DEFAULT_IMAGE,
     result.routes = parse_json_lines(stdout)
     if not result.routes:
         result.routes = parse_silent_lines(stdout)
+        result.used_fallback = bool(result.routes)   # #10: surface fallback use
     return result
 
 

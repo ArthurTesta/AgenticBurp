@@ -72,5 +72,28 @@ class RunTests(unittest.TestCase):
         self.assertIn("harness/sqlmap:1.10.9", captured["cmd"])
 
 
+class ContainerCleanupTests(unittest.TestCase):
+    """#11: a timed-out container is verifiably force-removed, not just abandoned."""
+
+    def test_timeout_force_removes_named_container(self):
+        runs = []
+
+        def fake_run(cmd, **kw):
+            runs.append(cmd)
+            if cmd[:3] == [tr.DOCKER, "run", "--rm"] or (len(cmd) > 1 and cmd[1] == "run"):
+                raise subprocess.TimeoutExpired(cmd, kw.get("timeout"))
+            class _R: returncode = 0; stdout = ""; stderr = ""
+            return _R()
+
+        with patch("subprocess.run", side_effect=fake_run):
+            with self.assertRaises(subprocess.TimeoutExpired):
+                tr.run("img", ["-x"], timeout=1)
+        # the run cmd carried a unique --name, and a `docker rm -f <name>` followed
+        run_cmd = runs[0]
+        self.assertIn("--name", run_cmd)
+        name = run_cmd[run_cmd.index("--name") + 1]
+        self.assertTrue(any(c[:2] == [tr.DOCKER, "rm"] and name in c for c in runs[1:]))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -211,5 +211,27 @@ class NegativeControlTests(unittest.TestCase):
         self.assertIsNotNone(result.error)
 
 
+class StrictSilentParseTests(unittest.TestCase):
+    """#10: the silent fallback must not turn arbitrary diagnostic output into paths."""
+
+    def test_diagnostic_lines_are_not_fabricated_as_paths(self):
+        noise = ("[ERR] connection reset\n"
+                 ":: Progress: [1000/1000] :: Job [1/1]\n"
+                 "https://evil.example/leak\n"
+                 "admin panel here\n"       # has a space -> not a single token
+                 "api/real-endpoint\n")     # the only legitimate FUZZ value
+        routes = ffuf_runner.parse_silent_lines(noise)
+        paths = [r.path for r in routes]
+        self.assertEqual(paths, ["/api/real-endpoint"])
+
+    def test_used_fallback_flag_surfaced(self):
+        import tool_runner
+        from unittest.mock import patch
+        with patch.object(tool_runner, "run", return_value=(0, "api/x\n", "")):
+            result = ffuf_runner.run_sync("http://t.test")
+        self.assertTrue(result.used_fallback)
+        self.assertEqual([r.path for r in result.routes], ["/api/x"])
+
+
 if __name__ == "__main__":
     unittest.main()

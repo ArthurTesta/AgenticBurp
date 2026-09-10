@@ -55,6 +55,18 @@ class ParseTests(unittest.TestCase):
         self.assertIn("next=/dashboard", it.path)
         self.assertEqual(it.response_body, '{"id":1}')
 
+    def test_multiple_set_cookie_headers_preserved(self):
+        # weakness #9: repeated Set-Cookie headers must not collapse to one.
+        _, headers, _ = burp_sitemap._split_message(
+            "HTTP/1.1 200 OK\r\nSet-Cookie: a=1; Path=/\r\nSet-Cookie: b=2; HttpOnly\r\n\r\nbody")
+        self.assertIn("a=1", headers["Set-Cookie"])
+        self.assertIn("b=2", headers["Set-Cookie"])   # both cookies survive
+
+    def test_repeated_non_cookie_header_combined(self):
+        _, headers, _ = burp_sitemap._split_message(
+            "HTTP/1.1 200 OK\r\nVia: 1.1 a\r\nVia: 1.1 b\r\n\r\n")
+        self.assertEqual(headers["Via"], "1.1 a, 1.1 b")
+
     def test_plaintext_request_response(self):
         req = "POST /api/login HTTP/1.1\nHost: target.test\n\nuser=alice"
         resp = "HTTP/1.1 401 Unauthorized\n\n"

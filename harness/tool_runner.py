@@ -87,11 +87,31 @@ def docker_cmd(image: str, args: list[str], *, add_host: bool = True,
     return cmd
 
 
+def _force_remove(name: str) -> None:
+    """Force-stop and remove a named container (#11). `docker run --rm` only cleans
+    up on the container's OWN exit; if we time out and kill the docker CLI client,
+    the container can keep running. `docker rm -f` verifiably terminates it."""
+    try:
+        subprocess.run([DOCKER, "rm", "-f", name], capture_output=True, text=True, timeout=15)
+    except Exception:
+        pass
+
+
 def run(image: str, args: list[str], *, timeout: float = 120.0,
         add_host: bool = True, extra: list[str] | None = None) -> tuple[int, str, str]:
     """Run `image` with `args` in a throwaway container. Returns
     (returncode, stdout, stderr). Raises subprocess.TimeoutExpired on timeout so
-    the caller can treat a hung tool distinctly from a clean non-zero exit."""
-    cmd = docker_cmd(image, args, add_host=add_host, extra=extra)
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-    return r.returncode, (r.stdout or ""), (r.stderr or "")
+    the caller can treat a hung tool distinctly from a clean non-zero exit.
+
+    The container is given a unique `--name` so that on TIMEOUT we can verifiably
+    terminate it (#11) -- killing the CLI client alone does not stop the container."""
+    import uuid
+    name = f"harness_{uuid.uuid4().hex[:12]}"
+    cmd = docker_cmd(image, args, add_host=add_host,
+                     extra=["--name", name] + list(extra or []))
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return r.returncode, (r.stdout or ""), (r.stderr or "")
+    except subprocess.TimeoutExpired:
+        _force_remove(name)   # the hung workload must not outlive its client
+        raise
