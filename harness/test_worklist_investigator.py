@@ -143,6 +143,34 @@ class InvestigateTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(second, [])   # nothing re-tested
         self.assertEqual(out, [])
 
+    async def test_validated_endpoint_still_runs_preconditions_R21(self):
+        # R21: a validated endpoint is not skipped wholesale -- the agent re-probe
+        # for the already-confirmed class is skipped, but shape-driven precondition
+        # legs (other classes) still run.
+        st = _state_with([OBJ])
+        await wi.investigate_worklist(lambda *a, **k: _async(_found_idor()), st, "http://t", ROLES)
+        agent_calls, precond_calls = [], []
+        async def probe(exchange, hypothesis, specialty, step_budget):
+            agent_calls.append(specialty); return _nothing()
+        async def precond(node, exchange):
+            precond_calls.append(node["path"]); return []
+        await wi.investigate_worklist(probe, st, "http://t", ROLES, precondition_fn=precond)
+        self.assertEqual(agent_calls, [])                      # idor already confirmed -> no re-probe
+        self.assertIn("/api/tickets/{id}", precond_calls)      # but preconditions still run
+
+    async def test_precondition_budget_counts_attempts_R23(self):
+        # R23: max_precondition_legs bounds ATTEMPTS, not confirmations -- a leg that
+        # returns nothing still consumes the budget.
+        eps = [{"method": "GET", "path": f"/api/e{i}", "by_role": {"user": 200},
+                "reachable_roles": ["user"], "object_scoped": False} for i in range(10)]
+        st = _state_with(eps)
+        attempts = {"n": 0}
+        async def precond(node, exchange):
+            attempts["n"] += 1; return []                      # never confirms
+        await wi.investigate_worklist(lambda *a, **k: _async(_nothing()), st, "http://t", ROLES,
+                                      precondition_fn=precond, max_precondition_legs=3, max_nodes=0)
+        self.assertEqual(attempts["n"], 3)                     # bounded by attempts, not confirmations
+
     async def test_one_node_failure_does_not_sink_the_sweep(self):
         st = _state_with([OBJ, ADMIN])
         async def probe(exchange, hypothesis, specialty, step_budget):

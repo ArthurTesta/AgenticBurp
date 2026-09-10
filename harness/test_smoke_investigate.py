@@ -224,6 +224,21 @@ class InvestigateProactiveJwtSmokeTest(unittest.TestCase):
         result = self._run(vulnerable=False, drive=True, max_nodes=0)
         self.assertEqual(self._worklist_confirmed_jwt(result), [])
 
+    def test_operational_failure_is_surfaced_as_degraded(self):
+        # R30: a phase that blows up is caught (never sinks the run) but must be
+        # SURFACED -- the result declares degraded + records the error, rather than
+        # looking like a clean run that silently skipped coverage.
+        import coverage_tracker
+        with patch.object(coverage_tracker, "build_coverage", side_effect=RuntimeError("boom")):
+            result = self._run(vulnerable=True)
+        self.assertTrue(result.get("degraded"))
+        self.assertTrue(any(e.get("phase") == "coverage_build" for e in result.get("errors", [])))
+
+    def test_clean_run_is_not_degraded(self):
+        result = self._run(vulnerable=True)
+        self.assertFalse(result.get("degraded"))
+        self.assertEqual(result.get("errors"), [])
+
     def test_negative_control_secure_server_yields_no_confirmation(self):
         # A server that actually verifies signatures must NOT be confirmed -- proving
         # the test guards CONFIRMATION, not merely that the leg executed.

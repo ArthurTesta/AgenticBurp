@@ -1107,6 +1107,12 @@ class Orchestrator:
             base_url, roles, allowed_hosts=self.allowed_hosts,
             discovery_max_probes=discovery_max_probes)
 
+        # R30: operational failures in the additive phases below are caught so one
+        # broken phase can't sink the run -- but they must not vanish silently. Each
+        # is recorded here and surfaced in the result as `errors` + `degraded`, so a
+        # run that skipped a phase is declared incomplete rather than looking clean.
+        _errors: list[dict] = []
+
         # Phase 0.1: promote every substantive 2xx encountered during discovery
         # into full content-level review before prioritising/iterating. A body
         # that is correctly access-scoped but itself leaks otherwise never
@@ -1148,6 +1154,7 @@ class Orchestrator:
                 await review_captured_exchanges(self, state, feature_caps)
             except Exception as e:  # feature crawl is additive -- never sink the run
                 log.warning("investigate_engagement: feature crawl failed: %s", e)
+                _errors.append({"phase": "feature_crawl", "error": f"{type(e).__name__}: {e}"})
 
         # Universal header audit: run CORS, CSP, verbose-error validators
         # against EVERY captured exchange from discovery + feature_crawl.
@@ -1161,6 +1168,7 @@ class Orchestrator:
             await universal_header_audit(self, state, _all_captured)
         except Exception as e:
             log.warning("investigate_engagement: universal header audit failed: %s", e)
+            _errors.append({"phase": "universal_header_audit", "error": f"{type(e).__name__}: {e}"})
 
         async def _probe(exchange, hypothesis, specialty, sb):
             return await self.run_active_probe(exchange, hypothesis, specialty, step_budget=sb)
@@ -1560,6 +1568,7 @@ class Orchestrator:
                         state.ingest_findings(cf["url"], "GET", [cf])
         except Exception as e:  # auto-confirm is additive -- never sink the run
             log.warning("investigate_engagement: second-order auto-confirm failed: %s", e)
+            _errors.append({"phase": "second_order_auto_confirm", "error": f"{type(e).__name__}: {e}"})
 
         # Flag-only hand-off: an UNCONFIRMED finding whose class has no automated
         # leg (and isn't business-logic, which has its own richer hand-off) is
@@ -1645,6 +1654,7 @@ class Orchestrator:
                                                            investigated_keys=investigated_keys)
         except Exception as e:  # coverage is a report layer -- never sink the run
             log.warning("investigate_engagement: coverage build failed: %s", e)
+            _errors.append({"phase": "coverage_build", "error": f"{type(e).__name__}: {e}"})
 
         return {
             "summary": state.summary(),
@@ -1659,6 +1669,10 @@ class Orchestrator:
             "auth_bypass_candidates": rc.auth_bypass_candidates,
             "idor_candidates": rc.idor_candidates,
             "idor_findings": rc.idor_findings,
+            # R30: operational failures are surfaced, not swallowed -- a run that
+            # skipped a phase is declared degraded rather than presented as clean.
+            "errors": _errors,
+            "degraded": bool(_errors),
         }
 
     async def run_retry_agents(

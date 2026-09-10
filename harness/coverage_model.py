@@ -292,7 +292,10 @@ CHECK_CATALOG: tuple[Check, ...] = (
     Check("WSTG-INPV-14", "HTTP header injection / CRLF", Phase.ENDPOINT,
           "header_injection", _accepts_input, "header_injection",
           "Inject CRLF sequences in header-reflected parameters"),
-    Check("WSTG-SESS-09", "CSRF", Phase.ENDPOINT,
+    # WSTG-SESS-05 is the current WSTG id for CSRF (was mislabelled SESS-09 --
+    # weakness #7). Confirmation is "manual": the csrf leg's autonomous verdict was
+    # retired to an observation (ORACLE_RETIREMENTS.md), so CSRF needs a human/PoC.
+    Check("WSTG-SESS-05", "CSRF", Phase.ENDPOINT,
           "csrf", _accepts_body, "manual",
           "Test state-changing requests for anti-CSRF protections",
           "Cross-site request forgery (CSRF)"),

@@ -64,6 +64,30 @@ def _derive_probe(node: dict) -> tuple[str, str] | None:
     return None
 
 
+# Keywords a derived specialty's confirmation would carry, so R21 can tell whether
+# THIS node's derived check is already proven (skip only the agent re-probe) versus
+# the endpoint merely holding some OTHER confirmed class.
+_SPECIALTY_KEYWORDS = {
+    "idor": ("idor", "insecure direct", "object-level", "object level", "bola",
+             "broken access", "access_control", "access control"),
+    "auth": ("auth", "bfla", "function-level", "function level", "privilege",
+             "missing authorization", "missing_authorization"),
+}
+
+
+def _derived_class_confirmed(node: dict, specialty: str) -> bool:
+    """True iff the node already has a CONFIRMED finding of the derived specialty's
+    class (R21) -- so we skip only the redundant agent re-probe for that class, not
+    all further work on the endpoint."""
+    kws = _SPECIALTY_KEYWORDS.get(specialty, (specialty,))
+    for f in node.get("findings") or []:
+        if f.get("confirmed"):
+            cls = (f.get("vulnerability_class") or "").lower()
+            if any(k in cls for k in kws):
+                return True
+    return False
+
+
 def _seed_exchange(base_url: str, node: dict, headers: dict, id_fill: str,
                    template: dict | None = None) -> HttpExchange:
     """Build the probe exchange for a node. When a captured request TEMPLATE exists
@@ -151,10 +175,16 @@ async def investigate_worklist(
     precondition_run = 0
 
     for node in state.worklist(50):
-        if node.get("status") == "validated":
-            continue  # already proven -- never re-test
         derived = _derive_probe(node)
-        do_agent = derived is not None and investigated < max_nodes
+        # R21: completion belongs to an (endpoint, check) case, not the whole
+        # endpoint -- a "validated" endpoint may still hold UNRELATED vulnerabilities.
+        # So we no longer skip a validated endpoint wholesale; we skip only the
+        # redundant AGENT re-probe when THIS node's derived class is already confirmed
+        # here. Shape-driven precondition legs (other classes) still run, and because
+        # validated endpoints sink in the fused-score ordering they only draw leftover
+        # budget.
+        derived_confirmed = derived is not None and _derived_class_confirmed(node, derived[0])
+        do_agent = derived is not None and not derived_confirmed and investigated < max_nodes
         do_precond = precondition_fn is not None and precondition_run < max_precondition_legs
         if not do_agent and not do_precond:
             continue  # no agent hypothesis AND no shape-driven leg to run -- skip
@@ -171,6 +201,11 @@ async def investigate_worklist(
         #    for a node whose shape warrants nothing (returns [] with no network).
         precond_findings: list[dict] = []
         if do_precond:
+            # R23: the precondition budget bounds ATTEMPTS, not confirmations. Count
+            # the attempt here (a leg was run on this node) regardless of whether it
+            # confirmed -- otherwise max_precondition_legs was a confirmation ceiling
+            # that never bit on the far-more-common no-finding path.
+            precondition_run += 1
             try:
                 precond_findings = await precondition_fn(node, exchange) or []
             except Exception as e:  # a leg failure must not sink the sweep
@@ -178,7 +213,6 @@ async def investigate_worklist(
                           node.get("method"), node.get("path"), e)
                 precond_findings = []
             if precond_findings:
-                precondition_run += 1
                 for f in precond_findings:
                     f.setdefault("url", exchange.url)
                 node_findings.extend(precond_findings)
@@ -228,6 +262,6 @@ async def investigate_worklist(
             "stop_reason": agent_stop,
         })
 
-    log.info("investigate_worklist: %s -- investigated %d nodes, %d proactive legs confirmed",
+    log.info("investigate_worklist: %s -- investigated %d nodes, %d proactive legs attempted",
              base_url, investigated, precondition_run)
     return outcomes

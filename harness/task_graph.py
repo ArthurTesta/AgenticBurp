@@ -47,19 +47,24 @@ class Task:
     status: str = READY
     depends_on: list = field(default_factory=list)  # task ids that must be DONE first
     needs: str = ""      # human-readable prerequisite when blocked (e.g. "admin credentials")
+    # A dependency that is SKIPPED satisfies its dependents ONLY when the SKIPPED
+    # task was OPTIONAL (weakness #14). Skipping a REQUIRED capability (obtain a
+    # credential, confirm an authz bypass) must NOT silently unlock what needs it.
+    optional: bool = False
     source: str = ""     # the finding/url that spawned it
     meta: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {"id": self.id, "kind": self.kind, "target": self.target, "reason": self.reason,
                 "status": self.status, "depends_on": self.depends_on, "needs": self.needs,
-                "source": self.source, "meta": self.meta}
+                "optional": self.optional, "source": self.source, "meta": self.meta}
 
     @classmethod
     def from_dict(cls, d: dict) -> "Task":
         return cls(id=d["id"], kind=d.get("kind", ""), target=d.get("target", ""),
                    reason=d.get("reason", ""), status=d.get("status", READY),
                    depends_on=list(d.get("depends_on", [])), needs=d.get("needs", ""),
+                   optional=bool(d.get("optional", False)),
                    source=d.get("source", ""), meta=d.get("meta", {}) or {})
 
 
@@ -72,11 +77,12 @@ class TaskGraph:
     tasks: dict = field(default_factory=dict)   # id -> Task
 
     def add(self, kind: str, target: str, *, reason: str = "", depends_on: list | None = None,
-            needs: str = "", source: str = "", meta: dict | None = None) -> Task:
+            needs: str = "", optional: bool = False, source: str = "", meta: dict | None = None) -> Task:
         """Add a task (idempotent by id = kind:target). If it already exists it is
         returned unchanged unless it was DONE/SKIPPED, in which case a re-add is
         ignored -- a finished task is not silently resurrected. New tasks start
-        BLOCKED when they have unmet dependencies, READY otherwise."""
+        BLOCKED when they have unmet dependencies, READY otherwise. `optional`
+        marks a task whose SKIP still satisfies dependents (weakness #14)."""
         tid = make_id(kind, target)
         existing = self.tasks.get(tid)
         if existing is not None:
@@ -84,16 +90,26 @@ class TaskGraph:
         deps = list(depends_on or [])
         status = BLOCKED if any(self._pending(d) for d in deps) or needs else READY
         t = Task(id=tid, kind=kind, target=target, reason=reason, status=status,
-                 depends_on=deps, needs=needs, source=source, meta=meta or {})
+                 depends_on=deps, needs=needs, optional=optional, source=source, meta=meta or {})
         self.tasks[tid] = t
         return t
 
+    def _satisfied(self, d: "Task | None") -> bool:
+        """A dependency satisfies its dependents only when it actually SUCCEEDED
+        (DONE), or was SKIPPED *and* declared OPTIONAL. A missing/FAILED/pending
+        dependency, or a SKIPPED REQUIRED one, does not -- you can't test what you
+        never managed to unlock, and skipping a required capability is not success
+        (weakness #14)."""
+        if d is None:
+            return False
+        if d.status == DONE:
+            return True
+        if d.status == SKIPPED:
+            return bool(getattr(d, "optional", False))
+        return False
+
     def _pending(self, dep_id: str) -> bool:
-        """A dependency is still 'pending' (blocks its dependents) unless it has
-        actually SUCCEEDED. A missing or FAILED dependency keeps dependents
-        blocked -- you can't test what you never managed to unlock."""
-        d = self.tasks.get(dep_id)
-        return d is None or d.status not in _SATISFYING
+        return not self._satisfied(self.tasks.get(dep_id))
 
     def mark(self, task_id: str, status: str) -> None:
         t = self.tasks.get(task_id)

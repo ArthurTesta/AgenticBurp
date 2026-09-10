@@ -63,19 +63,31 @@ def _canon_finding(f: dict) -> dict:
 
 def _chain_input(findings: list[dict]) -> list[dict]:
     """Project findings to the shape chaining.detect expects, dropping any that
-    can't be placed on the surface (no url -> nothing to chain to)."""
+    can't be placed on the surface (no url -> nothing to chain to).
+
+    PROVENANCE is preserved (R20): confirmed / basis / evidence / identity / id are
+    carried through so chaining.detect can tell a VERIFIED input from a SPECULATIVE
+    one (attribution.chain_input_speculative reads confirmed+basis) and so a chain
+    can reference which findings it rests on. Dropping these silently made every
+    chain look equally trustworthy regardless of whether its inputs were proven."""
     out: list[dict] = []
     for f in findings:
         url = f.get("url")
         if not url:
             continue
-        out.append({
+        proj = {
             "url": url,
             "vulnerability_class": _canon_class(f.get("vulnerability_class", "")),
             "severity": f.get("severity", "info"),
             "confidence": f.get("confidence", 0.0),
             "summary": f.get("summary", "") or "",
-        })
+            "confirmed": bool(f.get("confirmed", False)),
+            "basis": f.get("basis", ""),
+        }
+        for k in ("evidence", "identity", "id", "confirmation_method"):
+            if f.get(k):
+                proj[k] = f[k]
+        out.append(proj)
     return out
 
 

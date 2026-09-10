@@ -77,5 +77,26 @@ class EscalationEdgeTests(unittest.TestCase):
         self.assertTrue(any(i["role"] == "derived" for i in st.identities))
 
 
+class ChainInputProvenanceTests(unittest.TestCase):
+    """R20: _chain_input must preserve confirmed/basis/evidence so chaining.detect
+    can distinguish a verified input from a speculative one (previously dropped,
+    which defeated the Phase-3.5 speculative-chain tagging)."""
+
+    def test_provenance_survives_projection(self):
+        import attribution
+        proj = chain_linker._chain_input([
+            {"url": "http://t/a", "vulnerability_class": "idor", "confirmed": True,
+             "basis": "derived", "evidence": "proof", "identity": "user"},
+            {"url": "http://t/b", "vulnerability_class": "sqli", "confirmed": False,
+             "basis": "assumed"},
+        ])
+        self.assertTrue(proj[0]["confirmed"])
+        self.assertEqual(proj[0]["evidence"], "proof")
+        self.assertEqual(proj[0]["identity"], "user")
+        # a confirmed input is never speculative; an unconfirmed assumed one is
+        self.assertFalse(attribution.chain_input_speculative(proj[0]))
+        self.assertTrue(attribution.chain_input_speculative(proj[1]))
+
+
 if __name__ == "__main__":
     unittest.main()

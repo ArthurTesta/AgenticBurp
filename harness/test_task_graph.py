@@ -75,6 +75,26 @@ class TaskGraphTests(unittest.TestCase):
         self.assertEqual(len(g2.tasks), 2)
         self.assertEqual({t.target for t in g2.ready()}, {"admin"})  # cred DONE, admin ready
 
+    def test_skipped_required_dependency_keeps_dependent_blocked(self):
+        # weakness #14: skipping a REQUIRED prerequisite must NOT unlock dependents.
+        g = TaskGraph()
+        a = g.add("obtain", "admin-session")                     # required, not optional
+        g.add("confirm", "admin-api", depends_on=[a.id])
+        g.mark(a.id, SKIPPED)
+        self.assertEqual(g.tasks["confirm:admin-api"].status, BLOCKED)
+
+    def test_skipped_optional_dependency_unlocks_dependent(self):
+        g = TaskGraph()
+        a = g.add("recon", "banner", optional=True)              # optional prerequisite
+        g.add("analyze", "x", depends_on=[a.id])
+        g.mark(a.id, SKIPPED)
+        self.assertEqual(g.tasks["analyze:x"].status, READY)
+
+    def test_optional_round_trips(self):
+        from task_graph import Task
+        t = Task(id="recon:x", kind="recon", target="x", optional=True)
+        self.assertTrue(Task.from_dict(t.to_dict()).optional)
+
 
 if __name__ == "__main__":
     unittest.main()
