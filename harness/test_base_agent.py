@@ -104,6 +104,23 @@ class UserPromptRedactionTests(unittest.TestCase):
         self.assertNotIn("abc123xyz", prompt)
         self.assertIn("Authorization", prompt)  # the fact of the header is still visible
 
+    def test_high_signal_sink_beyond_prefix_is_surfaced_R13(self):
+        # weakness #13: a truncated body must still surface an HTML sink / error
+        # that lives BEYOND the visible prefix, not silently drop it.
+        agent = DummyAgent(ollama=None, model="m")
+        body = ("A" * 1200) + "<script>document.cookie</script>" + ("B" * 200)
+        exchange = HttpExchange(url="https://a.test/x", method="GET",
+                                request_headers={}, response_headers={}, response_body=body)
+        prompt = agent._user_prompt(exchange, max_body_chars=500)
+        self.assertIn("truncated region", prompt)
+        self.assertIn("<script>document.cookie", prompt)  # the sink survived truncation
+
+    def test_high_signal_slice_helper(self):
+        from agents.base_agent import _high_signal_slice
+        body = ("x" * 1000) + "Traceback (most recent call last): boom"
+        self.assertIn("Traceback", _high_signal_slice(body, start=500))
+        self.assertEqual(_high_signal_slice("nothing interesting here", start=0), "")
+
 
 class PromptVersionTests(unittest.TestCase):
     def test_prompt_version_is_stable_hash_of_system_prompt(self):

@@ -26,6 +26,28 @@ from prompt_validator import ValidationConfig
 _PROMPT_OVERHEAD_LINES = 60
 _MAX_BODY_LINES = max(10, (ValidationConfig().max_user_prompt_lines - _PROMPT_OVERHEAD_LINES) // 2)
 
+import re as _re
+# Weakness #13: when a body is truncated to a prefix, high-signal security content
+# (an HTML XSS sink, a stack trace, a SQL error) that lives BEYOND the prefix would
+# be silently lost. These markers let trunc() surface a small excerpt around the
+# first such marker in the truncated region so the agent still sees the evidence.
+_SIGNAL_RE = _re.compile(
+    r"(<script|onerror=|onload=|onmouseover=|javascript:|<iframe|<svg|document\.cookie|"
+    r"Traceback \(most recent|Exception|stack trace|SQLSTATE|SQL syntax|ORA-\d|"
+    r"fatal error|Warning:|Notice:|<b>Fatal|DEBUG = True|Werkzeug|at [\w.$]+\([\w.]+:\d+\))",
+    _re.IGNORECASE)
+
+
+def _high_signal_slice(body: str, start: int, window: int = 400) -> str:
+    """A short excerpt around the first high-signal marker at/after `start`, or ""."""
+    if not body or start >= len(body):
+        return ""
+    m = _SIGNAL_RE.search(body, start)
+    if not m:
+        return ""
+    a = max(start, m.start() - window // 2)
+    return body[a:a + window]
+
 
 # Shared instructions every specialist agent gets, on top of its own
 # vulnerability-specific system prompt. This is the "process transfers"
@@ -137,6 +159,7 @@ class BaseAgent(ABC):
             # the validator's 200-line cap and failed EVERY dispatched
             # agent's prompt validation for that exchange, silently
             # producing zero findings for a real, live vulnerability.
+            orig = s
             char_truncated = len(s) > max_body_chars
             if char_truncated:
                 s = s[:max_body_chars]
@@ -153,7 +176,13 @@ class BaseAgent(ABC):
                 notes.append("truncated by character limit")
             if line_truncated:
                 notes.append(f"truncated, {len(lines) - _MAX_BODY_LINES} more lines")
-            return s + "\n...[" + "; ".join(notes) + "]"
+            out = s + "\n...[" + "; ".join(notes) + "]"
+            # #13: don't let a high-signal sink/error beyond the prefix vanish.
+            if char_truncated:
+                excerpt = _high_signal_slice(orig, start=max_body_chars)
+                if excerpt and excerpt not in s:
+                    out += "\n...[relevant excerpt from the truncated region]:\n" + excerpt
+            return out
 
         headers_req = "\n".join(f"{k}: {v}" for k, v in security.redact_headers(exchange.request_headers).items())
         headers_resp = "\n".join(f"{k}: {v}" for k, v in security.redact_headers(exchange.response_headers).items())
