@@ -11,7 +11,10 @@ Design principles:
 3. Fast: all checks are O(1) or O(n) where n is small (number of agents)
 4. Extensible: easy to add new patterns without modifying core logic
 
-Token savings: 60-80% reduction in coordinator calls for typical web applications.
+Token savings: skips the coordinator LLM call whenever a request matches a
+deterministic pattern below; the magnitude depends on how many requests match and
+is not a fixed figure (no maintained benchmark backs a specific percentage --
+review weakness #19).
 
 Pattern categories:
 - URL/path patterns (e.g., /api/graphql, /admin, /login)

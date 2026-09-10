@@ -14,8 +14,10 @@ Design principles:
 4. Metrics for cache hit/miss rates
 5. Optional bypass for testing/debugging
 
-Token savings: Typically 30-50% reduction in LLM calls for real-world
-spidering workflows where the same endpoints are hit multiple times.
+Token savings: eliminates repeat LLM calls for exchanges whose cache key
+(see is_stale / the manifest) is unchanged -- the magnitude depends entirely on
+how much a given workflow re-hits identical endpoints and is not a fixed figure
+(no maintained benchmark backs a specific percentage -- review weakness #19).
 """
 from __future__ import annotations
 import asyncio
