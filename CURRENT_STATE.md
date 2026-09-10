@@ -20,9 +20,12 @@ the suite result below remains the previous session's reported result.
 
 **2026-09-10 T00 implementation:** Added a versioned, redacted run manifest and
 append-only lifecycle ledger to the existing investigation job API. Focused suite:
-9 tests OK. Full discovery ran 1,489 tests in 270.550s but is **not green** in the
-available bundled runtime: `pytest` and `mitmproxy` were missing at collection time
-(2 errors, 2 skips). See the review directory's `EXECUTION_LOG.md`; T01–T10 remain open.
+9 tests OK. The missing local `pytest` and `mitmproxy` dependencies were subsequently
+installed from their existing pins: the pytest-native plugin suite is 26/26 green and
+full stdlib discovery is **1,509 tests OK, 2 skipped**, 272.821s. The optional proxy's
+`typing-extensions` metadata conflicts with the bundled Pydantic stack, so verification
+uses the bundled core runtime first and appends `.review-deps`; details are in the review
+directory's `EXECUTION_LOG.md`. T01–T10 remain open.
 
 Branch `WorkingSunday`, **HEAD `f36d454`** (+ any later doc commit). Suite green
 (`cd harness && python -m unittest discover -p "test_*.py"`) — **1505 tests OK**,

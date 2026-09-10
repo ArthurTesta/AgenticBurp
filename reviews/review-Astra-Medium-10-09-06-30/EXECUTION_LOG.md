@@ -21,3 +21,15 @@
   precision, and recall remain explicitly unavailable unless supplied by an observing pipeline.
   T01–T10 remain open.
 
+### Dependency-gate repair (same T00 baseline)
+
+- Installed the already-declared pins `pytest==9.1.1` and `mitmproxy==12.2.3` into the
+  existing untracked `.review-deps` test environment. No dependency declaration changed.
+- Pip reported a metadata conflict: mitmproxy 12.2.3 caps `typing-extensions` at 4.14.0,
+  while the bundled Pydantic stack requires a newer release. Verification therefore keeps
+  the bundled core runtime first on `sys.path` and appends the optional proxy/test environment.
+- `pytest harness/test_plugin_system.py -q` through the configured runtime — exit 0,
+  **26 passed in 0.35s**.
+- Full stdlib `test_*.py` discovery through the configured runtime — exit 0,
+  **1,509 tests passed, 2 skipped, in 272.821s**. The previously missing mitmproxy module
+  contributed 22 executed tests; the pytest-native plugin suite is recorded separately above.
