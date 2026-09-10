@@ -160,6 +160,20 @@ def _remediation_for(vulnerability_class: str) -> str:
     return _REMEDIATION_HINTS.get(vulnerability_class, _DEFAULT_REMEDIATION)
 
 
+# Weakness #5: a finding's suggested_test sometimes carries REMEDIATION advice
+# ("rotate the signing key"), which must not be rendered as "Steps to reproduce".
+_REMEDIATION_LEADS = (
+    "rotate", "remediate", "fix ", "patch", "upgrade", "update ", "disable", "enable",
+    "use ", "implement", "configure", "restrict", "sanitize", "sanitise", "escape",
+    "validate ", "add a ", "add an ", "do not", "avoid ", "never ", "always ", "ensure ",
+)
+
+
+def _looks_like_remediation(text: str) -> bool:
+    t = (text or "").strip().lower()
+    return any(t.startswith(w) for w in _REMEDIATION_LEADS)
+
+
 def _rank_unconfirmed_by_value_density(
     unconfirmed: list["ReportFinding"], effort_ledger: EffortLedger,
 ) -> list["ReportFinding"]:
@@ -385,8 +399,18 @@ def _render_finding(f: ReportFinding) -> list[str]:
         lines.append(f.evidence)
         lines.append("```")
         lines.append("")
-    if f.suggested_test:
+    # Weakness #5: keep the reproduction field ACTUAL reproduction, not remediation.
+    if f.suggested_test and not _looks_like_remediation(f.suggested_test):
         lines.append(f"**Steps to reproduce:** {f.suggested_test}")
+        lines.append("")
+    elif f.evidence:
+        lines.append("**Steps to reproduce:** replay the exact captured request/response shown in the "
+                     "Evidence block above, as the identity/session it was captured under, and compare "
+                     "the actual result against a secure baseline.")
+        lines.append("")
+    # A remediation-shaped suggested_test is surfaced as a fix note, never as repro.
+    if f.suggested_test and _looks_like_remediation(f.suggested_test):
+        lines.append(f"**Fix note (from the detector):** {f.suggested_test}")
         lines.append("")
     lines.append(f"**Suggested remediation:** {_remediation_for(f.vulnerability_class)} "
                  f"_(generic starting point -- verify against this target's actual implementation)_")

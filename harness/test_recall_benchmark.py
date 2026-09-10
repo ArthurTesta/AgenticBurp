@@ -10,7 +10,7 @@ import unittest
 import recall_benchmark as rb
 from recall_benchmark import (PlantedVuln, score_run, confirmation_leg_of,
                               findings_from_analysis, findings_from_engagement,
-                              CONFIRMED, DETECTED, MISSED, EARNED, LUCKY)
+                              CONFIRMED, DETECTED, MISSED, EARNED, LUCKY, UNKNOWN)
 from models import HttpExchange, Finding, AgentReport, AnalysisResponse
 
 
@@ -53,6 +53,29 @@ class ScoringTests(unittest.TestCase):
         self.assertEqual(by_id["V3"].status, MISSED)
         self.assertEqual((score.confirmed, score.detected_unconfirmed, score.missed), (1, 1, 1))
         self.assertIn("1/3 confirmed", score.summary_line())
+
+    def test_unknown_provenance_is_not_lucky(self):
+        # #6: confirmed but no leg named -> UNKNOWN provenance, never "lucky".
+        gt = [PlantedVuln("V1", "idor", "/api/tickets/{id}", intended_confirmation="cross_identity")]
+        findings = [{"url": "http://t/api/tickets/7", "vulnerability_class": "idor",
+                     "confirmed": True, "evidence": "confirmed somehow (no leg named)"}]
+        score = score_run(gt, findings)
+        self.assertEqual(score.items[0].status, CONFIRMED)
+        self.assertEqual(score.items[0].provenance, UNKNOWN)
+        self.assertEqual(score.lucky_confirms, 0)
+        self.assertEqual(score.unknown_provenance_confirms, 1)
+
+    def test_best_proof_prefers_earned_over_unknown_regardless_of_order(self):
+        # #6: deterministic best-proof selection, not "first matching confirmation".
+        gt = [PlantedVuln("V1", "idor", "/api/tickets/{id}", intended_confirmation="cross_identity")]
+        findings = [
+            {"url": "http://t/api/tickets/7", "vulnerability_class": "idor",
+             "confirmed": True, "evidence": "no leg named"},                        # unknown, first
+            {"url": "http://t/api/tickets/7", "vulnerability_class": "idor",
+             "confirmed": True, "evidence": "x || cross-identity CONFIRMED: y"},     # earned, second
+        ]
+        score = score_run(gt, findings)
+        self.assertEqual(score.items[0].provenance, EARNED)
 
     def test_class_alias_and_path_id_normalization_match(self):
         # A free-text label + a concrete id must match a canonical planted vuln.

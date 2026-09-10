@@ -39,6 +39,11 @@ MISSED = "missed"
 
 EARNED = "earned"
 LUCKY = "lucky"
+# Weakness #6: a confirmation whose leg provenance is NOT known (nothing named a
+# leg in the evidence) is UNKNOWN -- it must not be called "lucky" (which claims an
+# OTHER leg proved it). Unknown means the metadata is missing, not that the intended
+# path failed.
+UNKNOWN = "unknown"
 
 # "|| cross-identity CONFIRMED: ..." is how a leg stamps its own confirmation into
 # a finding's evidence (orchestrator._apply). Recover the leg name from that.
@@ -107,18 +112,26 @@ class RecallScore:
     def lucky_confirms(self) -> int:
         return sum(1 for it in self.items if it.status == CONFIRMED and it.provenance == LUCKY)
 
+    @property
+    def unknown_provenance_confirms(self) -> int:
+        # #6: confirmed but with no leg named -- distinct from lucky.
+        return sum(1 for it in self.items if it.status == CONFIRMED and it.provenance == UNKNOWN)
+
     def summary_line(self) -> str:
         n = self.total
         s = (f"{self.confirmed}/{n} confirmed, {self.detected_unconfirmed}/{n} "
              f"detected-unconfirmed, {self.missed}/{n} missed")
         if self.lucky_confirms:
             s += f" ({self.lucky_confirms} confirmed by luck, not the intended path)"
+        if self.unknown_provenance_confirms:
+            s += f" ({self.unknown_provenance_confirms} confirmed with UNKNOWN provenance)"
         return s
 
     def to_dict(self) -> dict:
         return {"total": self.total, "confirmed": self.confirmed,
                 "detected_unconfirmed": self.detected_unconfirmed, "missed": self.missed,
                 "lucky_confirms": self.lucky_confirms,
+                "unknown_provenance_confirms": self.unknown_provenance_confirms,
                 "summary": self.summary_line(),
                 "items": [it.to_dict() for it in self.items]}
 
@@ -178,10 +191,26 @@ def _provenance(planted: PlantedVuln, confirming: dict) -> tuple[str, str]:
     if not intended:
         return "", "no intended-confirmation leg declared for this planted vuln"
     leg = confirmation_leg_of(confirming)
+    if not leg:
+        # Weakness #6: missing leg provenance is UNKNOWN, not lucky.
+        return UNKNOWN, (f"confirmed, but no leg is named in the evidence -- provenance UNKNOWN "
+                         f"(cannot say whether the intended '{intended}' path proved it)")
     if leg == intended:
         return EARNED, f"confirmed via the intended leg '{intended}'"
-    return LUCKY, (f"confirmed via '{leg or 'unknown'}', not the intended '{intended}' "
+    return LUCKY, (f"confirmed via '{leg}', not the intended '{intended}' "
                    f"-- the bug is real but the intended detection path is unproven")
+
+
+def _best_proof(planted: PlantedVuln, confirmed: list[dict]) -> dict:
+    """Deterministic best-proof selection among several confirming findings (#6):
+    prefer one proven by the INTENDED leg (earned), then any with a KNOWN leg
+    (lucky over unknown), else the first -- so scoring never hinges on list order."""
+    intended = (planted.intended_confirmation or "").strip().lower()
+    earned = [f for f in confirmed if confirmation_leg_of(f) == intended and intended]
+    if earned:
+        return earned[0]
+    known = [f for f in confirmed if confirmation_leg_of(f)]
+    return known[0] if known else confirmed[0]
 
 
 def score_run(ground_truth, findings) -> RecallScore:
@@ -195,7 +224,7 @@ def score_run(ground_truth, findings) -> RecallScore:
         matched = [f for f in fs if _matches(pv, f)]
         confirmed = [f for f in matched if f.get("confirmed")]
         if confirmed:
-            prov, reason = _provenance(pv, confirmed[0])
+            prov, reason = _provenance(pv, _best_proof(pv, confirmed))
             items.append(ScoredItem(pv, CONFIRMED, matched, prov, reason))
         elif matched:
             items.append(ScoredItem(pv, DETECTED, matched))

@@ -32,6 +32,22 @@ class TestConfidenceAndBasisLabels(unittest.TestCase):
 
 
 class TestReportStructure(unittest.TestCase):
+    def test_remediation_shaped_suggested_test_is_not_labelled_reproduction(self):
+        # Weakness #5: "rotate the signing key" is remediation, not reproduction.
+        findings = [sample(vulnerability_class="jwt", confirmed=True, evidence="HMAC-verified key",
+                           suggested_test="Rotate the signing key and invalidate issued tokens.")]
+        report = generate_markdown_report("example.com", findings)
+        self.assertNotIn("Steps to reproduce:** Rotate the signing key", report)
+        self.assertIn("Fix note (from the detector):** Rotate the signing key", report)
+        # reproduction falls back to replaying the captured evidence
+        self.assertIn("replay the exact captured request", report)
+
+    def test_real_reproduction_step_is_still_labelled_reproduction(self):
+        findings = [sample(vulnerability_class="sqli", confirmed=True,
+                           suggested_test="Send q=1' OR '1'='1 and observe the full row set.")]
+        report = generate_markdown_report("example.com", findings)
+        self.assertIn("Steps to reproduce:** Send q=1'", report)
+
     def test_confirmed_and_unconfirmed_are_separated(self):
         findings = [
             sample(vulnerability_class="sqli", confirmed=True),
