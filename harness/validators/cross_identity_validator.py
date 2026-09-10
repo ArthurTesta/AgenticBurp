@@ -234,8 +234,24 @@ class CrossIdentityValidator(Validator):
             return self._skip(fc, "the admin-namespaced endpoint is reachable ANONYMOUSLY -- that is a "
                                   "missing-authentication issue (auth_bypass), not a function-level "
                                   "authorization bypass; not this leg's confirmation")
+        # R11: an admin namespace is a LEAD, not an entitlement specification. A
+        # non-admin getting a 2xx there may be a legitimate delegated/read-only view.
+        # To CONFIRM we need a privileged-DATA oracle: the non-admin must see the
+        # SAME privileged content an ADMIN sees. Establish the admin baseline first.
+        admin_probe = None
+        for ident in idents:
+            if _PRIVILEGED_ROLE.search(ident.get("role", "") or ""):
+                try:
+                    admin_probe = await self._probe(exchange.url, ident["headers"])
+                except Exception:
+                    admin_probe = None
+                if admin_probe is not None:
+                    break
+        have_admin_baseline = admin_probe is not None and self._reached(admin_probe)
+
         considered = 0
         rejects = 0
+        reached_unproven = None
         for ident in idents[:self.max_identities]:
             if _PRIVILEGED_ROLE.search(ident.get("role", "") or ""):
                 continue  # an admin reaching an admin function is expected, not a bypass
@@ -245,20 +261,38 @@ class CrossIdentityValidator(Validator):
                 continue
             considered += 1
             if self._reached(attempt):
-                return ValidationResult(
-                    validator=self.name, status="confirmed", finding_class=fc,
-                    confidence=0.85, confirmed=True,
-                    summary=f"Broken function-level authorization: non-privileged identity "
-                            f"{ident['name']!r} (role {ident.get('role','?')!r}) reached the "
-                            f"admin-namespaced function {exchange.url} while anonymous was denied.",
-                    evidence=f"Anonymous -> HTTP {anon.status} (denied); {ident['name']!r} -> "
-                             f"HTTP {attempt.status} with a substantive body. The path's admin "
-                             f"namespace declares an admin-only boundary a non-admin role crossed.")
-            rejects += 1
+                # Confirm ONLY when the non-admin's response materially MATCHES the
+                # admin's -- i.e. it returned the same privileged data, not merely a
+                # 2xx on an admin-looking path.
+                if have_admin_baseline and identity_compare.similarity(
+                        attempt.body, admin_probe.body) >= identity_compare.MATCH_THRESHOLD:
+                    return ValidationResult(
+                        validator=self.name, status="confirmed", finding_class=fc,
+                        confidence=0.85, confirmed=True,
+                        summary=f"Broken function-level authorization: non-privileged identity "
+                                f"{ident['name']!r} (role {ident.get('role','?')!r}) obtained the same "
+                                f"privileged response an admin sees at {exchange.url} while anonymous was denied.",
+                        evidence=f"Anonymous -> HTTP {anon.status} (denied); {ident['name']!r} -> HTTP "
+                                 f"{attempt.status} returning content materially matching the admin baseline "
+                                 f"(similarity >= {identity_compare.MATCH_THRESHOLD}). A non-admin obtained "
+                                 f"the admin function's privileged data.")
+                reached_unproven = ident  # reached, but not proven to be a real bypass
+            else:
+                rejects += 1
         if considered == 0:
             return self._skip(fc, "only privileged-role identities are configured -- cannot test a "
                                   "function-level bypass (an admin reaching an admin function is expected). "
                                   "Supply a lower-privilege identity's session to test BFLA")
+        if reached_unproven is not None:
+            return ValidationResult(
+                validator=self.name, status="not_confirmed", finding_class=fc, confidence=0.4, confirmed=False,
+                summary=f"OBSERVATION (not confirmed): non-privileged identity {reached_unproven['name']!r} "
+                        f"reached the admin-namespaced function {exchange.url}, but this leg could not "
+                        f"establish it returned the same PRIVILEGED data an admin sees "
+                        f"({'no admin baseline configured' if not have_admin_baseline else 'the responses differed'}). "
+                        f"An admin namespace is a lead, not proof -- delegated/read-only access may be legitimate.",
+                evidence=f"Supply an admin session for a privileged-data comparison, or verify the returned "
+                         f"content is genuinely admin-only, before treating this as a confirmed BFLA.")
         if rejects == considered:
             return ValidationResult(
                 validator=self.name, status="not_confirmed", finding_class=fc, confidence=0.8, confirmed=False,

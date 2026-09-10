@@ -198,23 +198,42 @@ class CrossIdentityValidatorTest(unittest.TestCase):
 
     # --- V13: function-level authorization (BFLA) on an admin-namespaced route ---
 
-    def test_confirms_bfla_nonadmin_reaches_admin_function(self):
-        # /api/admin/users has NO object id -> the BOLA path skips it; the BFLA
-        # branch confirms because a non-admin identity reaches an admin-namespaced
-        # function while anon is denied.
+    def test_confirms_bfla_when_nonadmin_sees_the_admin_data(self):
+        # R11: BFLA confirms only via a privileged-DATA oracle -- carol (non-admin)
+        # gets the SAME response an admin (root) sees, while anon is denied.
         identity_headers.set_identity("localhost", "carol", {"Authorization": "Bearer carol"}, role="user")
+        identity_headers.set_identity("localhost", "root", {"Authorization": "Bearer root"}, role="admin")
+        ADMIN_DATA = "ADMIN USER LIST: alice, bob, carol, dave, eve, frank ..."
 
         def responder(headers):
-            if headers.get("Authorization") == "Bearer carol":
-                return (200, "ADMIN USER LIST: alice, bob, carol, dave ...")
-            return (401, "Unauthorized")  # anon denied
+            auth = headers.get("Authorization")
+            if auth in ("Bearer carol", "Bearer root"):
+                return (200, ADMIN_DATA)       # carol sees exactly what root sees
+            return (401, "Unauthorized")       # anon denied
 
         v = _StubbedValidator(responder, allowed_hosts=["localhost"])
         ex = _exchange(url="http://localhost/api/admin/users", body="")
         r = asyncio.run(v.validate(_finding("broken_access_control"), ex))
         self.assertEqual(r.status, "confirmed")
         self.assertTrue(r.confirmed)
-        self.assertIn("function-level", r.summary.lower())
+        self.assertIn("privileged", r.summary.lower())
+
+    def test_bfla_reached_without_admin_baseline_is_observation(self):
+        # R11: a non-admin reaching the admin namespace with NO admin baseline to
+        # compare is a LEAD, not a confirmed bypass (delegated access may be legit).
+        identity_headers.set_identity("localhost", "carol", {"Authorization": "Bearer carol"}, role="user")
+
+        def responder(headers):
+            if headers.get("Authorization") == "Bearer carol":
+                return (200, "ADMIN USER LIST: alice, bob, carol, dave ...")
+            return (401, "Unauthorized")
+
+        v = _StubbedValidator(responder, allowed_hosts=["localhost"])
+        ex = _exchange(url="http://localhost/api/admin/users", body="")
+        r = asyncio.run(v.validate(_finding("broken_access_control"), ex))
+        self.assertEqual(r.status, "not_confirmed")
+        self.assertFalse(r.confirmed)
+        self.assertIn("observation", r.summary.lower())
 
     def test_bfla_not_confirmed_when_control_holds(self):
         identity_headers.set_identity("localhost", "carol", {"Authorization": "Bearer carol"}, role="user")
