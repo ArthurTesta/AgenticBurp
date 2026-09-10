@@ -7,6 +7,7 @@ config.local.yaml
 # Build output and runtime SQLite DBs (SESSION_4_PLAN.md T0.2)
 *.jar
 harness/*.db
+harness/run-output/
 
 # score.py results (regenerable from the fixture)
 testing/**/scorecard.json

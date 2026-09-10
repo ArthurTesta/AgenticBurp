@@ -842,6 +842,7 @@ async def engagement_advance(host: str, req: AdvanceRequest, authorization: str 
 # (roadmap Phase 2) and is an explicit follow-up. Jobs live in-process.
 import uuid as _uuid
 import time as _time
+import run_manifest as _run_manifest
 
 _INVESTIGATE_JOBS: dict[str, dict] = {}
 
@@ -849,7 +850,7 @@ _INVESTIGATE_JOBS: dict[str, dict] = {}
 def _job_public(job: dict) -> dict:
     """The JSON-safe view of a job (never leaks the asyncio Task)."""
     return {k: job.get(k) for k in ("job_id", "host", "base_url", "status",
-                                    "started_at", "finished_at", "error")}
+                                    "started_at", "finished_at", "error", "manifest_path")}
 
 
 class InvestigateRequest(_BaseModel):
@@ -874,9 +875,18 @@ async def engagement_investigate(host: str, req: InvestigateRequest,
                                     headers=r.get("headers") or {}, name=r.get("name"))
              for r in (req.roles or [])] or [role_crawl.RoleSession(role="anonymous", headers={})]
     job_id = _uuid.uuid4().hex[:12]
+    runs_cfg = (config.get("runs", {}) or {})
+    manifest = _run_manifest.RunManifest.start(
+        run_id=job_id, target_identifier=host, config=config,
+        cache_namespace=runs_cfg.get("cache_namespace"), output_dir=runs_cfg.get("output_dir"),
+        model_versions={"coordinator": orchestrator.coordinator_model,
+                        "agents": sorted({getattr(a, "model", "")
+                                          for a in orchestrator.agent_manager.agents.values()
+                                          if getattr(a, "model", "")})})
     job: dict = {"job_id": job_id, "host": host, "base_url": req.base_url,
                  "status": "running", "task": None, "result": None, "error": None,
-                 "started_at": _time.time(), "finished_at": None}
+                 "started_at": _time.time(), "finished_at": None,
+                 "manifest_path": str(manifest.path)}
 
     async def _run():
         try:
@@ -886,12 +896,15 @@ async def engagement_investigate(host: str, req: InvestigateRequest,
                 step_budget=max(1, min(req.step_budget, 64)),
                 max_chain_rounds=max(0, min(req.max_chain_rounds, 10)))
             job["status"] = "done"
+            manifest.finish("done", result=job["result"])
         except asyncio.CancelledError:
             job["status"] = "cancelled"
+            manifest.finish("cancelled")
             raise
         except Exception as e:  # a failed job must report, never crash the server
             job["status"] = "error"
             job["error"] = f"{type(e).__name__}: {e}"
+            manifest.finish("error", error=job["error"])
             log.warning("investigate job %s failed: %s", job_id, e)
         finally:
             job["finished_at"] = _time.time()

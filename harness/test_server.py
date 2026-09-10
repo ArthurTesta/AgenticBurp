@@ -7,6 +7,7 @@ exercised server.py's endpoints via TestClient at all -- this is the
 first one, scoped to the new suppression endpoints since those are what
 this session added; it isn't a full endpoint audit of server.py.
 """
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -504,6 +505,8 @@ class InvestigateJobEndpointTests(unittest.TestCase):
         import server as server_module
         importlib.reload(server_module)
         self.server = server_module
+        self.server.config["runs"] = {"output_dir": self._tmpdir.name,
+                                       "cache_namespace": "test-isolated"}
         from fastapi.testclient import TestClient
         self.client = TestClient(server_module.app)
 
@@ -534,6 +537,10 @@ class InvestigateJobEndpointTests(unittest.TestCase):
             done = self._poll(f"/engagement/shop.test/investigate/{job_id}", {"done", "error"})
         self.assertEqual(done["status"], "done", done)
         self.assertEqual(done["result"]["summary"]["endpoint_count"], 3)
+        manifest = json.loads(Path(done["manifest_path"]).read_text(encoding="utf-8"))
+        self.assertEqual(manifest["completion_status"], "done")
+        self.assertEqual(manifest["cache_namespace"], "test-isolated")
+        self.assertIsNone(manifest["request_count"])
 
     def test_cancel_running_job(self):
         from unittest.mock import patch

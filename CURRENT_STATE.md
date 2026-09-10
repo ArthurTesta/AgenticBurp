@@ -11,6 +11,19 @@ Older session narratives are in git history / `archive/`; this file is deliberat
 
 ## ►► SESSION-17 STATE (READ FIRST) ◄◄
 
+**2026-09-10 review-only addendum:** Source inspected at HEAD `8b5c6e1`;
+implementation handoff saved to
+[`reviews/review-Astra-Medium-10-09-06-30/IMPLEMENTATION_HANDOFF.md`](reviews/review-Astra-Medium-10-09-06-30/IMPLEMENTATION_HANDOFF.md).
+It defines T00–T10, beginning with a real-transport authorization proof milestone.
+No implementation changes, tests, or live runs were performed for this review;
+the suite result below remains the previous session's reported result.
+
+**2026-09-10 T00 implementation:** Added a versioned, redacted run manifest and
+append-only lifecycle ledger to the existing investigation job API. Focused suite:
+9 tests OK. Full discovery ran 1,489 tests in 270.550s but is **not green** in the
+available bundled runtime: `pytest` and `mitmproxy` were missing at collection time
+(2 errors, 2 skips). See the review directory's `EXECUTION_LOG.md`; T01–T10 remain open.
+
 Branch `WorkingSunday`, **HEAD `f36d454`** (+ any later doc commit). Suite green
 (`cd harness && python -m unittest discover -p "test_*.py"`) — **1505 tests OK**,
 ~277 s, on the committed tree. `config.yaml` at safe defaults;
