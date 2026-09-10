@@ -47,7 +47,9 @@ class VerbTamperTests(unittest.TestCase):
 
     @patch("validators.verb_tamper_validator.GatedAsyncClient")
     @patch("global_throttle.acquire", new_callable=AsyncMock)
-    def test_confirmed_on_method_bypass(self, _throttle, mock_client_cls):
+    def test_method_bypass_is_observation_not_confirmed(self, _throttle, mock_client_cls):
+        # RETIRED (review 2026-09-09): an alternate method returning 2xx is an
+        # observation, not a confirmed authz bypass (may be ordinary routing).
         ex = _exchange(method="POST", status=403)
         mock_resp = MagicMock()
         mock_resp.status_code = 200
@@ -58,17 +60,19 @@ class VerbTamperTests(unittest.TestCase):
         mock_client.__aexit__ = AsyncMock()
         mock_client_cls.return_value = mock_client
         r = asyncio.run(self.v.validate(_finding(), ex))
-        self.assertEqual(r.status, "confirmed")
-        self.assertTrue(r.confirmed)
+        self.assertEqual(r.status, "not_confirmed")
+        self.assertFalse(r.confirmed)
+        self.assertIn("observation", r.summary.lower())
 
     def test_mutating_methods_off_by_default(self):
         self.assertFalse(self.v.try_mutating_methods)
 
     @patch("validators.verb_tamper_validator.GatedAsyncClient")
     @patch("global_throttle.acquire", new_callable=AsyncMock)
-    def test_mutating_bypass_confirmed_when_opted_in(self, _throttle, mock_client_cls):
+    def test_mutating_bypass_is_observation_when_opted_in(self, _throttle, mock_client_cls):
         # V15: GET/POST denied but a mutating method (PUT/PATCH/DELETE) is open --
-        # only tried under the explicit try_mutating_methods opt-in.
+        # only tried under the explicit try_mutating_methods opt-in. RETIRED
+        # (review 2026-09-09): this is an observation, not a confirmed bypass.
         from safety_gate import reset_default_gate, get_default_gate
         reset_default_gate()
         get_default_gate({"active_enabled": True, "allow_mutating_replay": True})
@@ -89,7 +93,8 @@ class VerbTamperTests(unittest.TestCase):
         mock_client_cls.return_value = mock_client
         r = asyncio.run(v.validate(_finding(), ex))
         reset_default_gate()
-        self.assertEqual(r.status, "confirmed")
+        self.assertEqual(r.status, "not_confirmed")
+        self.assertFalse(r.confirmed)
         self.assertIn("mutating", r.summary.lower())
 
     @patch("validators.verb_tamper_validator.GatedAsyncClient")
@@ -163,7 +168,9 @@ class CsrfValidatorTests(unittest.TestCase):
 
     @patch("validators.csrf_validator.GatedAsyncClient")
     @patch("global_throttle.acquire", new_callable=AsyncMock)
-    def test_confirmed_no_token_no_samesite(self, _throttle, mock_client_cls):
+    def test_no_token_no_samesite_is_observation_not_confirmed(self, _throttle, mock_client_cls):
+        # RETIRED (review 2026-09-09): a token-strip 2xx replay is an observation,
+        # not confirmed CSRF (needs a cross-site browser PoC with ambient creds).
         ex = _exchange(method="POST", status=200, request_body="action=delete&id=1",
                        response_headers={"Set-Cookie": "session=abc; Path=/"})
         mock_resp = MagicMock()
@@ -174,8 +181,9 @@ class CsrfValidatorTests(unittest.TestCase):
         mock_client.__aexit__ = AsyncMock()
         mock_client_cls.return_value = mock_client
         r = asyncio.run(self.v.validate(_finding("csrf"), ex))
-        self.assertEqual(r.status, "confirmed")
-        self.assertTrue(r.confirmed)
+        self.assertEqual(r.status, "not_confirmed")
+        self.assertFalse(r.confirmed)
+        self.assertIn("observation", r.summary.lower())
 
     @patch("validators.csrf_validator.GatedAsyncClient")
     @patch("global_throttle.acquire", new_callable=AsyncMock)

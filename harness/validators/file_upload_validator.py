@@ -134,13 +134,30 @@ class FileUploadValidator(Validator):
                 summary=f"Could not retrieve uploaded file from {upload_url}.")
 
         if marker in (retrieve.text or ""):
-            content_type = retrieve.headers.get("content-type", "")
+            content_type = retrieve.headers.get("content-type", "") or ""
+            disposition = (retrieve.headers.get("content-disposition", "") or "").lower()
+            ctl = content_type.lower()
+            # Oracle tightened (review 2026-09-09): a stored+served .html is only a
+            # DANGEROUS bypass when served as an active execution context -- an
+            # HTML/script/svg Content-Type and NOT forced as an attachment. Served
+            # as text/plain or as an attachment is a benign storage bypass, not a
+            # confirmed dangerous upload -> observation.
+            served_active = (("html" in ctl or "javascript" in ctl or "xml" in ctl
+                              or ctl.startswith("image/svg")) and "attachment" not in disposition)
+            if served_active:
+                return ValidationResult(
+                    self.name, "confirmed", "file_upload", confidence=0.90, confirmed=True,
+                    summary=f"File upload bypass confirmed: .html file stored and served as an active "
+                            f"context (content-type: {content_type}).",
+                    evidence=f"Uploaded {filename} (text/html) -> stored at {upload_url}. Retrieved and "
+                             f"found our marker, served as {content_type} (no attachment disposition).")
             return ValidationResult(
-                self.name, "confirmed", "file_upload", confidence=0.90, confirmed=True,
-                summary=f"File upload bypass confirmed: .html file stored and served "
-                        f"(content-type: {content_type}).",
-                evidence=f"Uploaded {filename} (text/html) → stored at {upload_url}. "
-                         f"Retrieved and found our marker. Served as {content_type}.")
+                self.name, "not_confirmed", "file_upload", confidence=0.4, confirmed=False,
+                summary=f"OBSERVATION (not confirmed): the .html upload was stored and served, but as "
+                        f"content-type {content_type!r}"
+                        f"{' (attachment)' if 'attachment' in disposition else ''} -- not an active "
+                        f"HTML/script execution context, so not a dangerous upload.",
+                evidence=f"Uploaded {filename}; retrieved at {upload_url} served as {content_type!r}.")
 
         return ValidationResult(
             self.name, "not_confirmed", "file_upload", confidence=0.1, confirmed=False,

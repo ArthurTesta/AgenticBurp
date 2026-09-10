@@ -130,9 +130,22 @@ class CsrfValidator(Validator):
             else:
                 evidence_parts.append("No SameSite attribute on session cookie.")
 
+            # RETIRED (review 2026-09-09): a token-strip replay returning 2xx does
+            # NOT prove CSRF -- it does not show a victim BROWSER can send the
+            # request with AMBIENT credentials. Bearer/JSON APIs aren't ambient,
+            # Origin/Referer may be enforced server-side, and a default SameSite=Lax
+            # already blocks cross-site POSTs even with "no SameSite" in this
+            # response. This no longer sets confirmed=True. Re-qualify: a cross-site
+            # browser PoC that fires the request with the victim's ambient cookies
+            # and independently verifies the state change, plus controls for
+            # bearer-only requests, Origin enforcement and default-SameSite; only
+            # then confirmed=True (and re-add "csrf" to the gate's LIVE set).
             return ValidationResult(
-                self.name, "confirmed", "csrf", confidence=0.85, confirmed=True,
-                summary=f"CSRF confirmed: {method} request accepted without anti-CSRF protection.",
+                self.name, "not_confirmed", "csrf", confidence=0.4, confirmed=False,
+                summary=f"OBSERVATION (not confirmed): {method} request was accepted without an "
+                        f"anti-CSRF token. NOT a confirmed CSRF -- needs a cross-site browser PoC "
+                        f"with ambient credentials (this replay proves neither ambient-credential "
+                        f"delivery nor absence of Origin/SameSite protection).",
                 evidence=" ".join(evidence_parts))
 
         return ValidationResult(

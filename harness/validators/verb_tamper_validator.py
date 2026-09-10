@@ -80,12 +80,19 @@ class VerbTamperValidator(Validator):
             except Exception:
                 continue
             if 200 <= resp.status_code < 300 and len(resp.text or "") > 10:
+                # RETIRED (review 2026-09-09): an alternate method returning 2xx where
+                # the original was denied is NOT proof of an authz bypass -- it can be
+                # ordinary routing (a public GET beside a private POST). It no longer
+                # sets confirmed=True. Re-qualify: compare the SAME protected data/
+                # action under the SAME unauthorized principal across methods, with a
+                # public-GET/private-write control; only then confirmed=True.
                 return ValidationResult(
-                    self.name, "confirmed", "misconfig", confidence=0.85, confirmed=True,
-                    summary=f"Verb tamper bypass: {orig_method} returns {orig_status} but "
-                            f"{method} returns {resp.status_code} with a substantive body.",
-                    evidence=f"Original: {orig_method} {url} → {orig_status}. "
-                             f"Alternate: {method} → {resp.status_code} ({len(resp.text)} bytes).")
+                    self.name, "not_confirmed", "misconfig", confidence=0.4, confirmed=False,
+                    summary=f"OBSERVATION (not confirmed): {orig_method} returns {orig_status} but "
+                            f"{method} returns {resp.status_code} with a substantive body -- may be "
+                            f"ordinary routing, not an authz bypass; needs a same-principal same-data control.",
+                    evidence=f"Original: {orig_method} {url} -> {orig_status}. "
+                             f"Alternate: {method} -> {resp.status_code} ({len(resp.text)} bytes).")
 
         for override_header in _OVERRIDE_HEADERS:
             try:
@@ -100,12 +107,14 @@ class VerbTamperValidator(Validator):
             except Exception:
                 continue
             if 200 <= resp.status_code < 300 and len(resp.text or "") > 10:
+                # RETIRED (review 2026-09-09) -- see the note above; observation only.
                 return ValidationResult(
-                    self.name, "confirmed", "misconfig", confidence=0.80, confirmed=True,
-                    summary=f"Method override bypass: POST with {override_header}: {orig_method} "
-                            f"returns {resp.status_code} (original {orig_method} returns {orig_status}).",
-                    evidence=f"Original: {orig_method} {url} → {orig_status}. "
-                             f"Override: POST + {override_header}: {orig_method} → {resp.status_code}.")
+                    self.name, "not_confirmed", "misconfig", confidence=0.4, confirmed=False,
+                    summary=f"OBSERVATION (not confirmed): POST with {override_header}: {orig_method} "
+                            f"returns {resp.status_code} (original {orig_method} returns {orig_status}) "
+                            f"-- needs a same-principal same-data control to distinguish a real bypass.",
+                    evidence=f"Original: {orig_method} {url} -> {orig_status}. "
+                             f"Override: POST + {override_header}: {orig_method} -> {resp.status_code}.")
 
         # Opt-in mutating-method variant: the common exploitable shape is a
         # GET/POST-denied endpoint that serves a mutating method. Triple-gated
@@ -127,10 +136,12 @@ class VerbTamperValidator(Validator):
                 except Exception:
                     continue
                 if 200 <= resp.status_code < 300 and len(resp.text or "") > 10:
+                    # RETIRED (review 2026-09-09) -- see the note above; observation only.
                     return ValidationResult(
-                        self.name, "confirmed", "misconfig", confidence=0.85, confirmed=True,
-                        summary=f"Verb tamper bypass (mutating): {orig_method} returns {orig_status} "
-                                f"but {method} returns {resp.status_code} with a substantive body.",
+                        self.name, "not_confirmed", "misconfig", confidence=0.4, confirmed=False,
+                        summary=f"OBSERVATION (not confirmed, mutating): {orig_method} returns {orig_status} "
+                                f"but {method} returns {resp.status_code} with a substantive body -- "
+                                f"needs a same-principal same-data control to distinguish a real bypass.",
                         evidence=f"Original: {orig_method} {url} -> {orig_status}. "
                                  f"Mutating alternate: {method} -> {resp.status_code} "
                                  f"({len(resp.text)} bytes). Sent under the try_mutating_methods opt-in "

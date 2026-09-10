@@ -367,6 +367,23 @@ Later phases (2–9: request/identity model, unified executor, graph feedback, o
 
 _(newest first)_
 
+### 2026-09-10 — Phase 5 oracle retirements (confirmation-audit)
+
+Stood down eight unsound `confirmed=True` verdicts to honest observations/candidates, keeping every detector. Full record + re-qualification steps in [`ORACLE_RETIREMENTS.md`](../../ORACLE_RETIREMENTS.md); each site is marked `RETIRED (review 2026-09-09)` in code.
+
+- **passive deserialization** — format signature → observation (active proof is the separate `deserialization_oob` leg).
+- **rate limit** — valid-request burst without a 429 → observation (can't establish failed-login lockout; counted 5xx as clean; as few as 2 confirmed).
+- **reset token** — small-sample predictability pattern → observation (needs a holdout prediction/acceptance).
+- **CSRF** — token-strip 2xx replay → observation (needs a cross-site browser PoC with ambient creds).
+- **verb tamper** (×3) — alternate-method 2xx → observation (may be ordinary routing).
+- **request smuggling** — httpx anomaly → candidate (can't prove raw desync framing).
+- **web cache poisoning** — reflection → candidate (no second-client cached-retrieval proof).
+- **file upload** — tightened (not fully retired): confirms only when served as an active HTML/script Content-Type and not an attachment.
+
+Gate: `csrf` + `verb_tamper`/`misconfig` removed from `LIVE_VERIFIED_MARKERS` → now provisional (capped at medium, never "refuted"). Tests: `test_oracle_retirements.py` + updated cases in `test_missing_legs`/`test_deferred_legs`/`test_confirmation_gate`. Full-suite confirmation recorded on commit.
+
+This closes the oracle-audit rows the review marked **Overconfirms** and the "Passive deserialization / smuggling/cache/rate/reset/CSRF weak verdicts → Retire" rows of the deletion/consolidation table.
+
 ### 2026-09-10 — Phase 1B/2/4 batch: R05, R18, R19 (+ commits of the first batch)
 
 Committed the Phase-1A/1B batch (HEAD `cf8d95b`): a session-17 WIP snapshot commit, then one focused commit per finding group, then this tracker. Then:

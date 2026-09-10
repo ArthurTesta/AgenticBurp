@@ -94,7 +94,9 @@ class ResetTokenValidatorTests(unittest.TestCase):
 
     @patch("validators.reset_token_validator.GatedAsyncClient")
     @patch("global_throttle.acquire", new_callable=AsyncMock)
-    def test_confirmed_sequential_tokens(self, _t, mock_cls):
+    def test_sequential_tokens_are_observation_not_confirmed(self, _t, mock_cls):
+        # RETIRED (review 2026-09-09): a small-sample predictability PATTERN is an
+        # observation; confirming needs a holdout prediction/acceptance test.
         seq = iter([_resp(200, '{"reset_token":"1001"}'),
                     _resp(200, '{"reset_token":"1002"}'),
                     _resp(200, '{"reset_token":"1003"}')])
@@ -105,8 +107,9 @@ class ResetTokenValidatorTests(unittest.TestCase):
         mock_cls.return_value = client
         r = asyncio.run(self.v.validate(_finding("reset_token"),
                                         _ex(url="http://target.test/api/reset", body="email=a@b.com")))
-        self.assertEqual(r.status, "confirmed")
-        self.assertTrue(r.confirmed)
+        self.assertEqual(r.status, "not_confirmed")
+        self.assertFalse(r.confirmed)
+        self.assertIn("holdout", r.summary.lower())
 
     @patch("validators.reset_token_validator.GatedAsyncClient")
     @patch("global_throttle.acquire", new_callable=AsyncMock)
@@ -164,7 +167,9 @@ class RateLimitValidatorTests(unittest.TestCase):
 
     @patch("validators.rate_limit_validator.httpx.AsyncClient")
     @patch("global_throttle.acquire", new_callable=AsyncMock)
-    def test_confirmed_reduced_burst(self, _t, mock_cls):
+    def test_reduced_burst_is_observation_not_confirmed(self, _t, mock_cls):
+        # RETIRED (review 2026-09-09): a small un-throttled burst is an observation,
+        # never a confirmed rate-limit bypass.
         self._gate(3)  # ceiling 3 < min_attempts 5, but >= 2
         v = RateLimitValidator(allowed_hosts=["target.test"], min_attempts=5)
         client = AsyncMock()
@@ -173,13 +178,15 @@ class RateLimitValidatorTests(unittest.TestCase):
         client.__aexit__ = AsyncMock()
         mock_cls.return_value = client
         r = asyncio.run(v.validate(_finding("rate_limit"), _ex()))
-        self.assertEqual(r.status, "confirmed")
-        self.assertTrue(r.confirmed)
-        self.assertLess(r.confidence, 0.85)
+        self.assertEqual(r.status, "not_confirmed")
+        self.assertFalse(r.confirmed)
+        self.assertIn("observation", r.summary.lower())
 
     @patch("validators.rate_limit_validator.httpx.AsyncClient")
     @patch("global_throttle.acquire", new_callable=AsyncMock)
-    def test_confirmed_no_rate_limit(self, _t, mock_cls):
+    def test_full_burst_no_throttle_is_observation_not_confirmed(self, _t, mock_cls):
+        # RETIRED (review 2026-09-09): replaying a VALID request N times without a
+        # 429 is an observation, not a confirmed lockout/rate-limit bypass.
         self._gate(20)
         v = RateLimitValidator(allowed_hosts=["target.test"], min_attempts=5)
         client = AsyncMock()
@@ -188,8 +195,9 @@ class RateLimitValidatorTests(unittest.TestCase):
         client.__aexit__ = AsyncMock()
         mock_cls.return_value = client
         r = asyncio.run(v.validate(_finding("rate_limit"), _ex()))
-        self.assertEqual(r.status, "confirmed")
-        self.assertTrue(r.confirmed)
+        self.assertEqual(r.status, "not_confirmed")
+        self.assertFalse(r.confirmed)
+        self.assertIn("observation", r.summary.lower())
 
     @patch("validators.rate_limit_validator.httpx.AsyncClient")
     @patch("global_throttle.acquire", new_callable=AsyncMock)

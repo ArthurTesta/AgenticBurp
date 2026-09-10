@@ -121,22 +121,23 @@ class RateLimitValidator(Validator):
         if completed < 2:
             return self._skip(f"only {completed} attempt(s) completed -- too few for any claim")
 
-        if completed >= self.min_attempts:
-            return ValidationResult(
-                self.name, "confirmed", "rate_limit", confidence=0.85, confirmed=True,
-                summary=f"No rate limiting / lockout: {completed} rapid {method} attempts to "
-                        f"{exchange.url} all reached the server with no 429, Retry-After, or "
-                        f"lockout signal.",
-                evidence=f"Replayed the captured request {completed} times un-throttled "
-                         f"(>= min_attempts {self.min_attempts}). Status distribution: {statuses}. "
-                         f"An endpoint enforcing a limit would have returned 429 / a lockout "
-                         f"before this many attempts.")
-        # Reduced burst: fewer than min_attempts but still >= 2 with no throttle.
+        # RETIRED (review 2026-09-09): replaying a VALID captured request N times
+        # without a 429 does NOT confirm a rate-limit / lockout bypass. A failed-
+        # login lockout triggers on INVALID credentials, so a valid-request burst
+        # cannot establish it; this leg also counted any non-throttle response
+        # (incl. 5xx) as a clean attempt, and had as little as 2 attempts confirm.
+        # It now emits an OBSERVATION ("no throttle in N attempts"), never a
+        # confirmation. Re-qualify: authorized test account, an invalid-credential
+        # burst, an explicit lockout policy/window, and a cooldown/reset control --
+        # only then may this emit confirmed=True again (and re-add to the gate's
+        # LIVE set if promoted).
         return ValidationResult(
-            self.name, "confirmed", "rate_limit", confidence=0.6, confirmed=True,
-            summary=f"No rate limiting / lockout (reduced burst): {completed} rapid {method} "
-                    f"attempts to {exchange.url} all accepted without throttle signal.",
-            evidence=f"Replayed the captured request {completed} times (burst ceiling "
-                     f"capped below min_attempts {self.min_attempts}, but all {completed} "
-                     f"succeeded without 429/Retry-After/lockout). Status distribution: "
-                     f"{statuses}. Lower confidence due to reduced sample size.")
+            self.name, "not_confirmed", "rate_limit",
+            confidence=0.3 if completed >= self.min_attempts else 0.15, confirmed=False,
+            summary=f"OBSERVATION (not confirmed): {completed} rapid {method} attempts to "
+                    f"{exchange.url} reached the server with no 429/Retry-After/lockout signal. "
+                    f"This is NOT a confirmed rate-limit bypass -- replaying a VALID request "
+                    f"cannot establish failed-login lockout, and non-throttle responses count as "
+                    f"attempts. Needs an invalid-credential control + explicit policy window.",
+            evidence=f"Replayed the captured request {completed} times (min_attempts "
+                     f"{self.min_attempts}). Status distribution: {statuses}.")

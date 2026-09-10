@@ -158,21 +158,29 @@ class HttpRequestSmugglingValidator(Validator):
             else:
                 severity = "low"
             
-            # Build summary
+            # RETIRED (review 2026-09-09): a status change / unexpected length / 404
+            # from these probes is NOT a confirmed desync -- _send_raw_request uses
+            # ordinary httpx and cannot guarantee the claimed raw CL/TE framing or the
+            # front-end/back-end connection relationship. This no longer emits a
+            # confirmed verdict; a match is a CANDIDATE. Re-qualify: protocol-specific
+            # raw transport that controls framing on a kept-alive connection, proven
+            # against a paired front-end/back-end desync fixture; only then confirmed=True.
             summary_parts = []
             if vulnerable:
-                summary_parts.append(f"HTTP Request Smuggling CONFIRMED: {len(vulnerable_tests)} vulnerability type(s)")
+                summary_parts.append(
+                    f"HTTP Request Smuggling CANDIDATE (not confirmed): {len(vulnerable_tests)} "
+                    f"anomaly type(s) -- ordinary-httpx probe cannot prove raw desync framing")
                 for t in vulnerable_tests:
                     summary_parts.append(f"  - {t.test_type.upper()}: {t.detail}")
             else:
-                summary_parts.append("No HTTP Request Smuggling vulnerabilities detected")
-            
+                summary_parts.append("No HTTP Request Smuggling anomalies detected")
+
             return ValidationResult(
                 validator=self.name,
-                status="confirmed" if vulnerable else "safe",
+                status="not_confirmed",
                 finding_class=finding.vulnerability_class,
-                confidence=0.95 if vulnerable else 0.1,
-                confirmed=vulnerable,
+                confidence=0.4 if vulnerable else 0.1,
+                confirmed=False,
                 summary=" | ".join(summary_parts),
                 evidence=self._build_evidence(tests),
                 raw_output=self._build_raw_output(tests),

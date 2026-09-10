@@ -137,14 +137,15 @@ class TestLegAwareThreeState(unittest.TestCase):
         for live in ("idor", "SQL_INJECTION", "xxe", "jwt algorithm confusion",
                      "path_traversal", "ssti", "open_redirect", "ssrf",
                      "command injection", "mass_assignment", "reflected xss",
-                     "cross-site scripting", "csrf", "verb_tamper", "file_upload",
+                     "cross-site scripting", "file_upload",
                      # session-16: privilege_escalation promoted (sequence leg
                      # live-verifies the write->re-read priv-esc mechanism).
                      "privilege escalation"):
             self.assertEqual(leg_tier(live), "live", live)
-        # provisional: confirmable class whose leg is not yet live-verified
-        # (session-16: rate_limit + reset_token legs built but not live-run yet).
-        for prov in ("rate_limit", "reset_token"):
+        # provisional: confirmable class whose leg is not yet live-verified, OR whose
+        # verdict was RETIRED to an observation (review 2026-09-09): csrf + verb_tamper
+        # overconfirmed and were removed from the live set (ORACLE_RETIREMENTS.md).
+        for prov in ("rate_limit", "reset_token", "csrf", "verb_tamper", "misconfig"):
             self.assertEqual(leg_tier(prov), "provisional", prov)
         for none in ("business_logic", "information_disclosure", None, ""):
             self.assertEqual(leg_tier(none), "none", none)

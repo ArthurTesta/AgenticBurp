@@ -125,12 +125,22 @@ class DeserializationValidator(Validator):
                 if fmt:
                     matches.append((source, fmt))
 
-            vulnerable = bool(matches)
-            if vulnerable:
-                lines = [f"  - {source}: {fmt} serialized-object format confirmed by byte/syntax signature "
-                         f"(suggested analyst tooling for exploitability testing: {_FORMAT_TOOLS.get(fmt, 'n/a')})"
+            observed = bool(matches)
+            if observed:
+                lines = [f"  - {source}: {fmt} serialized-object format signature "
+                         f"(analyst tooling for exploitability testing: {_FORMAT_TOOLS.get(fmt, 'n/a')})"
                          for source, fmt in matches]
-                summary = f"Serialized-object format CONFIRMED in {len(matches)} location(s):\n" + "\n".join(lines)
+                # RETIRED (review 2026-09-09): a serialized-object FORMAT signature is
+                # a structural OBSERVATION, not a confirmed insecure-deserialization
+                # vulnerability -- a Java/PHP/ViewState blob may be signed, integrity-
+                # checked, or never deserialized untrusted. This no longer sets
+                # confirmed=True. Active exploitability is proven by the SEPARATE
+                # deserialization_oob leg (a benign OOB pickle/gadget beacon).
+                # Re-qualify: keep this as the informational format observation; do
+                # not restore a confirmed verdict here.
+                summary = ("Serialized-object format OBSERVED (informational, NOT confirmed) in "
+                           f"{len(matches)} location(s) -- exploitability needs the deserialization_oob "
+                           "leg:\n" + "\n".join(lines))
             else:
                 summary = ("No known serialized-object format signature (Java magic bytes, PHP "
                            "serialization syntax, .NET ViewState field) matched any value in this "
@@ -138,10 +148,10 @@ class DeserializationValidator(Validator):
 
             return ValidationResult(
                 validator=self.get_name(),
-                status="confirmed" if vulnerable else "not_confirmed",
+                status="not_confirmed",
                 finding_class=finding.vulnerability_class,
-                confidence=0.95 if vulnerable else 0.15,  # deterministic signature match, high confidence when it hits
-                confirmed=vulnerable,
+                confidence=0.2 if observed else 0.05,  # observation only -- never a confirmation
+                confirmed=False,
                 summary=summary,
                 evidence="; ".join(f"{s}: {f}" for s, f in matches) if matches else "",
                 raw_output=str(matches),

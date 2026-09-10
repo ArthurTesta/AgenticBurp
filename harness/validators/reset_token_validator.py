@@ -211,14 +211,23 @@ class ResetTokenValidator(Validator):
 
         predictable, reason = analyze_tokens(tokens, known_values=self._known_values(exchange))
         if predictable:
+            # RETIRED (review 2026-09-09): a predictability PATTERN in a small sample
+            # is an OBSERVATION, not proof of exploitability -- two numeric samples
+            # always have a constant delta, a public prefix + strong random suffix is
+            # not predictable, and reusing an unexpired random token can be legitimate.
+            # This no longer sets confirmed=True. Re-qualify: a HOLDOUT test -- predict
+            # the NEXT token from prior samples, submit it, and show it is ACCEPTED for
+            # another account -- plus lifetime / single-use / rate-limit context; only
+            # then may this emit confirmed=True (and re-add to the gate's LIVE set).
             return ValidationResult(
-                self.name, "confirmed", "reset_token", confidence=0.9, confirmed=True,
-                summary=f"Predictable reset token confirmed: {reason}.",
+                self.name, "not_confirmed", "reset_token", confidence=0.35, confirmed=False,
+                summary=f"OBSERVATION (not confirmed): a reset-token predictability pattern was seen "
+                        f"-- {reason}. NOT a confirmed weakness: needs a holdout prediction (forge the "
+                        f"next token and show it is accepted for another account) to confirm.",
                 evidence=f"Sampled {len(tokens)} reset tokens from independent requests; {reason}. "
-                         f"A predictable reset token lets an attacker forge a valid reset for another "
-                         f"account.")
+                         f"Small-sample pattern only -- no holdout prediction/acceptance was performed.")
         return ValidationResult(
-            self.name, "not_confirmed", "reset_token", confidence=0.2, confirmed=False,
-            summary=f"No deterministic reset-token weakness: {reason}.",
-            evidence=f"Sampled {len(tokens)} tokens; none of the unambiguous predictability tests "
+            self.name, "not_confirmed", "reset_token", confidence=0.1, confirmed=False,
+            summary=f"No deterministic reset-token weakness observed: {reason}.",
+            evidence=f"Sampled {len(tokens)} tokens; none of the predictability tests "
                      f"(constant / sequential / timestamp / below-floor / known-value-derived) matched.")

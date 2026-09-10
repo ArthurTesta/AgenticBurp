@@ -228,16 +228,19 @@ LIVE_VERIFIED_MARKERS = frozenset({
     "session_fixation", "session fixation", "weak_password", "weak password",
     "username_enumeration", "username enumeration", "user enumeration",
 
-    # CSRF (csrf_validator, session-15)
-    "csrf", "cross-site request forgery", "cross site request forgery", "xsrf",
+    # NOTE (review 2026-09-09 oracle retirements): csrf and verb_tamper were
+    # REMOVED from the live set -- their legs overconfirmed (a token-strip 2xx
+    # replay is not CSRF; an alternate-method 2xx is not necessarily an authz
+    # bypass) and now emit observations, not confirmations (see ORACLE_RETIREMENTS.md).
+    # They remain in CONFIRMABLE_CLASS_MARKERS, so they are treated as PROVISIONAL
+    # (capped at medium, not refuted). Re-add here only when a sound oracle is
+    # restored and live-verified.
 
-    # File upload bypass (file_upload_validator, session-15)
+    # File upload bypass (file_upload_validator, session-15) -- kept: a disallowed
+    # extension stored AND served with an active HTML/script Content-Type (not as an
+    # attachment) is a real filter bypass (oracle tightened per the review).
     "file_upload", "file upload", "arbitrary file upload",
     "unrestricted file upload",
-
-    # Verb tamper / method bypass (verb_tamper_validator, session-15)
-    "verb_tamper", "verb tamper", "method tampering", "http method",
-    "misconfig",
 
     # XSS family (browser_xss_validator, session-15: live-verified against the
     # vuln_fixture reflected-XSS endpoint with real Playwright + Chromium).

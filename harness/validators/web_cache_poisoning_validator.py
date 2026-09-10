@@ -128,20 +128,29 @@ class WebCachePoisoningValidator(Validator):
                 severity = "low"
 
             vulnerable_tests = [t for t in tests if t.vulnerable]
+            # RETIRED (review 2026-09-09): reflection of an unkeyed input or a
+            # cache-friendly response is NOT a confirmed poisoning -- it does not
+            # show the attacker's influence (or private data) is CACHED and served
+            # to a DIFFERENT client under the controlled cache key. This no longer
+            # emits a confirmed verdict; a match is a CANDIDATE. Re-qualify: a clean
+            # SECOND-CLIENT retrieval that returns the attacker's influence/private
+            # data under the controlled cache key; only then confirmed=True.
             summary_parts = []
             if vulnerable_tests:
-                summary_parts.append(f"Web cache poisoning CONFIRMED: {len(vulnerable_tests)} vulnerability(ies) found")
+                summary_parts.append(
+                    f"Web cache poisoning CANDIDATE (not confirmed): {len(vulnerable_tests)} "
+                    f"unkeyed-input reflection primitive(s) -- no second-client cached-retrieval proof")
                 for t in vulnerable_tests:
                     summary_parts.append(f"  - {t.test_name}: {t.detail}")
             else:
-                summary_parts.append("No unkeyed-input cache poisoning primitive confirmed with these probes")
+                summary_parts.append("No unkeyed-input cache poisoning primitive observed with these probes")
 
             return ValidationResult(
                 validator=self.get_name(),
-                status="confirmed" if vulnerable else "not_confirmed",
+                status="not_confirmed",
                 finding_class=finding.vulnerability_class,
-                confidence=0.9 if vulnerable else 0.15,
-                confirmed=vulnerable,
+                confidence=0.4 if vulnerable_tests else 0.1,
+                confirmed=False,
                 summary=" ".join(summary_parts),
                 evidence=self._build_evidence(tests),
                 raw_output=self._build_raw_output(tests),
