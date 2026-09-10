@@ -282,6 +282,15 @@ class ValidationConfig:
     check_lines: bool = True
     check_characters: bool = True
     check_encoding: bool = True
+    # Weakness #1: the USER prompt in this harness carries the CAPTURED EXCHANGE --
+    # the very evidence a scanner exists to analyze (SQLi payloads, shell strings,
+    # malicious prompts). RAISING on a "dangerous" pattern there silently SKIPS the
+    # analysis of exactly the content that matters (the saved-run "Blocked pattern
+    # detected in user prompt" errors). So by default an injection-shaped user
+    # prompt is DETECTED + counted (observable) but NOT blocked -- the real defense
+    # is the action boundary (validators are code-built; the model executes
+    # nothing). Set True to restore hard-blocking of user prompts.
+    block_user_patterns: bool = False
 
 
 # Default configuration
@@ -487,19 +496,30 @@ class PromptValidator:
             for compiled_pattern, original_pattern in self._compile_patterns():
                 match = compiled_pattern.search(prompt)
                 if match:
-                    self._stats['failed'] += 1
-                    self._stats['blocked_patterns'] += 1
                     matched_text = match.group(0)[:100]  # Truncate for logging
-                    log.warning(
-                        "Blocked pattern detected in %s prompt: %s (matched: %s)",
-                        prompt_type, original_pattern[:50], matched_text
+                    self._stats['blocked_patterns'] += 1
+                    # Weakness #1: DETECT + count for observability, but do NOT skip
+                    # the analysis of captured evidence unless hard-blocking is
+                    # explicitly enabled. The captured exchange IS the thing under
+                    # test; a malicious-looking string in it is a finding to analyze,
+                    # not permission to silently drop the exchange.
+                    if self.config.block_user_patterns:
+                        self._stats['failed'] += 1
+                        log.warning(
+                            "Blocked pattern detected in %s prompt: %s (matched: %s)",
+                            prompt_type, original_pattern[:50], matched_text
+                        )
+                        raise PatternValidationError(
+                            f"Blocked pattern detected in {prompt_type} prompt",
+                            original_pattern,
+                            matched_text
+                        )
+                    log.info(
+                        "Injection-shaped pattern OBSERVED in user prompt (analyzed as evidence, "
+                        "not blocked): %s (matched: %s)", original_pattern[:50], matched_text
                     )
-                    raise PatternValidationError(
-                        f"Blocked pattern detected in {prompt_type} prompt",
-                        original_pattern,
-                        matched_text
-                    )
-        
+                    break  # one observation is enough; keep analyzing the evidence
+
         self._stats['passed'] += 1
         return prompt
     
