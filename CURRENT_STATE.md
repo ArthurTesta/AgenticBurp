@@ -11,6 +11,33 @@ Older session narratives are in git history / `archive/`; this file is deliberat
 
 ## ►► SESSION-17 STATE (READ FIRST) ◄◄
 
+**2026-09-10 astra-t05-t08 review:** Reviewed `e1ac8e9` in
+`.worktrees/astra-t05-t08` against `e24ca7f`. 128 focused coverage/export/storage/
+inventory tests passed; offline diagnostics confirmed uncovered accounting,
+redaction, issue-ID, proof-reference, and retest-history defects. T05/T06 request
+changes; T08 remains inventory-only. See
+[`T05–T08 review`](reviews/review-Astra-Medium-10-09-06-30/IMPLEMENTATION_REVIEW_T05_T08.md).
+No implementation code changed; full suite and engagement behavior not reverified.
+
+**2026-09-10 fresh live max-coverage result (session 18, VERIFIED):** The full
+VulnCorp Helpdesk run completed using a fresh target plus fresh `s18` state/cache DBs.
+Preflight was 1,509 tests OK in 296.102 s. The live run took **29,303.4 s
+(8.14 h)**, of which `investigate_engagement` took **22,266.7 s (6.19 h)**.
+Artifacts are under `testing/vulncorp-helpdesk/maxrun/` with the `s18_full` tag.
+Recall was **9/13 confirmed, 3/13 detected-unconfirmed, 1/13 missed**; the remaining
+miss was SSRF at `/api/integrations`. Six confirmations have UNKNOWN provenance,
+so they must not be credited to their intended deterministic legs. Compared with
+the verified `s16_full` baseline: confirmed recall improved 8→9, misses fell 2→1,
+but runtime regressed 10,085.7→29,303.3 s (**2.91× / +190.5%**), fused findings
+rose 712→1,921 and confirmations 71→687. Coverage reported 11,137 cells: 319
+attempted/conclusive (103 confirmed, 126 detected, 90 not detected), 7,122 N/A,
+3,696 skipped, 0 pending/running/error; all 150 coverage-driven leg budget slots
+were used. Investigation returned 11 outcomes, 0 chains, 3 IDOR findings, no
+reported errors, and `degraded=false`; 41/43 endpoints were validated. Browser-XSS
+had zero confirmations. No discovery-frontier class was confirmed. Treat the huge
+finding/confirmation inflation, zero chains, 6 UNKNOWN-provenance confirms, 3,696
+skips, and 8.14 h runtime as the main performance/correctness follow-ups.
+
 **2026-09-10 review-only addendum:** Source inspected at HEAD `8b5c6e1`;
 implementation handoff saved to
 [`reviews/review-Astra-Medium-10-09-06-30/IMPLEMENTATION_HANDOFF.md`](reviews/review-Astra-Medium-10-09-06-30/IMPLEMENTATION_HANDOFF.md).
@@ -26,6 +53,14 @@ full stdlib discovery is **1,509 tests OK, 2 skipped**, 272.821s. The optional p
 `typing-extensions` metadata conflicts with the bundled Pydantic stack, so verification
 uses the bundled core runtime first and appends `.review-deps`; details are in the review
 directory's `EXECUTION_LOG.md`. T01–T10 remain open.
+
+**2026-09-10 T01–T03 implementation review:** Reviewed separate worktree
+`AgenticVibe-impl`, branch `impl/astra-tickets`, HEAD `bcaab08`. Its 57 new focused
+tests passed with access to existing dependencies; no full suite or engagement run
+was performed. Review requests changes: production wiring, proof verdict/case/run
+binding, session/origin isolation, and ownership metadata remain incomplete.
+See [`implementation review`](reviews/review-Astra-Medium-10-09-06-30/IMPLEMENTATION_REVIEW_T01_T03.md)
+and its offline diagnostic script. No implementation code was changed by this review.
 
 Branch `WorkingSunday`, **HEAD `f36d454`** (+ any later doc commit). Suite green
 (`cd harness && python -m unittest discover -p "test_*.py"`) — **1505 tests OK**,

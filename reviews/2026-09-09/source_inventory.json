@@ -1,0 +1,1780 @@
+[
+  {
+    "path": "harness\\access_control_gate.py",
+    "lines": 121,
+    "functions": 2,
+    "classes": 0,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\active_verification.py",
+    "lines": 164,
+    "functions": 4,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\activity_feed.py",
+    "lines": 106,
+    "functions": 9,
+    "classes": 2,
+    "broad_handlers": 1
+  },
+  {
+    "path": "harness\\advisory_snapshot.py",
+    "lines": 70,
+    "functions": 5,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\agent_manager.py",
+    "lines": 485,
+    "functions": 20,
+    "classes": 1,
+    "broad_handlers": 3
+  },
+  {
+    "path": "harness\\agents\\__init__.py",
+    "lines": 170,
+    "functions": 7,
+    "classes": 0,
+    "broad_handlers": 1
+  },
+  {
+    "path": "harness\\agents\\ai_llm_agent.py",
+    "lines": 56,
+    "functions": 1,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\agents\\ai_security_agent.py",
+    "lines": 105,
+    "functions": 1,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\agents\\anomaly_agent.py",
+    "lines": 100,
+    "functions": 3,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\agents\\api_security_agent.py",
+    "lines": 93,
+    "functions": 1,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\agents\\auth_agent.py",
+    "lines": 76,
+    "functions": 1,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\agents\\base_agent.py",
+    "lines": 254,
+    "functions": 7,
+    "classes": 1,
+    "broad_handlers": 1
+  },
+  {
+    "path": "harness\\agents\\business_logic_agent.py",
+    "lines": 45,
+    "functions": 1,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\agents\\business_logic_enhanced_agent.py",
+    "lines": 109,
+    "functions": 1,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\agents\\command_injection_agent.py",
+    "lines": 75,
+    "functions": 1,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\agents\\cors_agent.py",
+    "lines": 93,
+    "functions": 1,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\agents\\crypto_agent.py",
+    "lines": 89,
+    "functions": 1,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\agents\\csp_agent.py",
+    "lines": 80,
+    "functions": 1,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\agents\\csrf_agent.py",
+    "lines": 68,
+    "functions": 1,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\agents\\deserialization_agent.py",
+    "lines": 89,
+    "functions": 1,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\agents\\file_upload_agent.py",
+    "lines": 78,
+    "functions": 1,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\agents\\graphql_agent.py",
+    "lines": 87,
+    "functions": 1,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\agents\\header_injection_agent.py",
+    "lines": 87,
+    "functions": 1,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\agents\\http_request_smuggling_agent.py",
+    "lines": 439,
+    "functions": 1,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\agents\\idor_agent.py",
+    "lines": 28,
+    "functions": 1,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\agents\\info_disclosure_agent.py",
+    "lines": 108,
+    "functions": 1,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\agents\\jwt_agent.py",
+    "lines": 62,
+    "functions": 1,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\agents\\misconfig_agent.py",
+    "lines": 56,
+    "functions": 1,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\agents\\nosql_agent.py",
+    "lines": 66,
+    "functions": 1,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\agents\\oauth_agent.py",
+    "lines": 95,
+    "functions": 1,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\agents\\open_redirect_agent.py",
+    "lines": 74,
+    "functions": 1,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\agents\\plugin.py",
+    "lines": 398,
+    "functions": 15,
+    "classes": 4,
+    "broad_handlers": 3
+  },
+  {
+    "path": "harness\\agents\\race_condition_agent.py",
+    "lines": 86,
+    "functions": 1,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\agents\\rate_limit_agent.py",
+    "lines": 22,
+    "functions": 1,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\agents\\recon_agent.py",
+    "lines": 313,
+    "functions": 1,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\agents\\sqli_agent.py",
+    "lines": 42,
+    "functions": 1,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\agents\\ssrf_agent.py",
+    "lines": 25,
+    "functions": 1,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\agents\\ssti_agent.py",
+    "lines": 77,
+    "functions": 1,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\agents\\subdomain_takeover_agent.py",
+    "lines": 83,
+    "functions": 1,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\agents\\supply_chain_agent.py",
+    "lines": 76,
+    "functions": 1,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\agents\\web_cache_poisoning_agent.py",
+    "lines": 96,
+    "functions": 1,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\agents\\websocket_agent.py",
+    "lines": 85,
+    "functions": 1,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\agents\\xss_agent.py",
+    "lines": 30,
+    "functions": 1,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\agents\\xxe_agent.py",
+    "lines": 57,
+    "functions": 1,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\allocation_prioritizer.py",
+    "lines": 120,
+    "functions": 2,
+    "classes": 0,
+    "broad_handlers": 1
+  },
+  {
+    "path": "harness\\analysis_pipeline.py",
+    "lines": 330,
+    "functions": 4,
+    "classes": 1,
+    "broad_handlers": 1
+  },
+  {
+    "path": "harness\\anomaly_detector.py",
+    "lines": 990,
+    "functions": 19,
+    "classes": 4,
+    "broad_handlers": 5
+  },
+  {
+    "path": "harness\\api_surface_discovery.py",
+    "lines": 705,
+    "functions": 28,
+    "classes": 4,
+    "broad_handlers": 2
+  },
+  {
+    "path": "harness\\attribution.py",
+    "lines": 162,
+    "functions": 10,
+    "classes": 0,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\audit_logger.py",
+    "lines": 701,
+    "functions": 28,
+    "classes": 4,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\browser_driver.py",
+    "lines": 156,
+    "functions": 8,
+    "classes": 3,
+    "broad_handlers": 6
+  },
+  {
+    "path": "harness\\burp_sitemap.py",
+    "lines": 322,
+    "functions": 14,
+    "classes": 1,
+    "broad_handlers": 2
+  },
+  {
+    "path": "harness\\cache.py",
+    "lines": 528,
+    "functions": 23,
+    "classes": 3,
+    "broad_handlers": 6
+  },
+  {
+    "path": "harness\\categories.py",
+    "lines": 220,
+    "functions": 3,
+    "classes": 0,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\chain_linker.py",
+    "lines": 116,
+    "functions": 4,
+    "classes": 0,
+    "broad_handlers": 1
+  },
+  {
+    "path": "harness\\chaining.py",
+    "lines": 566,
+    "functions": 5,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\circuit_breaker.py",
+    "lines": 408,
+    "functions": 28,
+    "classes": 7,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\collaborator.py",
+    "lines": 94,
+    "functions": 9,
+    "classes": 2,
+    "broad_handlers": 3
+  },
+  {
+    "path": "harness\\confidential_info_detector.py",
+    "lines": 199,
+    "functions": 7,
+    "classes": 2,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\confirmation_gate.py",
+    "lines": 338,
+    "functions": 3,
+    "classes": 0,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\coordinator.py",
+    "lines": 367,
+    "functions": 8,
+    "classes": 1,
+    "broad_handlers": 4
+  },
+  {
+    "path": "harness\\coverage_model.py",
+    "lines": 502,
+    "functions": 29,
+    "classes": 5,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\coverage_tracker.py",
+    "lines": 301,
+    "functions": 14,
+    "classes": 1,
+    "broad_handlers": 1
+  },
+  {
+    "path": "harness\\crawler.py",
+    "lines": 136,
+    "functions": 3,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\credential_endpoint_detector.py",
+    "lines": 95,
+    "functions": 1,
+    "classes": 0,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\effort.py",
+    "lines": 232,
+    "functions": 13,
+    "classes": 6,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\engagement.py",
+    "lines": 531,
+    "functions": 32,
+    "classes": 2,
+    "broad_handlers": 2
+  },
+  {
+    "path": "harness\\engagement_builder.py",
+    "lines": 138,
+    "functions": 4,
+    "classes": 0,
+    "broad_handlers": 1
+  },
+  {
+    "path": "harness\\exchange_text.py",
+    "lines": 52,
+    "functions": 1,
+    "classes": 0,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\fast_path.py",
+    "lines": 861,
+    "functions": 19,
+    "classes": 2,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\feature_projection.py",
+    "lines": 294,
+    "functions": 10,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\feature_workflow.py",
+    "lines": 362,
+    "functions": 19,
+    "classes": 4,
+    "broad_handlers": 3
+  },
+  {
+    "path": "harness\\ffuf_runner.py",
+    "lines": 140,
+    "functions": 6,
+    "classes": 1,
+    "broad_handlers": 1
+  },
+  {
+    "path": "harness\\github_advisories.py",
+    "lines": 194,
+    "functions": 5,
+    "classes": 3,
+    "broad_handlers": 2
+  },
+  {
+    "path": "harness\\global_throttle.py",
+    "lines": 119,
+    "functions": 8,
+    "classes": 2,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\header_noise_gate.py",
+    "lines": 78,
+    "functions": 2,
+    "classes": 0,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\host_dep_dedup.py",
+    "lines": 53,
+    "functions": 2,
+    "classes": 0,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\identity.py",
+    "lines": 55,
+    "functions": 0,
+    "classes": 3,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\identity_compare.py",
+    "lines": 191,
+    "functions": 6,
+    "classes": 3,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\identity_headers.py",
+    "lines": 49,
+    "functions": 4,
+    "classes": 0,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\iterative_agent.py",
+    "lines": 354,
+    "functions": 10,
+    "classes": 3,
+    "broad_handlers": 3
+  },
+  {
+    "path": "harness\\js_endpoint_extractor.py",
+    "lines": 187,
+    "functions": 6,
+    "classes": 2,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\kev_check.py",
+    "lines": 113,
+    "functions": 3,
+    "classes": 2,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\knowledge.py",
+    "lines": 191,
+    "functions": 4,
+    "classes": 0,
+    "broad_handlers": 2
+  },
+  {
+    "path": "harness\\missing_auth_probe.py",
+    "lines": 298,
+    "functions": 10,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\models.py",
+    "lines": 266,
+    "functions": 0,
+    "classes": 19,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\ollama_client.py",
+    "lines": 299,
+    "functions": 6,
+    "classes": 5,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\orchestrator.py",
+    "lines": 2784,
+    "functions": 64,
+    "classes": 1,
+    "broad_handlers": 30
+  },
+  {
+    "path": "harness\\package_registry_checks.py",
+    "lines": 285,
+    "functions": 6,
+    "classes": 3,
+    "broad_handlers": 1
+  },
+  {
+    "path": "harness\\payload_library.py",
+    "lines": 128,
+    "functions": 4,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\pivot_memory.py",
+    "lines": 177,
+    "functions": 3,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\planner.py",
+    "lines": 164,
+    "functions": 3,
+    "classes": 0,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\prompt_validator.py",
+    "lines": 712,
+    "functions": 23,
+    "classes": 7,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\rate_limiter.py",
+    "lines": 561,
+    "functions": 44,
+    "classes": 8,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\recall_benchmark.py",
+    "lines": 233,
+    "functions": 19,
+    "classes": 3,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\report_generator.py",
+    "lines": 419,
+    "functions": 11,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\resource_governor.py",
+    "lines": 329,
+    "functions": 16,
+    "classes": 5,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\retry_policy.py",
+    "lines": 102,
+    "functions": 2,
+    "classes": 4,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\risk_allocator.py",
+    "lines": 91,
+    "functions": 3,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\role_crawl.py",
+    "lines": 399,
+    "functions": 13,
+    "classes": 3,
+    "broad_handlers": 3
+  },
+  {
+    "path": "harness\\safety_gate.py",
+    "lines": 331,
+    "functions": 13,
+    "classes": 7,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\safety_proxy_addon.py",
+    "lines": 391,
+    "functions": 11,
+    "classes": 3,
+    "broad_handlers": 2
+  },
+  {
+    "path": "harness\\scope_discovery.py",
+    "lines": 150,
+    "functions": 3,
+    "classes": 0,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\second_order.py",
+    "lines": 182,
+    "functions": 4,
+    "classes": 1,
+    "broad_handlers": 1
+  },
+  {
+    "path": "harness\\secret_disclosure.py",
+    "lines": 155,
+    "functions": 9,
+    "classes": 0,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\security.py",
+    "lines": 98,
+    "functions": 2,
+    "classes": 0,
+    "broad_handlers": 1
+  },
+  {
+    "path": "harness\\server.py",
+    "lines": 991,
+    "functions": 48,
+    "classes": 13,
+    "broad_handlers": 5
+  },
+  {
+    "path": "harness\\store.py",
+    "lines": 865,
+    "functions": 30,
+    "classes": 0,
+    "broad_handlers": 1
+  },
+  {
+    "path": "harness\\surface_prioritizer.py",
+    "lines": 110,
+    "functions": 2,
+    "classes": 0,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\task_graph.py",
+    "lines": 141,
+    "functions": 14,
+    "classes": 2,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_access_control_gate.py",
+    "lines": 61,
+    "functions": 9,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_active_verification.py",
+    "lines": 230,
+    "functions": 13,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_activity_feed.py",
+    "lines": 83,
+    "functions": 11,
+    "classes": 2,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_advisory_snapshot.py",
+    "lines": 102,
+    "functions": 10,
+    "classes": 2,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_agent_concurrency.py",
+    "lines": 108,
+    "functions": 7,
+    "classes": 3,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_agent_manager.py",
+    "lines": 94,
+    "functions": 5,
+    "classes": 2,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_allocation_prioritizer.py",
+    "lines": 76,
+    "functions": 12,
+    "classes": 2,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_analysis_pipeline.py",
+    "lines": 204,
+    "functions": 10,
+    "classes": 4,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_anomaly_detector.py",
+    "lines": 290,
+    "functions": 13,
+    "classes": 7,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_api_surface_discovery.py",
+    "lines": 594,
+    "functions": 69,
+    "classes": 14,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_attribution.py",
+    "lines": 167,
+    "functions": 17,
+    "classes": 4,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_audit_logger.py",
+    "lines": 385,
+    "functions": 23,
+    "classes": 3,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_base_agent.py",
+    "lines": 197,
+    "functions": 16,
+    "classes": 6,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_blind_negatives.py",
+    "lines": 130,
+    "functions": 3,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_browser_driver.py",
+    "lines": 120,
+    "functions": 11,
+    "classes": 4,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_browser_xss_validator.py",
+    "lines": 141,
+    "functions": 21,
+    "classes": 6,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_burp_sitemap.py",
+    "lines": 179,
+    "functions": 14,
+    "classes": 3,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_cache.py",
+    "lines": 725,
+    "functions": 33,
+    "classes": 6,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_categories.py",
+    "lines": 49,
+    "functions": 6,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_chain_linker.py",
+    "lines": 81,
+    "functions": 8,
+    "classes": 2,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_chaining.py",
+    "lines": 296,
+    "functions": 27,
+    "classes": 6,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_circuit_breaker.py",
+    "lines": 517,
+    "functions": 51,
+    "classes": 6,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_cloud_reasoning_seam.py",
+    "lines": 65,
+    "functions": 9,
+    "classes": 2,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_confidential_info_detector.py",
+    "lines": 124,
+    "functions": 23,
+    "classes": 4,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_confirmation_cache.py",
+    "lines": 261,
+    "functions": 28,
+    "classes": 2,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_confirmation_gate.py",
+    "lines": 166,
+    "functions": 13,
+    "classes": 2,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_confirmation_legs.py",
+    "lines": 201,
+    "functions": 29,
+    "classes": 8,
+    "broad_handlers": 2
+  },
+  {
+    "path": "harness\\test_coordinator.py",
+    "lines": 259,
+    "functions": 23,
+    "classes": 4,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_coverage.py",
+    "lines": 209,
+    "functions": 17,
+    "classes": 2,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_coverage_model.py",
+    "lines": 360,
+    "functions": 52,
+    "classes": 5,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_coverage_tracker.py",
+    "lines": 193,
+    "functions": 18,
+    "classes": 6,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_crawler.py",
+    "lines": 78,
+    "functions": 11,
+    "classes": 2,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_credential_endpoint_detector.py",
+    "lines": 71,
+    "functions": 7,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_cross_identity_validator.py",
+    "lines": 204,
+    "functions": 26,
+    "classes": 2,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_deferred_legs.py",
+    "lines": 317,
+    "functions": 37,
+    "classes": 6,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_dom_xss_validator.py",
+    "lines": 123,
+    "functions": 16,
+    "classes": 5,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_effort.py",
+    "lines": 112,
+    "functions": 13,
+    "classes": 3,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_engagement.py",
+    "lines": 248,
+    "functions": 35,
+    "classes": 6,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_engagement_builder.py",
+    "lines": 114,
+    "functions": 14,
+    "classes": 5,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_engagement_driver.py",
+    "lines": 169,
+    "functions": 19,
+    "classes": 4,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_engagement_escalation.py",
+    "lines": 95,
+    "functions": 13,
+    "classes": 3,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_exchange_text.py",
+    "lines": 71,
+    "functions": 4,
+    "classes": 2,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_execution_protocol.py",
+    "lines": 48,
+    "functions": 4,
+    "classes": 0,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_fail_open_telemetry.py",
+    "lines": 66,
+    "functions": 5,
+    "classes": 3,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_fast_path.py",
+    "lines": 957,
+    "functions": 85,
+    "classes": 11,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_feature_projection.py",
+    "lines": 158,
+    "functions": 13,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_feature_workflow.py",
+    "lines": 232,
+    "functions": 19,
+    "classes": 6,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_ffuf_runner.py",
+    "lines": 215,
+    "functions": 30,
+    "classes": 6,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_flag_only.py",
+    "lines": 53,
+    "functions": 6,
+    "classes": 2,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_github_advisories.py",
+    "lines": 111,
+    "functions": 8,
+    "classes": 2,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_global_throttle.py",
+    "lines": 80,
+    "functions": 11,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_hardening.py",
+    "lines": 163,
+    "functions": 12,
+    "classes": 3,
+    "broad_handlers": 1
+  },
+  {
+    "path": "harness\\test_header_noise_gate.py",
+    "lines": 70,
+    "functions": 9,
+    "classes": 2,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_host_dep_dedup.py",
+    "lines": 54,
+    "functions": 8,
+    "classes": 2,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_identity.py",
+    "lines": 79,
+    "functions": 10,
+    "classes": 2,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_identity_compare.py",
+    "lines": 105,
+    "functions": 12,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_injection_legs.py",
+    "lines": 130,
+    "functions": 21,
+    "classes": 6,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_iterative_agent.py",
+    "lines": 208,
+    "functions": 22,
+    "classes": 4,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_js_endpoint_extractor.py",
+    "lines": 81,
+    "functions": 11,
+    "classes": 2,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_knowledge_rag.py",
+    "lines": 91,
+    "functions": 13,
+    "classes": 2,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_leg_live_verification.py",
+    "lines": 352,
+    "functions": 41,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_missing_auth_probe.py",
+    "lines": 187,
+    "functions": 24,
+    "classes": 2,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_missing_legs.py",
+    "lines": 264,
+    "functions": 30,
+    "classes": 5,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_model_selection.py",
+    "lines": 144,
+    "functions": 21,
+    "classes": 4,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_ollama_client.py",
+    "lines": 175,
+    "functions": 23,
+    "classes": 4,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_orchestrator_precondition.py",
+    "lines": 256,
+    "functions": 40,
+    "classes": 7,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_orchestrator_respin.py",
+    "lines": 127,
+    "functions": 14,
+    "classes": 2,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_payload_library.py",
+    "lines": 54,
+    "functions": 8,
+    "classes": 2,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_pivot_memory.py",
+    "lines": 128,
+    "functions": 14,
+    "classes": 2,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_planner.py",
+    "lines": 119,
+    "functions": 8,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_plugin_system.py",
+    "lines": 440,
+    "functions": 32,
+    "classes": 9,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_prompt_validator.py",
+    "lines": 668,
+    "functions": 65,
+    "classes": 10,
+    "broad_handlers": 1
+  },
+  {
+    "path": "harness\\test_rate_limiter.py",
+    "lines": 400,
+    "functions": 24,
+    "classes": 6,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_recall_benchmark.py",
+    "lines": 139,
+    "functions": 13,
+    "classes": 4,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_recon_validator.py",
+    "lines": 112,
+    "functions": 7,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_report_generator.py",
+    "lines": 358,
+    "functions": 34,
+    "classes": 6,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_resource_governor.py",
+    "lines": 143,
+    "functions": 18,
+    "classes": 3,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_retry_policy.py",
+    "lines": 69,
+    "functions": 12,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_risk_allocator.py",
+    "lines": 120,
+    "functions": 14,
+    "classes": 4,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_role_crawl.py",
+    "lines": 267,
+    "functions": 28,
+    "classes": 4,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_safety_gate.py",
+    "lines": 445,
+    "functions": 44,
+    "classes": 8,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_safety_proxy_addon.py",
+    "lines": 322,
+    "functions": 28,
+    "classes": 10,
+    "broad_handlers": 1
+  },
+  {
+    "path": "harness\\test_scope_discovery.py",
+    "lines": 125,
+    "functions": 14,
+    "classes": 2,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_second_order.py",
+    "lines": 195,
+    "functions": 31,
+    "classes": 4,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_secret_disclosure.py",
+    "lines": 82,
+    "functions": 8,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_sequence_validator.py",
+    "lines": 114,
+    "functions": 13,
+    "classes": 3,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_server.py",
+    "lines": 496,
+    "functions": 51,
+    "classes": 7,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_smoke_detection.py",
+    "lines": 202,
+    "functions": 11,
+    "classes": 2,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_smoke_investigate.py",
+    "lines": 205,
+    "functions": 14,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_smoke_phase0_capture_review.py",
+    "lines": 172,
+    "functions": 10,
+    "classes": 2,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_smoke_shape_precondition.py",
+    "lines": 190,
+    "functions": 14,
+    "classes": 3,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_sqlmap_validator.py",
+    "lines": 421,
+    "functions": 47,
+    "classes": 11,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_store.py",
+    "lines": 310,
+    "functions": 26,
+    "classes": 4,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_surface_prioritizer.py",
+    "lines": 95,
+    "functions": 11,
+    "classes": 2,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_task_graph.py",
+    "lines": 80,
+    "functions": 9,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_toctou_validator.py",
+    "lines": 122,
+    "functions": 13,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_tool_catalog.py",
+    "lines": 109,
+    "functions": 17,
+    "classes": 3,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_tool_runner.py",
+    "lines": 76,
+    "functions": 10,
+    "classes": 4,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_traversal_redirect_legs.py",
+    "lines": 140,
+    "functions": 21,
+    "classes": 5,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_validators.py",
+    "lines": 386,
+    "functions": 31,
+    "classes": 6,
+    "broad_handlers": 1
+  },
+  {
+    "path": "harness\\test_verbose_error_validator.py",
+    "lines": 102,
+    "functions": 14,
+    "classes": 3,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\test_worklist_investigator.py",
+    "lines": 224,
+    "functions": 33,
+    "classes": 3,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\tool_catalog.py",
+    "lines": 290,
+    "functions": 9,
+    "classes": 2,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\tool_runner.py",
+    "lines": 97,
+    "functions": 5,
+    "classes": 0,
+    "broad_handlers": 2
+  },
+  {
+    "path": "harness\\validators\\__init__.py",
+    "lines": 4,
+    "functions": 0,
+    "classes": 0,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\validators\\api_security_validator.py",
+    "lines": 286,
+    "functions": 11,
+    "classes": 2,
+    "broad_handlers": 4
+  },
+  {
+    "path": "harness\\validators\\auth_sequence_validator.py",
+    "lines": 317,
+    "functions": 17,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\validators\\base.py",
+    "lines": 44,
+    "functions": 3,
+    "classes": 2,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\validators\\browser_xss_validator.py",
+    "lines": 147,
+    "functions": 5,
+    "classes": 1,
+    "broad_handlers": 1
+  },
+  {
+    "path": "harness\\validators\\command_injection_validator.py",
+    "lines": 111,
+    "functions": 5,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\validators\\cors_validator.py",
+    "lines": 706,
+    "functions": 19,
+    "classes": 2,
+    "broad_handlers": 2
+  },
+  {
+    "path": "harness\\validators\\cross_identity_validator.py",
+    "lines": 293,
+    "functions": 10,
+    "classes": 1,
+    "broad_handlers": 3
+  },
+  {
+    "path": "harness\\validators\\crypto_validator.py",
+    "lines": 251,
+    "functions": 12,
+    "classes": 2,
+    "broad_handlers": 2
+  },
+  {
+    "path": "harness\\validators\\csp_validator.py",
+    "lines": 259,
+    "functions": 13,
+    "classes": 2,
+    "broad_handlers": 2
+  },
+  {
+    "path": "harness\\validators\\csrf_validator.py",
+    "lines": 141,
+    "functions": 6,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\validators\\deserialization_oob_validator.py",
+    "lines": 211,
+    "functions": 14,
+    "classes": 3,
+    "broad_handlers": 1
+  },
+  {
+    "path": "harness\\validators\\deserialization_validator.py",
+    "lines": 195,
+    "functions": 9,
+    "classes": 2,
+    "broad_handlers": 2
+  },
+  {
+    "path": "harness\\validators\\dom_xss_validator.py",
+    "lines": 133,
+    "functions": 5,
+    "classes": 1,
+    "broad_handlers": 1
+  },
+  {
+    "path": "harness\\validators\\file_upload_validator.py",
+    "lines": 146,
+    "functions": 4,
+    "classes": 1,
+    "broad_handlers": 1
+  },
+  {
+    "path": "harness\\validators\\header_injection_validator.py",
+    "lines": 217,
+    "functions": 11,
+    "classes": 2,
+    "broad_handlers": 2
+  },
+  {
+    "path": "harness\\validators\\http_request_smuggling_validator.py",
+    "lines": 600,
+    "functions": 18,
+    "classes": 2,
+    "broad_handlers": 5
+  },
+  {
+    "path": "harness\\validators\\injection_targets.py",
+    "lines": 62,
+    "functions": 3,
+    "classes": 0,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\validators\\jwt_forge_validator.py",
+    "lines": 208,
+    "functions": 15,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\validators\\oauth_validator.py",
+    "lines": 295,
+    "functions": 13,
+    "classes": 2,
+    "broad_handlers": 2
+  },
+  {
+    "path": "harness\\validators\\open_redirect_validator.py",
+    "lines": 112,
+    "functions": 6,
+    "classes": 1,
+    "broad_handlers": 1
+  },
+  {
+    "path": "harness\\validators\\path_traversal_validator.py",
+    "lines": 170,
+    "functions": 10,
+    "classes": 1,
+    "broad_handlers": 1
+  },
+  {
+    "path": "harness\\validators\\race_condition_validator.py",
+    "lines": 227,
+    "functions": 8,
+    "classes": 2,
+    "broad_handlers": 2
+  },
+  {
+    "path": "harness\\validators\\rate_limit_validator.py",
+    "lines": 142,
+    "functions": 5,
+    "classes": 1,
+    "broad_handlers": 1
+  },
+  {
+    "path": "harness\\validators\\recon_validator.py",
+    "lines": 836,
+    "functions": 28,
+    "classes": 6,
+    "broad_handlers": 3
+  },
+  {
+    "path": "harness\\validators\\registry.py",
+    "lines": 374,
+    "functions": 9,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\validators\\reset_token_validator.py",
+    "lines": 224,
+    "functions": 10,
+    "classes": 1,
+    "broad_handlers": 2
+  },
+  {
+    "path": "harness\\validators\\sequence_validator.py",
+    "lines": 245,
+    "functions": 14,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\validators\\sqlmap.py",
+    "lines": 692,
+    "functions": 19,
+    "classes": 1,
+    "broad_handlers": 2
+  },
+  {
+    "path": "harness\\validators\\ssrf_validator.py",
+    "lines": 127,
+    "functions": 7,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\validators\\ssti_validator.py",
+    "lines": 108,
+    "functions": 5,
+    "classes": 1,
+    "broad_handlers": 1
+  },
+  {
+    "path": "harness\\validators\\stored_xss_validator.py",
+    "lines": 173,
+    "functions": 10,
+    "classes": 1,
+    "broad_handlers": 1
+  },
+  {
+    "path": "harness\\validators\\subdomain_takeover_validator.py",
+    "lines": 252,
+    "functions": 11,
+    "classes": 2,
+    "broad_handlers": 2
+  },
+  {
+    "path": "harness\\validators\\toctou_validator.py",
+    "lines": 209,
+    "functions": 9,
+    "classes": 1,
+    "broad_handlers": 1
+  },
+  {
+    "path": "harness\\validators\\verb_tamper_validator.py",
+    "lines": 145,
+    "functions": 4,
+    "classes": 1,
+    "broad_handlers": 3
+  },
+  {
+    "path": "harness\\validators\\verbose_error_validator.py",
+    "lines": 229,
+    "functions": 8,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\validators\\web_cache_poisoning_validator.py",
+    "lines": 277,
+    "functions": 13,
+    "classes": 2,
+    "broad_handlers": 2
+  },
+  {
+    "path": "harness\\validators\\websocket_validator.py",
+    "lines": 214,
+    "functions": 10,
+    "classes": 2,
+    "broad_handlers": 2
+  },
+  {
+    "path": "harness\\validators\\xxe_validator.py",
+    "lines": 97,
+    "functions": 7,
+    "classes": 1,
+    "broad_handlers": 0
+  },
+  {
+    "path": "harness\\worklist_investigator.py",
+    "lines": 210,
+    "functions": 5,
+    "classes": 0,
+    "broad_handlers": 3
+  }
+]

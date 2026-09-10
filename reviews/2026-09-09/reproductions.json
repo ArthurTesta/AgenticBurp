@@ -1,0 +1,154 @@
+{
+  "gated_client_convenience_methods": {
+    "request": true,
+    "post": false,
+    "get": false
+  },
+  "provisional_class_tiers": {
+    "dom_xss": "live",
+    "privilege escalation race": "live",
+    "toctou": "provisional",
+    "rate_limit": "provisional"
+  },
+  "coverage_without_any_execution": {
+    "cells_marked_as_ran": 16,
+    "examples": [
+      {
+        "identity": "user",
+        "check": "WSTG-ATHZ-04",
+        "status": "not_detected",
+        "reason": "cross_identity leg ran on this endpoint, no instance confirmed"
+      },
+      {
+        "identity": "user",
+        "check": "WSTG-ATHZ-02",
+        "status": "not_detected",
+        "reason": "cross_identity leg ran on this endpoint, no instance confirmed"
+      },
+      {
+        "identity": "user",
+        "check": "WSTG-INPV-05",
+        "status": "not_detected",
+        "reason": "sqlmap leg ran on this endpoint, no instance confirmed"
+      },
+      {
+        "identity": "user",
+        "check": "WSTG-INPV-01",
+        "status": "not_detected",
+        "reason": "browser_xss leg ran on this endpoint, no instance confirmed"
+      }
+    ]
+  },
+  "graph_finding_after_unconfirmed_update": [
+    {
+      "vulnerability_class": "idor",
+      "severity": "high",
+      "confidence": 0.99,
+      "confirmed": false
+    }
+  ],
+  "same_identity_response_comparison": {
+    "verdict": "CONFIRMED",
+    "confirmed": true
+  },
+  "active_disabled_get_allowed": true,
+  "mutating_ceiling_one_three_requests": [
+    true,
+    true,
+    true
+  ],
+  "safe_stored_echo_second_order": {
+    "confirmed": true,
+    "reason": "second-order SQLi confirmed: the read's response depends on a boolean SQL condition planted via the write"
+  },
+  "inventory": {
+    "python_files": 254,
+    "lines": 57610,
+    "largest": [
+      {
+        "path": "harness\\orchestrator.py",
+        "lines": 2784,
+        "functions": 64,
+        "classes": 1,
+        "broad_handlers": 30
+      },
+      {
+        "path": "harness\\server.py",
+        "lines": 991,
+        "functions": 48,
+        "classes": 13,
+        "broad_handlers": 5
+      },
+      {
+        "path": "harness\\anomaly_detector.py",
+        "lines": 990,
+        "functions": 19,
+        "classes": 4,
+        "broad_handlers": 5
+      },
+      {
+        "path": "harness\\test_fast_path.py",
+        "lines": 957,
+        "functions": 85,
+        "classes": 11,
+        "broad_handlers": 0
+      },
+      {
+        "path": "harness\\store.py",
+        "lines": 865,
+        "functions": 30,
+        "classes": 0,
+        "broad_handlers": 1
+      },
+      {
+        "path": "harness\\fast_path.py",
+        "lines": 861,
+        "functions": 19,
+        "classes": 2,
+        "broad_handlers": 0
+      },
+      {
+        "path": "harness\\validators\\recon_validator.py",
+        "lines": 836,
+        "functions": 28,
+        "classes": 6,
+        "broad_handlers": 3
+      },
+      {
+        "path": "harness\\test_cache.py",
+        "lines": 725,
+        "functions": 33,
+        "classes": 6,
+        "broad_handlers": 0
+      },
+      {
+        "path": "harness\\prompt_validator.py",
+        "lines": 712,
+        "functions": 23,
+        "classes": 7,
+        "broad_handlers": 0
+      },
+      {
+        "path": "harness\\validators\\cors_validator.py",
+        "lines": 706,
+        "functions": 19,
+        "classes": 2,
+        "broad_handlers": 2
+      },
+      {
+        "path": "harness\\api_surface_discovery.py",
+        "lines": 705,
+        "functions": 28,
+        "classes": 4,
+        "broad_handlers": 2
+      },
+      {
+        "path": "harness\\audit_logger.py",
+        "lines": 701,
+        "functions": 28,
+        "classes": 4,
+        "broad_handlers": 0
+      }
+    ]
+  }
+}

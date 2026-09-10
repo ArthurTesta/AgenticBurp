@@ -20,3 +20,24 @@ testing/**/fixture/
 testing/**/run-*-results/
 testing/**/exports/
 testing/**/uploads/
+
+# --- Local test environments & run artifacts (never commit) -----------------
+# Git worktrees created under the repo must never be tracked -- they are stored
+# as gitlinks that point at local-only commits and break clones.
+.worktrees/
+
+# Disposable local target apps + their run outputs, DBs, logs, secrets and
+# answer keys. These are recreated locally; committing them leaks target
+# answer keys/secrets and bloats history. (Extends "ignore local test envs".)
+testing/vulncorp-helpdesk/
+testing/blind-target-2/
+testing/blind-test-kit/target/
+testing/juiceshop-full-run/
+testing/test-target/
+testing/**/maxrun/
+testing/**/*.db
+testing/**/*.log
+testing/**/*answerkey*.json
+
+# Large raw test-output dumps
+review_test_output.txt
