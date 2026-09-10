@@ -363,9 +363,39 @@ The live target's complete vulnerability denominator remains unknown to this rev
 
 Later phases (2–9: request/identity model, unified executor, graph feedback, oracle qualification, discovery, measured performance, copilot workflow, packaging) are tracked as they are reached.
 
+## Beyond the first-ten: broader P1 / weakness status
+
+| Item | What | Status | Verified by |
+|---|---|---|---|
+| R11 | BFLA confirms via a privileged-DATA oracle (non-admin sees the admin's data), not namespace+2xx | ✅ done (hermetic) | `test_cross_identity_validator` (confirm-with-admin-match + observation-without-baseline) |
+| R20 | `_chain_input` preserves confirmed/basis/evidence/identity | ✅ done | `test_chain_linker.ChainInputProvenanceTests` |
+| R21 | per-(endpoint,check) completion, not endpoint-level skip | ✅ done | `test_worklist_investigator` R21 test |
+| R23 | precondition budget bounds attempts, not confirmations | ✅ done | `test_worklist_investigator` R23 test |
+| R25 | browser XSS drives the page AS the captured identity (auth headers + cookies) | ✅ done (hermetic; live browser still operator) | `test_browser_xss_validator` R25 + `test_browser_driver` split |
+| R30 | operational failures surfaced as `result.errors`/`degraded` | ✅ done | `test_smoke_investigate` degraded + clean tests |
+| #1 | prompt validator OBSERVES injection-shaped user prompts (evidence) instead of blocking/skipping analysis; hard-block opt-in | ✅ done | `test_prompt_validator` default-observed + opt-in-block |
+| #7 | CSRF WSTG id SESS-09 → SESS-05 | ✅ done | coverage_model |
+| #14 | DAG: a SKIPPED *required* prereq no longer satisfies dependents (`optional` flag) | ✅ done | `test_task_graph` R14/#14 tests |
+| Phase 5 | 8 oracle retirements (see ORACLE_RETIREMENTS.md) | ✅ done | `test_oracle_retirements` + updated leg tests |
+| #5 | report "Steps to reproduce" no longer carries remediation; falls back to replaying captured evidence | ✅ done | `test_report_generator` #5 tests |
+| #6 | recall provenance: UNKNOWN distinct from lucky; deterministic best-proof selection | ✅ done | `test_recall_benchmark` #6 tests |
+| #9 | Burp sitemap preserves repeated headers (Set-Cookie multiplicity) | ✅ done | `test_burp_sitemap` #9 tests |
+| #10 | ffuf silent-fallback is strict (no fabricated paths from diagnostics) + surfaces fallback use | ✅ done | `test_ffuf_runner` #10 tests |
+| #13 | truncated bodies surface a high-signal excerpt (HTML sink / stack trace) beyond the prefix | ✅ done | `test_base_agent` R13 tests |
+| #19 | removed fabricated token-savings percentages from cache/fast_path docstrings | ✅ done | (docs) |
+| #11 | timed-out tool containers are verifiably force-removed (`docker rm -f` by unique name), not abandoned | ✅ done | `test_tool_runner` #11 test |
+| R13 | second-order plant/read use an AUTHENTICATED planter + a DISTINCT identity for the cross-identity read; failed writes surfaced; no self-comparison | ✅ done (hermetic; identity-selection helper tested) | `test_orchestrator_precondition.SecondOrderIdentitiesTests` |
+| R28 | validation→finding match is CANONICAL (synonyms no longer miss confirmation) | 🔶 partial — synonym match done; per-finding/case-ID binding (same-class false inheritance) deferred, needs the case-ID model | full-suite confirmation-flow coverage |
+
+**Still open:** R29 (bound validation fan-out); weakness #2 (cache manifest — deferred, over-invalidation risk), #4 (root-cause dedup), #12 (session reuse across raw clients); R22 (agent-derivation breadth — a runtime-cost/tuning decision, flagged); the larger **architecture** rebuilds the review sequences into dedicated L-phases — R15 (unified executor), R17 (centralized scope/transport), R24 (stateful workflow engine), R26 (per-parameter coverage matrix), R27 (principal/tenant/session model), #3 (global mutable state), #8 (OpenAPI schema), #20 (operator workflow); infra #15/#16/#17/#18; and the deletion/consolidation table (Phase 9, gated on the above). These need operator direction on scope/design rather than a unilateral rewrite.
+
 ## Work log
 
 _(newest first)_
+
+### 2026-09-10 (cont.) — R20/R21/R23/R30/#7/#14 + #1/R25/R11
+
+Committed `1e2a095` (R20/R21/R23/R30/#7/#14). Then #1 (prompt-validator no longer censors captured evidence by default — hard-block is opt-in via `block_user_patterns`), R25 (browser XSS validators drive the page AS the captured identity — `visit(headers=…)` splits Authorization → extra headers and Cookie → context cookies), and R11 (BFLA needs a privileged-data match, not a namespace 2xx). All hermetic + negative controls.
 
 ### 2026-09-10 — Phase 5 oracle retirements (confirmation-audit)
 
